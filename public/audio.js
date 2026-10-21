@@ -2,9 +2,11 @@
 // SFX.turret(type), SFX.hit(what), SFX.update(dt, state|null), SFX.toggleMute()
 (function () {
   const MASTER = 0.6, MUSIC = 0.05, HUM = 0.035, SIREN = 0.07, SIREN_SECS = 9;
-  let ctx = null, master, musicBus, humGain, sirenGain, sirenOsc, noiseBuf;
+  let ctx = null, master, musicBus, sfxBus, humGain, sirenGain, sirenOsc, noiseBuf;
   let muted = false;
   try { muted = localStorage.getItem('ab_mute') === '1'; } catch (e) {}
+  const vol = { music: 1, narr: 1, fx: 1 };
+  try { const p = JSON.parse(localStorage.getItem('ab_vol') || '{}') || {}; for (const k in vol) if (typeof p[k] === 'number' && isFinite(p[k])) vol[k] = Math.min(1, Math.max(0, p[k])); } catch (e) {}
   let chordT = 0, chordI = 0, sirenT = 0, wasAlarm = false, lastShot = 0, lastHit = 0;
 
   function init() {
@@ -13,7 +15,8 @@
     if (!AC) return;
     ctx = new AC();
     master = ctx.createGain(); master.gain.value = muted ? 0 : MASTER; master.connect(ctx.destination);
-    musicBus = ctx.createGain(); musicBus.gain.value = MUSIC;
+    musicBus = ctx.createGain(); musicBus.gain.value = MUSIC * vol.music;
+    sfxBus = ctx.createGain(); sfxBus.gain.value = vol.fx; sfxBus.connect(master);
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
     musicBus.connect(lp); lp.connect(master);
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
@@ -27,13 +30,13 @@
     const lfo = ctx.createOscillator(); lfo.frequency.value = 0.35;
     const lg = ctx.createGain(); lg.gain.value = 0.25;
     lfo.connect(lg); lg.connect(humGain.gain);
-    o1.connect(hf); o2.connect(hf); hf.connect(humGain); humGain.connect(master);
+    o1.connect(hf); o2.connect(hf); hf.connect(humGain); humGain.connect(sfxBus);
     o1.start(); o2.start(); lfo.start();
     // siren
     sirenGain = ctx.createGain(); sirenGain.gain.value = 0;
     const sf = ctx.createBiquadFilter(); sf.type = 'lowpass'; sf.frequency.value = 1100;
     sirenOsc = ctx.createOscillator(); sirenOsc.type = 'square'; sirenOsc.frequency.value = 500;
-    sirenOsc.connect(sf); sf.connect(sirenGain); sirenGain.connect(master);
+    sirenOsc.connect(sf); sf.connect(sirenGain); sirenGain.connect(sfxBus);
     sirenOsc.start();
   }
   ['pointerdown', 'keydown', 'click', 'touchend'].forEach(ev => window.addEventListener(ev, init));
@@ -44,7 +47,7 @@
     const g = ctx.createGain(), t = ctx.currentTime;
     f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
     g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    s.connect(f); f.connect(g); g.connect(master);
+    s.connect(f); f.connect(g); g.connect(sfxBus);
     s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.02);
   }
   function tone(f0, f1, dur, vol, type) {
@@ -52,7 +55,7 @@
     o.type = type || 'sine';
     o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
     g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + 0.02);
+    o.connect(g); g.connect(sfxBus); o.start(t); o.stop(t + dur + 0.02);
   }
   const ready = () => ctx && ctx.state === 'running' && !muted;
 
@@ -91,6 +94,18 @@
       return muted;
     },
     get muted() { return muted; },
+    getVol(name) { return vol[name] === undefined ? 1 : vol[name]; },
+    setVol(name, v) {
+      if (!(name in vol)) return;
+      vol[name] = Math.min(1, Math.max(0, +v || 0));
+      try { localStorage.setItem('ab_vol', JSON.stringify(vol)); } catch (e) {}
+      if (ctx) {
+        if (musicBus) musicBus.gain.setTargetAtTime(MUSIC * vol.music, ctx.currentTime, 0.03);
+        if (sfxBus) sfxBus.gain.setTargetAtTime(vol.fx, ctx.currentTime, 0.03);
+      }
+      if (window.narrApplyVolume) window.narrApplyVolume();
+    },
+    preview() { if (ready()) this.turret('rifle'); },
     // st: { scene, alarm } while playing, or null (menu / paused / game over)
     update(dt, st) {
       if (!ctx || ctx.state !== 'running') return;

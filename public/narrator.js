@@ -72,8 +72,15 @@
     return DIR + t[0] + '_' + String(n).padStart(2, '0') + '.mp3';
   };
 
+  function narrVol() {
+    let v = 1;
+    try { if (window.SFX && SFX.getVol) v = SFX.getVol('narr'); } catch (e) {}
+    return VOLUME * v;
+  }
+  window.narrApplyVolume = function () { if (audio) audio.volume = Math.min(1, Math.max(0, narrVol())); };
+
   window.narrPlay = function (clip) {
-    if (!clip || isMuted()) return;
+    if (!clip || isMuted() || narrVol() <= 0) return;
     const m = String(clip).match(/vo_[a-z0-9_]+?_\d+/i);
     const urgent = m ? INTERRUPT.test(m[0]) : false;
     if (!audio) {
@@ -87,7 +94,7 @@
     }
     try {
       audio.src = clip.indexOf('/') === 0 || /^https?:/.test(clip) ? clip : (clip.indexOf(DIR) === 0 ? clip : DIR + clip);
-      audio.volume = VOLUME;
+      audio.volume = Math.min(1, Math.max(0, narrVol()));
       playingUntilEnd = true;
       const p = audio.play();
       if (p && p.catch) p.catch(() => { playingUntilEnd = false; });
