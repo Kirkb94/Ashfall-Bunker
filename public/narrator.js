@@ -46,7 +46,12 @@
   const INTERRUPT = /door_breach|victory|defeat/;
   const COOLDOWN_MS = 8000, VOLUME = 0.9;
   const last = {}, lastTake = {};
-  let audio = null, playingUntilEnd = false;
+  let audio = null, playingUntilEnd = false, pendingClip = null;
+  function playPending() {
+    if (!pendingClip) return;
+    const c = pendingClip; pendingClip = null;
+    window.narrPlay(c);
+  }
 
   function isMuted() {
     try {
@@ -77,7 +82,11 @@
     try { if (window.SFX && SFX.getVol) v = SFX.getVol('narr'); } catch (e) {}
     return VOLUME * v;
   }
-  window.narrApplyVolume = function () { if (audio) audio.volume = Math.min(1, Math.max(0, narrVol())); };
+  window.narrApplyVolume = function () {
+    if (!audio) return;
+    if (isMuted() || narrVol() <= 0) { try { audio.pause(); } catch (e) {} playingUntilEnd = false; pendingClip = null; return; }
+    audio.volume = Math.min(1, Math.max(0, narrVol()));
+  };
 
   window.narrPlay = function (clip) {
     if (!clip || isMuted() || narrVol() <= 0) return;
@@ -85,11 +94,12 @@
     const urgent = m ? INTERRUPT.test(m[0]) : false;
     if (!audio) {
       audio = new Audio();
-      audio.addEventListener('ended', () => { playingUntilEnd = false; });
-      audio.addEventListener('error', () => { playingUntilEnd = false; });
+      audio.addEventListener('ended', () => { playingUntilEnd = false; playPending(); });
+      audio.addEventListener('error', () => { playingUntilEnd = false; playPending(); });
     }
     if (playingUntilEnd && !audio.paused && !audio.ended) {
-      if (!urgent) return; // never overlap
+      if (!urgent) { pendingClip = clip; return; } // never overlap: hold the latest and play it when this one ends
+      pendingClip = null;
       audio.pause();
     }
     try {

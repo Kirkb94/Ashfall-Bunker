@@ -33,6 +33,7 @@
   .threat.hot{color:var(--red);font-weight:600}
   .log{position:absolute;right:12px;top:46px;width:470px;display:flex;flex-direction:column;gap:4px;pointer-events:none}
   .dopen .log{right:406px}
+  .dopen #goals{display:none}
   .log div{background:rgba(14,10,6,.82);border-left:3px solid var(--amber);padding:5px 9px;border-radius:0 6px 6px 0;font-size:13px;animation:fade .3s ease}
   .log div.warn{border-left-color:var(--red)}
   .log div.good{border-left-color:var(--green)}
@@ -182,6 +183,15 @@
   /* accessibility: reduced motion */
   body.rm *,body.rm *::before,body.rm *::after{animation:none!important;transition:none!important}
   /* accessibility: colorblind (icons + patterns instead of color alone) */
+  /* accessibility: high contrast (opaque panels, white text/borders, boxed warnings) */
+  body.hc{--panel:#000;--line:#fff;--fg:#fff;--muted:#e6e6e6;--amber:#ffd24a;--red:#ff7b6e}
+  body.hc .hud{background:#000;border-bottom:2px solid #fff;font-weight:600}
+  body.hc .res .low{color:#fff;background:#b00020;outline:2px solid #fff;padding:0 4px;border-radius:3px;font-weight:800}
+  body.hc .res .low::before{content:'\26A0\FE0E ';display:inline-block}
+  body.hc .res i{outline:1px solid #fff}
+  body.hc .tools button,body.hc .btn,body.hc .tabs button{border:2px solid #fff;background:#000;color:#fff}
+  body.hc .log div{background:#000;color:#fff}
+  body.hc .prompt,body.hc .hint{background:#000;color:#fff;border:2px solid #fff}
   body.cb .res .low{text-decoration:underline}
   body.cb .res .low::before{content:'\26A0\FE0E ';text-decoration:none;display:inline-block}
   body.cb .threat.hot::before{content:'\203C\FE0E ';}
@@ -215,7 +225,9 @@
 <div id="stage"><div id="wrap">
   <canvas id="c" width="1280" height="720" aria-label="Ashfall Bunker game view"></canvas>
   <div class="hud" id="hud"></div>
-  <div id="goals" style="position:absolute;right:12px;top:46px;max-width:230px;padding:6px 10px;background:#120d08cc;border:1px solid var(--line);font-size:12px;line-height:1.5;pointer-events:none;z-index:2" hidden></div>
+  <div id="topstack" style="position:absolute;left:12px;top:46px;max-width:min(380px,calc(55% - 24px));display:flex;flex-direction:column;align-items:flex-start;gap:8px;pointer-events:none;z-index:6">
+    <div id="goals" style="max-width:230px;padding:6px 10px;background:#120d08cc;border:1px solid var(--line);font-size:12px;line-height:1.5;pointer-events:none" hidden></div>
+  </div>
   <div class="scavhud" id="scavhud" hidden></div>
   <div class="log" id="log" aria-live="polite"></div>
   <div class="tools" id="tools">
@@ -227,6 +239,7 @@
     <button id="tHelp">Help<kbd>H</kbd></button>
     <button id="tMute">Sound on<kbd>M</kbd></button>
     <button id="tCb" aria-pressed="false">Colorblind: off</button>
+    <button id="tHc" aria-pressed="false">High contrast: off</button>
     <button id="tRm" aria-pressed="false">Reduced motion: off</button>
     <button id="tDbg" aria-pressed="false" title="Show each survivor's food, rest, health and state">Crew debug<kbd>V</kbd></button>
   </div>

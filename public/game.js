@@ -123,6 +123,7 @@ const LAMP_LINES = {
 };
 // Exact narrator script text, one entry per recorded take (no [tags]). Popups show the take that plays.
 const VO_TEXT = {
+  vo_goal_tracker_01: "Goals are listed on the right. Assign a gunner, scavenge topside, then start and finish tower stage 1. The next step is highlighted.",
   vo_match_start_01: "Bunker systems online. Survivors present. Optimism, pending.",
   vo_match_start_02: "Welcome back. The apocalypse is outside. The snacks are inside.",
   vo_new_day_01: "Good morning. Everyone is alive, which is a pleasant surprise.",
@@ -226,6 +227,8 @@ function lampEv(ev, text, kind, delayMs) {
 }
 
 // ---------------------------------------------------------------- 2. game state
+const RAID_HOUR = 21;   // hour of day (0-23) when the nightly raid hits
+const RAID_CLOCK = String(RAID_HOUR).padStart(2, '0') + ':00';
 let S = null;          // the whole run (saved)
 let P = null;          // Mara, the player
 let scene = 'menu';    // menu | bunker | scav | over
@@ -265,7 +268,7 @@ function newRun() {
   placePlayer('bunker');
   fx.tracers = []; fx.parts = []; fx.nums = []; fx.bullets = [];
   logs.length = 0;
-  lampEv('match_start', 'Lamp online. Good morning, Mara. It is day 1, 08:00. The first raid is due at 21:00.');
+  lampEv('match_start', 'Lamp online. Good morning, Mara. It is day 1, 08:00. The first raid is due at ' + RAID_CLOCK + '.');
   lamp('Someone has to sit at a turret or it will not fire. Open Crew (C) to give people jobs and shifts.', '', 900);
   lamp('The signal tower needs electronics we do not have. Walk right across the surface to scavenge. Time keeps running while you are out.', '', 1800);
 }
@@ -443,7 +446,7 @@ function hourEvents(h) {
   if (h === 8) { if (S.alarm) toggleAlarm(); S.alarmAuto = false; if (d > 1) lampEv('new_day', 'Day ' + d + '. ' + summaryLine()); }
   if (h === 20) { if (d === 3) lampEv('boss_warn', 'Long-range scanner: a convoy with a painted-grin banner. That is Cinder. Raid in one hour.', 'warn'); else lampSay('raidWarn', 'warn'); }
   if (h === 8 && S.tower && !S.tower.paid && TOWER[S.tower.done] && !canPay(TOWER[S.tower.done].cost)) lampEv('exit_resources', 'Not enough materials for the next tower stage. Someone should scavenge topside.', 'warn');
-  if (h === 21) queueRaid(d);
+  if (h === RAID_HOUR) queueRaid(d);
   if (h === 5 && d >= 2) queueProbe(d);
   if (h === 2) revoltCheck();
   if (h === 12 && d >= 2 && Math.random() < 0.55) wandererAtDoor();
@@ -936,6 +939,11 @@ function attack(e, b, target, tx, what) {
   target.hp = Math.max(0, target.hp - b.dmg); burst(tx + 6, FLOORS[0] - 20, '#bbb', 3);
   if (window.SFX) SFX.hit(what);
   if (what === 'door') {
+    const dm = b.dmg || 1;
+    addShake(clamp(0.08 + dm * 0.015, 0.08, 0.45));
+    if (window.SFX && SFX.rumble) SFX.rumble(clamp(dm / 20, 0.15, 1));
+  }
+  if (what === 'door') {
     if (target.hp > 0 && target.hp < target.max * 0.25) { if (!doorLowSaid) { doorLowSaid = true; lampEv('door_low', 'Door integrity critical.', 'warn'); } }
     else { if (target.hp > target.max * 0.5) doorLowSaid = false; narrPlay(narrPick('door_attack')); }
   }
@@ -946,7 +954,7 @@ function breach() {
   // Called each time something gets in. The alarm sounds once per night, so the player can still stand people down.
   if (!S.alarm && !S.alarmAuto) { S.alarmAuto = true; toggleAlarm(); }
   if (S.breached) return;
-  S.breached = true; addShake(0.5);
+  S.breached = true; addShake(0.5); if (window.SFX && SFX.rumble) SFX.rumble(1);
   atLoc({ x: DOOR_X, y: FLOORS[0] }); lampSay('breach', 'warn'); moment('The door was breached');
   if (!S.breachLog) {
     if (S.tower.done >= 1) { S.breachLog = 2; lamp(pick(LAMP_LINES.breachCause), 'warn', 2500); }
@@ -1329,22 +1337,28 @@ const prefs = (() => {
   let p = {};
   try { p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}; } catch (e) { p = {}; }
   let osRm = false; try { osRm = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) {}
-  return { cb: !!p.cb, rm: typeof p.rm === 'boolean' ? p.rm : osRm };
+  let osHc = false; try { osHc = !!(window.matchMedia && matchMedia('(prefers-contrast: more)').matches); } catch (e) {}
+  return { cb: !!p.cb, hc: typeof p.hc === 'boolean' ? p.hc : osHc, rm: typeof p.rm === 'boolean' ? p.rm : osRm };
 })();
 let shakeT = 0;
 function addShake(s) { if (!prefs.rm) shakeT = Math.max(shakeT, s); }
 function applyPrefs() {
   document.body.classList.toggle('cb', prefs.cb);
   document.body.classList.toggle('rm', prefs.rm);
+  document.body.classList.toggle('hc', prefs.hc);
+  const h = document.getElementById('tHc');
+  if (h) { h.firstChild.nodeValue = 'High contrast: ' + (prefs.hc ? 'on' : 'off'); h.setAttribute('aria-pressed', prefs.hc ? 'true' : 'false'); }
   const a = document.getElementById('tCb'), b = document.getElementById('tRm');
   if (a) { a.firstChild.nodeValue = 'Colorblind: ' + (prefs.cb ? 'on' : 'off'); a.setAttribute('aria-pressed', prefs.cb ? 'true' : 'false'); }
   if (b) { b.firstChild.nodeValue = 'Reduced motion: ' + (prefs.rm ? 'on' : 'off'); b.setAttribute('aria-pressed', prefs.rm ? 'true' : 'false'); }
   if (prefs.rm) shakeT = 0;
 }
-function savePrefs() { try { localStorage.setItem(PREF_KEY, JSON.stringify({ cb: prefs.cb, rm: prefs.rm })); } catch (e) {} applyPrefs(); if (typeof renderHud === 'function') { renderHud(); renderDrawer(); } }
+function savePrefs() { try { localStorage.setItem(PREF_KEY, JSON.stringify({ cb: prefs.cb, hc: prefs.hc, rm: prefs.rm })); } catch (e) {} applyPrefs(); if (typeof renderHud === 'function') { renderHud(); renderDrawer(); } }
 { const a = document.getElementById('tCb'), b = document.getElementById('tRm');
   if (a) a.onclick = e => { prefs.cb = !prefs.cb; savePrefs(); e.currentTarget.blur(); };
   if (b) b.onclick = e => { prefs.rm = !prefs.rm; savePrefs(); e.currentTarget.blur(); };
+  const hcb = document.getElementById('tHc');
+  if (hcb) hcb.onclick = e => { prefs.hc = !prefs.hc; savePrefs(); e.currentTarget.blur(); };
   applyPrefs(); }
 function draw() {
   g.save();
@@ -1366,7 +1380,9 @@ function drawBunker() {
   g.fillStyle = '#1a130d'; g.fillRect(0, FLOORS[0] + 16, W, WH);
   for (const r of rock) { g.fillStyle = 'rgba(120,90,60,' + r.a + ')'; g.fillRect(r.x, r.y, r.r * 2, r.r); }
   // rooms
+  lampTick();
   for (const [k, r] of Object.entries(ROOMS)) if (!r.build) drawRoom(k, r);
+  drawBunkerDust();
   // shaft
   g.fillStyle = '#0e0a07'; g.fillRect(LADDER_X - 18, FLOORS[0], 36, FLOORS[3] - FLOORS[0] + 4);
   g.strokeStyle = '#6b5a40'; g.lineWidth = 2;
@@ -1396,7 +1412,7 @@ function drawRaidForecast() {
   let list = null, label = '', urgent = false;
   if (S.spawns.length) { list = S.spawns.map(s => s.type); label = 'INCOMING'; urgent = true; }
   else if (!S.enemies.length) {
-    const to21 = (21 - hourF() + 24) % 24;
+    const to21 = (RAID_HOUR - hourF() + 24) % 24;
     if (to21 <= 6) { list = raidPlan(day()); const m = Math.round(to21 * 60); label = 'RAID IN ' + Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0'); urgent = to21 < 1; }
   }
   if (!list || !list.length) return;
@@ -1425,14 +1441,65 @@ function drawRaidForecast() {
   if (urgent) { g.fillStyle = '#ff5a4e'; g.fillText('\u25c0', W - 30, FLOORS[0] - 30); }
   g.restore();
 }
+// Lamp flicker + dust. Stateless (time-based) so nothing to save or sync.
+let lampK = 0;
+function lampTick() {
+  const target = (S.raidActive || S.alarm || (S.spawns && S.spawns.length)) ? 1 : 0;
+  lampK += (target - lampK) * 0.04;
+}
+function lampFlick(seed) {
+  const t = performance.now() / 1000;
+  if (prefs.rm) return 1 - 0.06 * (0.5 + 0.5 * Math.sin(t * 1.3 + seed)) * (0.4 + lampK);
+  const k = 0.2 + 0.8 * lampK;
+  const n = Math.sin(t * (6 + 8 * lampK) + seed) * Math.sin(t * 3.7 + seed * 2.1) + 0.5 * Math.sin(t * (17 + 20 * lampK) + seed * 0.7);
+  let f = 1 - k * 0.22 * Math.max(0, n);
+  if (lampK > 0.3 && Math.sin(t * 2.3 + seed * 5) > 0.92) f *= 1 - 0.5 * lampK;
+  return Math.max(0.25, Math.min(1, f));
+}
+function drawDustBox(x0, y0, w, h, n, seed, lit) {
+  const t = performance.now() / 1000, sp = prefs.rm ? 0.25 : 1 + lampK * 1.5;
+  for (let i = 0; i < n; i++) {
+    const s = seed * 13.7 + i * 7.31;
+    const px = x0 + (((Math.sin(s) * 0.5 + 0.5) * w + t * sp * (4 + (i % 5) * 2) + Math.sin(t * 0.6 + s) * 6) % w + w) % w;
+    const py = y0 + (((Math.sin(s * 1.9) * 0.5 + 0.5) * h + t * sp * (1.5 + (i % 3)) * (i % 2 ? 1 : -1)) % h + h) % h;
+    const tw = 0.5 + 0.5 * Math.sin(t * 1.5 + s);
+    g.fillStyle = 'rgba(255,214,150,' + (0.12 + 0.22 * tw * lit) + ')';
+    g.fillRect(px, py, 1.6, 1.6);
+  }
+}
+function drawBunkerDust() {
+  for (const [k, r] of Object.entries(ROOMS)) {
+    if (r.build) continue;
+    const y0 = FLOORS[r.floor - 1] + (r.floor === 1 ? 16 : 10), y1 = FLOORS[r.floor];
+    drawDustBox(r.x0 + 2, y0 + 2, r.x1 - r.x0 - 4, y1 - y0 - 4, 14, r.x0, lampFlick(r.x0 * 0.01));
+  }
+}
+function drawScavLantern(ox) {
+  const f = lampFlick(3.3), px = P.x - ox, py = P.y - 30;
+  g.save(); g.globalCompositeOperation = 'lighter';
+  const rg = g.createRadialGradient(px, py, 4, px, py, 170);
+  rg.addColorStop(0, 'rgba(255,170,70,' + (0.30 * f) + ')'); rg.addColorStop(1, 'rgba(255,170,70,0)');
+  g.fillStyle = rg; g.fillRect(px - 175, py - 175, 350, 350);
+  g.restore();
+  const t = performance.now() / 1000, sp = prefs.rm ? 0.3 : 1 + lampK * 2.5;
+  for (let i = 0; i < 40; i++) {
+    const s = i * 9.13;
+    const x = (((Math.sin(s) * 0.5 + 0.5) * W - t * sp * (10 + (i % 6) * 5) - ox * 0.15) % W + W) % W;
+    const y = (((Math.sin(s * 2.3) * 0.5 + 0.5) * H + Math.sin(t * 0.8 + s) * 12 + t * sp * 2) % H + H) % H;
+    const near = Math.max(0, 1 - Math.hypot(x - px, y - py) / 190);
+    g.fillStyle = 'rgba(230,200,160,' + (0.10 + 0.30 * near * f) + ')';
+    g.fillRect(x, y, 1.6, 1.6);
+  }
+}
 function drawRoom(k, r) {
   const y0 = FLOORS[r.floor - 1] + (r.floor === 1 ? 16 : 10), y1 = FLOORS[r.floor];
   const gr = g.createLinearGradient(0, y0, 0, y1); gr.addColorStop(0, '#2a1d12'); gr.addColorStop(1, '#4a3018');
   g.fillStyle = gr; g.fillRect(r.x0, y0, r.x1 - r.x0, y1 - y0);
   // lamplight
   const lx = (r.x0 + r.x1) / 2, rg = g.createRadialGradient(lx, y0 + 18, 4, lx, y0 + 40, (r.x1 - r.x0) * 0.6);
-  rg.addColorStop(0, 'rgba(255,170,70,.32)'); rg.addColorStop(1, 'rgba(255,170,70,0)'); g.fillStyle = rg; g.fillRect(r.x0, y0, r.x1 - r.x0, y1 - y0);
-  g.fillStyle = '#ffcf7a'; g.fillRect(lx - 6, y0 + 2, 12, 4);
+  const lf = lampFlick(r.x0 * 0.01);
+  rg.addColorStop(0, 'rgba(255,170,70,' + (0.32 * lf) + ')'); rg.addColorStop(1, 'rgba(255,170,70,0)'); g.fillStyle = rg; g.fillRect(r.x0, y0, r.x1 - r.x0, y1 - y0);
+  g.fillStyle = lf < 0.6 ? '#b8883f' : '#ffcf7a'; g.fillRect(lx - 6, y0 + 2, 12, 4);
   g.strokeStyle = '#5a4428'; g.lineWidth = 2; g.strokeRect(r.x0 + 1, y0 + 1, r.x1 - r.x0 - 2, y1 - y0 - 2);
   g.fillStyle = 'rgba(255,214,150,.8)'; g.font = '600 12px "Chakra Petch", sans-serif';
   const lvl = S.rooms[k] > 1 ? ' II' : '';
@@ -1635,6 +1702,8 @@ function drawScav() {
   if (!S.player.down) { g.save(); g.translate(-ox, 0); drawMara(); g.restore(); }
   drawFx(ox, true);
   if (sky.dayAmt < 1) { g.fillStyle = 'rgba(5,6,18,' + (0.5 * (1 - sky.dayAmt)) + ')'; g.fillRect(0, 0, W, H); }
+  lampTick();
+  drawScavLantern(ox);
   drawScavCompass(ox);
 }
 
@@ -1746,9 +1815,9 @@ function setSpeed(s) { speed = s; paused = false; renderHud(); }
 function nextThreat() {
   if (S.enemies.length) return { hot: true, text: S.enemies.length + ' hostiles' + (S.breached ? ' · HATCH BREACHED' : '') };
   if (S.spawns.length) return { hot: true, text: 'Raid incoming · ' + S.spawns.length + ' to come' };
-  const h = hourF(); const to21 = (21 - h + 24) % 24; const m = Math.round(to21 * 60);
+  const h = hourF(); const to21 = (RAID_HOUR - h + 24) % 24; const m = Math.round(to21 * 60);
   const fc = to21 <= 6 ? raidPlan(day()) : null;
-  return { hot: to21 < 1.5, text: 'Next raid in ' + (m >= 60 ? Math.floor(m / 60) + 'h ' : '') + (m % 60) + 'm' + (fc ? ' · ' + fc.length + ' hostiles' : '') };
+  return { hot: to21 < 1.5, text: 'Next raid in ' + (m >= 60 ? Math.floor(m / 60) + 'h ' : '') + (m % 60) + 'm (' + RAID_CLOCK + ')' + (fc ? ' · ' + fc.length + ' hostiles' : '') };
 }
 function goalSteps() {
   const d = S.goalDone || (S.goalDone = {});
@@ -1775,7 +1844,7 @@ let raidOpen = false;
 function raidPopHTML() {
   const cnt = {}; let comp = null;
   if (S.spawns.length) comp = S.spawns.map(s => s.type);
-  else if (!S.enemies.length && (21 - hourF() + 24) % 24 <= 6) comp = raidPlan(day());
+  else if (!S.enemies.length && (RAID_HOUR - hourF() + 24) % 24 <= 6) comp = raidPlan(day());
   if (comp) comp.forEach(t => { cnt[t] = (cnt[t] || 0) + 1; });
   const compTxt = comp ? Object.keys(cnt).map(t => cnt[t] + ' × ' + (ENEMIES[t] ? ENEMIES[t].name : t)).join(', ') : 'Not scouted yet (shows within 6h of the raid)';
   const dp = S.door.hp >= S.door.max;
@@ -2406,9 +2475,31 @@ window.addEventListener('keydown', e => {
   if (k === 'x' && scene === 'bunker' && S) toggleDig();
   if (k === 'p') { paused = !paused; renderHud(); }
   if (k === '1' || k === '2' || k === '3') setSpeed(+k);
+  if ((k === '[' || k === ']') && scene === 'bunker' && S) cycleCrew(k === ']' ? 1 : -1);
   if (k === 'escape') { if (!$('#drawer').hidden) closeDrawer(); else showPauseMenu(); }
 });
 window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+// cycle the selected survivor through living crew (same effect as clicking a crew card)
+function cycleCrew(dir) {
+  const list = S.crew.filter(c => c.alive && !c.left).sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+  if (!list.length) return;
+  const i = list.findIndex(c => String(c.id) === String(sel));
+  const n = list[i < 0 ? (dir > 0 ? 0 : list.length - 1) : (i + dir + list.length) % list.length];
+  sel = n.id; focusFx = { id: sel, t: performance.now() };
+  try { bcamFocus(sel); } catch (_) {}
+  renderDrawer();
+}
+// visible keyboard hint bar (hidden on touch devices and outside bunker/scavenge play)
+(function keyBar() {
+  const st = document.createElement('style');
+  st.textContent = '#keybar{position:absolute;left:50%;bottom:6px;transform:translateX(-50%);padding:3px 10px;background:#120d08cc;border:1px solid var(--line);font-size:12px;line-height:1.4;white-space:nowrap;pointer-events:none;z-index:3;color:#cdb99a}#keybar kbd{margin:0 3px 0 0;padding:0 4px;border:1px solid var(--line);border-radius:3px}#keybar span{margin-right:10px}#keybar span:last-child{margin-right:0}body.touch #keybar{display:none}';
+  document.head.appendChild(st);
+  const el = document.createElement('div');
+  el.id = 'keybar'; el.hidden = true; el.setAttribute('aria-hidden', 'true');
+  el.innerHTML = '<span><kbd>P</kbd>Pause</span><span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd>Speed</span><span><kbd>C</kbd>Crew</span><span><kbd>[</kbd><kbd>]</kbd>Prev/next survivor</span>';
+  const w = document.getElementById('wrap'); if (w) w.appendChild(el);
+  setInterval(() => { el.hidden = !((scene === 'bunker' || scene === 'scav') && S && !S.over); }, 300);
+})();
 function clearInput() { for (const k in keys) keys[k] = false; mouse.down = false; document.querySelectorAll('#touch button.on').forEach(b => b.classList.remove('on')); }
 function autoPause() {
   clearInput();
@@ -2453,7 +2544,7 @@ $('#tMute').onclick = e => { if (window.SFX) SFX.toggleMute(); e.currentTarget.b
 // menus
 function overlay(html) { const o = $('#overlay'); o.innerHTML = html; o.hidden = !html; }
 const HELP = `<div class="help" tabindex="0" aria-label="Controls and tips. Use the arrow keys to scroll.">
-  <h3>THE LOOP</h3><ul><li>Days are for work: give the crew jobs and shifts, build, and scavenge topside.</li><li>At 21:00 every night something attacks from the east. Bigger every night. Cinder comes on night 3.</li><li>Finish the four stages of the <b>signal tower</b> to win. Lose if everyone dies.</li></ul>
+  <h3>THE LOOP</h3><ul><li>Days are for work: give the crew jobs and shifts, build, and scavenge topside.</li><li>At ' + RAID_CLOCK + ' every night something attacks from the east. Bigger every night. Cinder comes on night 3.</li><li>Finish the four stages of the <b>signal tower</b> to win. Lose if everyone dies.</li></ul>
   <h3>THE CREW</h3><ul><li>Turrets only fire with someone on them. Good shots hit more.</li><li>Shifts decide who sleeps when. Past 16 hours awake people slow down fast. Hungry or grieving people work slower.</li><li>Meals are at 07:00, 13:00 and 19:00. Kitchen crew grow raw food and cook it into meals (1 food each) at the serving station; hungry crew fetch a meal there and eat it in the common room.</li><li>Badly hurt crew go to the med bay on their own. Doc heals them faster.</li><li>Bram, Doc and Tick share history: paired on a job they work better. Lose one and the others grieve.</li><li>Newcomers may leave in the night with your supplies if morale is low.</li></ul>
   <h3>CONTROLS</h3><ul><li><kbd>A</kbd><kbd>D</kbd> move · <kbd>W</kbd><kbd>S</kbd> climb the shaft · <kbd>${keyLabel(BIND.jump)}</kbd> jump · <kbd>${keyLabel(BIND.shoot)}</kbd> or click to shoot</li><li><kbd>${keyLabel(BIND.interact)}</kbd> interact: walk off the right edge of the surface to scavenge · search crates · invite wanderers</li><li><kbd>C</kbd> crew · <kbd>B</kbd> build · <kbd>T</kbd> tower · <kbd>G</kbd> battle stations · <kbd>H</kbd> help · <kbd>P</kbd> pause · <kbd>1</kbd>–<kbd>3</kbd> speed · click a person to select them</li><li class="touchonly"><b>Touch:</b> left pad moves and climbs (▲▼), JUMP jumps, FIRE shoots, E interacts. Tap a person to select them. Use the top buttons for Crew, Build and Tower.</li></ul>
 </div>`;
@@ -2516,7 +2607,7 @@ function showHelp(inGame, from) {
 const KEYBINDS = [
   ['Click', 'Shoot (also your shoot key)'], ['C', 'Crew panel'], ['B', 'Build panel'], ['T', 'Signal tower panel'],
   ['R', 'Relationships panel'], ['G', 'Battle stations'], ['M', 'Mute / unmute all sound'], ['H', 'How to play'],
-  ['V', 'Crew debug overlay'], ['P', 'Pause'], ['1 / 2 / 3', 'Game speed'], ['Esc', 'Close panel / pause menu']
+  ['V', 'Crew debug overlay'], ['P', 'Pause'], ['1 / 2 / 3', 'Game speed'], ['[ / ]', 'Select previous / next survivor'], ['Esc', 'Close panel / pause menu']
 ];
 const TEXT_SIZES = [['normal', 'Normal', 1], ['large', 'Large', 1.2], ['xlarge', 'Extra large', 1.4]];
 function getTextSize() { try { const v = localStorage.getItem('ashfall.textsize'); if (TEXT_SIZES.some(t => t[0] === v)) return v; } catch (_) {} return 'normal'; }
@@ -2581,7 +2672,7 @@ function tutSteps() {
     { hl: ['tCrew'], text: 'Step 1/5 · ' + (touch ? 'Tap <b>Crew</b>' : 'Press <kbd>C</kbd> (Crew)') + ' and tap a job chip to assign someone. Turrets only fire with a gunner on them.', done: () => tut.job },
     { hl: ['tBuild'], text: 'Step 2/5 · ' + (touch ? 'Tap <b>Build</b>' : 'Press <kbd>B</kbd> (Build)') + ' and build a second turret. It needs scrap and parts, so scavenge topside if you are short.', done: () => !!S.turrets[1] },
     { hl: ['tCrew'], text: 'Step 3/5 · Open <b>Crew</b> and put someone on the new turret (the Turret 2 job chip). An empty turret does not fire.', done: () => !S.turrets[1] || S.turrets[1].type === 'coil' || S.crew.some(c => c.alive && c.job === 'turretB') },
-    { hl: ['tAlarm'], text: 'Step 4/5 · A raid hits at 21:00 from the east. ' + (touch ? 'Use the battle stations button' : 'Press <kbd>G</kbd> for battle stations') + ' when it starts to wake everyone and man the turrets.', done: () => !!S.raidActive || S.stats.raids > 0 },
+    { hl: ['tAlarm'], text: 'Step 4/5 · A raid hits at ' + RAID_CLOCK + ' from the east. ' + (touch ? 'Use the battle stations button' : 'Press <kbd>G</kbd> for battle stations') + ' when it starts to wake everyone and man the turrets.', done: () => !!S.raidActive || S.stats.raids > 0 },
     { hl: [], text: 'Step 5/5 · Watch the first raid. Stay near the door and repair it from Build if it gets low.', done: () => (S.stats.repelled || 0) > 0 }
   ];
 }
@@ -2597,8 +2688,8 @@ function tutTick() {
   let el = document.getElementById('tut');
   if (!el) {
     el = document.createElement('div'); el.id = 'tut'; el.setAttribute('role', 'status');
-    el.style.cssText = 'position:absolute;left:50%;top:70px;transform:translateX(-50%);max-width:560px;z-index:6;background:#241a10;border:1px solid #c9a27a;border-radius:8px;padding:8px 12px;font-size:14px;line-height:1.4;color:#f3e6d0;display:flex;gap:10px;align-items:center';
-    $('#wrap').appendChild(el);
+    el.style.cssText = 'position:relative;order:-1;max-width:100%;box-sizing:border-box;pointer-events:auto;background:#241a10;border:1px solid #c9a27a;border-radius:8px;padding:8px 12px;font-size:14px;line-height:1.4;color:#f3e6d0;display:flex;gap:10px;align-items:center';
+    ($('#topstack') || $('#wrap')).appendChild(el);
   }
   el.innerHTML = '<span style="flex:1">' + steps[s].text + '</span><button id="tutSkip" style="background:none;border:1px solid #6b5a44;border-radius:5px;padding:3px 8px;color:inherit;cursor:pointer">Skip tutorial</button>';
   $('#tutSkip').onclick = () => tutFinish();

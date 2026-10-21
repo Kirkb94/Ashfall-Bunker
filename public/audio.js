@@ -2,12 +2,12 @@
 // SFX.turret(type), SFX.hit(what), SFX.update(dt, state|null), SFX.toggleMute()
 (function () {
   const MASTER = 0.6, MUSIC = 0.05, HUM = 0.035, SIREN = 0.07, SIREN_SECS = 9;
-  let ctx = null, master, musicBus, sfxBus, humGain, sirenGain, sirenOsc, noiseBuf;
+  let ctx = null, master, musicBus, sfxBus, ambBus, humGain, sirenGain, sirenOsc, noiseBuf;
   let muted = false;
   try { muted = localStorage.getItem('ab_mute') === '1'; } catch (e) {}
   const vol = { music: 1, narr: 1, fx: 1 };
   try { const p = JSON.parse(localStorage.getItem('ab_vol') || '{}') || {}; for (const k in vol) if (typeof p[k] === 'number' && isFinite(p[k])) vol[k] = Math.min(1, Math.max(0, p[k])); } catch (e) {}
-  let chordT = 0, chordI = 0, sirenT = 0, wasAlarm = false, lastShot = 0, lastHit = 0;
+  let chordT = 0, chordI = 0, sirenT = 0, wasAlarm = false, lastShot = 0, lastHit = 0, lastRumble = 0;
 
   function init() {
     if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return; }
@@ -17,6 +17,7 @@
     master = ctx.createGain(); master.gain.value = muted ? 0 : MASTER; master.connect(ctx.destination);
     musicBus = ctx.createGain(); musicBus.gain.value = MUSIC * vol.music;
     sfxBus = ctx.createGain(); sfxBus.gain.value = vol.fx; sfxBus.connect(master);
+    ambBus = ctx.createGain(); ambBus.gain.value = vol.music; ambBus.connect(master);
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
     musicBus.connect(lp); lp.connect(master);
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
@@ -30,7 +31,7 @@
     const lfo = ctx.createOscillator(); lfo.frequency.value = 0.35;
     const lg = ctx.createGain(); lg.gain.value = 0.25;
     lfo.connect(lg); lg.connect(humGain.gain);
-    o1.connect(hf); o2.connect(hf); hf.connect(humGain); humGain.connect(sfxBus);
+    o1.connect(hf); o2.connect(hf); hf.connect(humGain); humGain.connect(ambBus);
     o1.start(); o2.start(); lfo.start();
     // siren
     sirenGain = ctx.createGain(); sirenGain.gain.value = 0;
@@ -86,10 +87,20 @@
       if (what === 'door') { tone(95, 38, 0.3, 0.7, 'sine'); noise(0.18, 'lowpass', 500, 120, 0.4); }
       else { noise(0.2, 'bandpass', 1400, 600, 0.25, 6); tone(320, 200, 0.12, 0.15, 'square'); }
     },
+    // low rumble for door impacts; intensity 0..1
+    rumble(intensity) {
+      if (!ready()) return;
+      const now = ctx.currentTime; if (now - lastRumble < 0.12) return; lastRumble = now;
+      const k = Math.min(1, Math.max(0.1, +intensity || 0.3));
+      const dur = 0.25 + 0.5 * k;
+      tone(55 + 15 * k, 26, dur, 0.25 + 0.55 * k, 'sine');
+      noise(dur, 'lowpass', 140 + 100 * k, 40, 0.15 + 0.35 * k);
+    },
     toggleMute() {
       muted = !muted;
       try { localStorage.setItem('ab_mute', muted ? '1' : '0'); } catch (e) {}
       if (master) master.gain.setTargetAtTime(muted ? 0 : MASTER, ctx.currentTime, 0.05);
+      if (window.narrApplyVolume) window.narrApplyVolume();
       const b = document.getElementById('tMute'); if (b) b.firstChild.nodeValue = muted ? 'Sound off' : 'Sound on';
       return muted;
     },
@@ -101,6 +112,7 @@
       try { localStorage.setItem('ab_vol', JSON.stringify(vol)); } catch (e) {}
       if (ctx) {
         if (musicBus) musicBus.gain.setTargetAtTime(MUSIC * vol.music, ctx.currentTime, 0.03);
+        if (ambBus) ambBus.gain.setTargetAtTime(vol.music, ctx.currentTime, 0.03);
         if (sfxBus) sfxBus.gain.setTargetAtTime(vol.fx, ctx.currentTime, 0.03);
       }
       if (window.narrApplyVolume) window.narrApplyVolume();
