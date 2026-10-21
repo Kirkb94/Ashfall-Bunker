@@ -196,6 +196,12 @@
   .setp{text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 20px;max-height:430px;overflow:auto;font-size:14px;width:100%;box-sizing:border-box}
   .setp h3{margin:10px 0 6px;font:600 14px var(--disp);letter-spacing:.1em;color:var(--amber)}
   .setp h3:first-child{margin-top:0}
+  :root{--ts:1}
+  .hud,.tools,.log,.prompt,.hint,.dbody,.setp{zoom:var(--ts)}
+  .setp{max-height:calc(430px / var(--ts))}
+  .tsrow{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
+  .tsrow .btn{min-width:0!important;padding:8px 14px}
+  .tsrow .btn[aria-pressed="true"]{border-color:var(--amber);color:var(--amber);font-weight:600}
   .srow{display:grid;grid-template-columns:90px 1fr 48px;gap:10px;align-items:center;margin:8px 0}
   .srow input{width:100%;accent-color:var(--amber)}
   .srow b{text-align:right}
