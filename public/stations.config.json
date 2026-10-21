@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "defaults": { "capacity": null, "ttlMin": 30, "blockTicks": 120 },
+  "stations": {
+    "turretA": { "capacity": 1 },
+    "turretB": { "capacity": 1 },
+    "door": { "capacity": 6 },
+    "workshop": { "capacity": 4 },
+    "signal": { "capacity": 3 },
+    "kitchen": { "capacity": 4 },
+    "med": { "capacity": 3 },
+    "sleep": { "capacity": 20 },
+    "idle": { "capacity": null }
+  }
+}

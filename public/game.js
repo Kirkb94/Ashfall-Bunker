@@ -60,6 +60,34 @@ const JOBS = {
   mine:     { label: 'Miner', short: 'Mine' },
   idle:     { label: 'Rest', short: 'Rest' },
 };
+// Station tuning: public/stations.config.json overrides these fallbacks. capacity null = unlimited.
+const STATIONS_FALLBACK = { capacity: null, ttlMin: 30, blockTicks: 120 };
+const STATIONS = {};
+for (const k of Object.keys(JOBS)) STATIONS[k] = Object.assign({}, STATIONS_FALLBACK);
+for (const [k, cap] of Object.entries({ turretA: 1, turretB: 1, door: 6, workshop: 4, signal: 3, kitchen: 4, med: 3, sleep: 20 })) STATIONS[k].capacity = cap;
+function loadStationsConfig() {
+  const okVal = (key, v) => key === 'capacity' ? (v === null || (Number.isInteger(v) && v >= 0)) : (Number.isInteger(v) && v >= 0);
+  const apply = (target, src, where) => {
+    if (!src || typeof src !== 'object') return;
+    for (const key of ['capacity', 'ttlMin', 'blockTicks']) {
+      if (!(key in src)) continue;
+      if (okVal(key, src[key])) target[key] = src[key];
+      else console.warn('stations.config.json: bad value for ' + where + '.' + key + ', using fallback');
+    }
+  };
+  return fetch('stations.config.json?v=' + Date.now()).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(cfg => {
+    const next = {};
+    for (const k of Object.keys(JOBS)) next[k] = Object.assign({}, STATIONS[k]);
+    const defs = {};
+    apply(defs, cfg && cfg.defaults, 'defaults');
+    for (const k of Object.keys(next)) Object.assign(next[k], defs);
+    const st = (cfg && cfg.stations) || {};
+    for (const k of Object.keys(next)) apply(next[k], st[k], k);
+    next.door.capacity = next.door.capacity === null ? null : Math.max(1, next.door.capacity);
+    for (const k of Object.keys(next)) Object.assign(STATIONS[k], next[k]);
+  }).catch(e => console.warn('stations.config.json not loaded, using built-in defaults:', e && e.message || e));
+}
+loadStationsConfig();
 const SHIFTS = { day: { label: 'Day shift', sleep: [23, 7] }, night: { label: 'Night shift', sleep: [11, 19] }, none: { label: 'No sleep', sleep: null } };
 
 const RES = [
@@ -73,6 +101,7 @@ const ENEMIES = {
   raider: { name: 'Raider', hp: 52, spd: 50, dmg: 8, rate: 1.3, w: 14, h: 30, color: '#b0553a', xp: 8, ranged: 210 },
   brute:  { name: 'Brute', hp: 240, spd: 26, dmg: 32, rate: 1.6, w: 26, h: 40, color: '#6d5a7a', xp: 22 },
   cinder: { name: 'Cinder', hp: 520, spd: 34, dmg: 16, rate: 0.9, w: 20, h: 36, color: '#e0e0d6', xp: 120, ranged: 240, boss: true },
+  maw:    { name: 'The Maw', hp: 900, spd: 30, dmg: 26, rate: 1.4, w: 44, h: 34, color: '#5b4a3a', xp: 150, boss: true, burrow: true },
 };
 
 const TURRETS = {
@@ -405,7 +434,21 @@ function jobSpot(c, job) {
   return { floor: room.floor, x: room.x0 + 50 + ((i * 67) % span) };
 }
 // What someone should be doing right now.
+// Applies station capacity on top of baseJob. Door and turrets are never capped (battle stations).
+const CAPPED_JOBS = ['workshop', 'signal', 'kitchen', 'med', 'idle'];
 function targetJob(c) {
+  const job = baseJob(c);
+  if (c.patient || S.alarm || !CAPPED_JOBS.includes(job)) return job;
+  const st = STATIONS[job], cap = st && st.capacity;
+  if (cap === null || cap === undefined) return job;
+  let rank = 0;
+  for (const o of living()) {
+    if (o === c) break;
+    if (!o.patient && baseJob(o) === job) rank++;
+  }
+  return rank < cap ? job : 'idle';
+}
+function baseJob(c) {
   if (c.patient) return 'med';
   if (S.alarm) { // battle stations: turrets first, then the door
     if (c.alarmSlot != null && S.turrets[c.alarmSlot]) return c.alarmSlot ? 'turretB' : 'turretA';
@@ -429,7 +472,7 @@ function moveTo(m, floor, x, dt, spd) {
     const d = LADDER_X - m.x;
     if (Math.abs(d) > 2) { m.facing = Math.sign(d); m.x += Math.sign(d) * Math.min(Math.abs(d), spd * dt); return false; }
     // Enemies cannot pass a closed hatch; crew can.
-    if (m.enemy && !S.breached && (m.floor === 0 || floor === 0)) return false;
+    if (m.enemy && !m.burrow && !S.breached && (m.floor === 0 || floor === 0)) return false;
     m.x = LADDER_X; m.climbing = true;
   }
   const ty = FLOORS[floor], dy = ty - m.y;
@@ -449,6 +492,7 @@ function hourEvents(h) {
   if (h === RAID_HOUR) queueRaid(d);
   if (h === 5 && d >= 2) queueProbe(d);
   if (h === 2) revoltCheck();
+  if (h === 15 && d === 5 && !S.maw) { S.maw = { at: S.t + 120, done: false }; lamp('The floor is trembling. Something big is moving under the bunker. Get everyone armed and away from the lower floor.', 'warn'); addShake(0.3); }
   if (h === 12 && d >= 2 && Math.random() < 0.55) wandererAtDoor();
   lowResCheck();
   if (h % 1 === 0) save();
@@ -496,6 +540,23 @@ function spawnEnemy(type) {
   S.enemies.push({ id: uid++, type, enemy: true, x: W + 30 + rnd(0, 60), y: FLOORS[0], floor: 0, climbing: false, hp: Math.round(b.hp * scale), max: Math.round(b.hp * scale), cd: rnd(0, 0.5), facing: -1, anim: Math.random() * 10, inside: false });
   if (type === 'cinder') lampEv('boss_arrive', 'Cinder is here. Hold the door.', 'warn'); if (type === 'cinder') lamp('Cinder (over a loudspeaker): “Open up, little mole. Only the strong get to leave the ground.”', 'warn');
 }
+function spawnMaw() {
+  const b = ENEMIES.maw, scale = 1 + (day() - 1) * 0.1;
+  S.enemies.push({ id: uid++, type: 'maw', enemy: true, burrow: true, x: LADDER_X + rnd(-60, 60), y: FLOORS[3], floor: 3, climbing: false, hp: Math.round(b.hp * scale), max: Math.round(b.hp * scale), cd: 1, facing: -1, anim: 0, inside: true });
+  if (!S.alarm && !S.alarmAuto) { S.alarmAuto = true; toggleAlarm(); }
+  addShake(0.6); if (window.SFX && SFX.rumble) SFX.rumble(1);
+  burst(LADDER_X, FLOORS[3] - 10, '#8a7a66', 24);
+  lamp('The Maw has broken through the bottom floor!', 'warn');
+  if (speed > 1) setSpeed(1);
+}
+function mawTick(dt) {
+  const m = S.maw; if (!m || m.done) return;
+  const left = m.at - S.t;
+  if (left > 0) {
+    const k = 1 - clamp(left / 120, 0, 1);
+    if (Math.random() < dt * (0.4 + 1.2 * k)) { addShake(0.12 + 0.3 * k); if (window.SFX && SFX.rumble) SFX.rumble(0.2 + 0.4 * k); }
+  } else { m.done = true; spawnMaw(); }
+}
 function revoltCheck() {
   for (const c of living()) {
     if (c.named || c.loyalty >= 1) continue;
@@ -538,7 +599,7 @@ function crewTick(c, dt, mins) {
   if (job !== 'mine') c.dig = null;
   if (c.pit && job !== 'mine') { c.state = 'walk'; if (!pitLeave(c, dt)) return; }
   if (job === 'mine') { mineTick(c, dt, h); return; }
-  if (job === 'door' && S.breached) {
+  if (job === 'door' && (S.breached || S.enemies.some(e => e.inside && e.hp > 0))) {
     const inside = S.enemies.filter(e => e.inside && e.hp > 0).sort((a, b) => (Math.abs(a.floor - c.floor) * 500 + Math.abs(a.x - c.x)) - (Math.abs(b.floor - c.floor) * 500 + Math.abs(b.x - c.x)))[0];
     if (inside) {
       // guards carry pistols: shoot when on the same floor and close enough, otherwise close in
@@ -973,6 +1034,7 @@ function hitEnemy(e, dmg, by) {
     else if (by === P) { S.player.xp += xp; if (S.player.xp >= 50 * S.player.lvl) { S.player.xp -= 50 * S.player.lvl; S.player.lvl++; S.player.maxHp += 10; S.player.hp += 10; lamp('Mara is now level ' + S.player.lvl + ': more health and a harder-hitting pistol.', 'good'); } }
     if (Math.random() < 0.35) S.res.scrap += e.type === 'raider' ? 3 : 1;
     if (e.type === 'cinder') { lampEv('boss_down', 'Cinder is down. His raiders scatter into the ash. Rook will want to hear about this.', 'good'); S.res.parts += 8; S.res.elec += 3; }
+    if (e.type === 'maw') { lamp('The Maw is dead. Its tunnel is full of salvage.', 'good'); S.res.parts += 12; S.res.elec += 5; S.res.mat += 10; }
     burst(e.x, e.y - 10, '#5a3', 12);
   }
 }
@@ -1006,6 +1068,7 @@ function simTick(dt) {
   for (let hh = h0 + 1; hh <= h1; hh++) hourEvents(hh % 24);
   // spawns
   for (let i = S.spawns.length - 1; i >= 0; i--) if (S.t >= S.spawns[i].at) { spawnEnemy(S.spawns[i].type); S.spawns.splice(i, 1); }
+  mawTick(dt);
   for (const c of S.crew) if (c.alive) crewTick(c, dt, mins);
   maraWorkTick(mins);
   powerTick(mins / 60);
@@ -1062,7 +1125,7 @@ function playerTick(dt) {
   const nearLadder = Math.abs(P.x - LADDER_X) < 22;
   if (!P.onLadder && nearLadder && (U && P.y > FLOORS[0] + 2 || D && P.y < FLOORS[3] - 2)) { P.onLadder = true; P.x = LADDER_X; P.vy = 0; }
   if (P.onLadder) {
-    if (U) P.y -= 170 * dt; if (D) P.y += 170 * dt;
+    if (U) P.y -= TUNE.ladder * dt; if (D) P.y += TUNE.ladder * dt;
     P.y = clamp(P.y, FLOORS[0], FLOORS[3]);
     const f = FLOORS.findIndex(y => Math.abs(P.y - y) < 10);
     if ((L || R) && f >= 0) { P.onLadder = false; P.y = FLOORS[f]; P.floor = f; P.vy = 0; }
@@ -1071,9 +1134,9 @@ function playerTick(dt) {
   } else {
     P.vx = (R ? 1 : 0) - (L ? 1 : 0);
     if (P.vx) P.facing = P.vx;
-    P.x += P.vx * 175 * dt; P.anim += P.vx ? dt * 10 : 0;
-    if (kd('jump') && P.grounded) { P.vy = -470; P.grounded = false; }
-    P.vy += 1500 * dt; const oy = P.y; P.y += P.vy * dt;
+    P.x += P.vx * TUNE.walk * dt; P.anim += P.vx ? dt * 10 : 0;
+    if (kd('jump') && P.grounded) { P.vy = -TUNE.jump; P.grounded = false; }
+    P.vy += TUNE.grav * dt; const oy = P.y; P.y += P.vy * dt;
     // land on a floor line, bump the ceiling of the floor above
     P.grounded = false;
     for (let f = 0; f < FLOORS.length; f++) {
@@ -1253,12 +1316,40 @@ function drawHazards(ox) {
     if (d.t < 0.35) { const y = -20 + (SC_GROUND - 10 + 20) * (1 - d.t / 0.35); box(x - 9, y - 9, 18, 18, '#7a6a58'); }
   }
 }
+// ---- debug tuning for controller constants (toggle with ` ; dev only: localhost or ?dev) ----
+const TUNE_DEF = { walk: 175, jump: 470, scavWalk: 185, scavJump: 560, grav: 1500, ladder: 170 };
+const TUNE_RANGE = { walk: [60, 400, 5], jump: [200, 900, 10], scavWalk: [60, 400, 5], scavJump: [200, 900, 10], grav: [600, 3000, 50], ladder: [60, 400, 5] };
+const TUNE_LABEL = { walk: 'Bunker walk', jump: 'Bunker jump', scavWalk: 'Scav walk', scavJump: 'Scav jump', grav: 'Gravity', ladder: 'Ladder speed' };
+const TUNE = Object.assign({}, TUNE_DEF);
+try { const sv = JSON.parse(localStorage.getItem('ashfall_tune') || 'null'); if (sv) for (const k in TUNE_DEF) if (typeof sv[k] === 'number' && isFinite(sv[k])) TUNE[k] = sv[k]; } catch (e) {}
+function tuneSave() { try { localStorage.setItem('ashfall_tune', JSON.stringify(TUNE)); } catch (e) {} }
+function tuneDevOK() { return /^(localhost|127\.|\[::1\])/.test(location.hostname) || /[?&]dev\b/.test(location.search); }
+function toggleTunePanel() {
+  if (!tuneDevOK()) return;
+  let el = document.getElementById('tunePanel');
+  if (el) { el.remove(); return; }
+  el = document.createElement('div'); el.id = 'tunePanel';
+  el.style.cssText = 'position:fixed;top:8px;right:8px;z-index:9999;background:rgba(10,10,10,0.88);color:#ddd;font:12px monospace;padding:8px 10px;border:1px solid #666;width:230px';
+  const rows = Object.keys(TUNE_DEF).map(k => { const r = TUNE_RANGE[k]; return '<div style="margin:4px 0"><label>' + TUNE_LABEL[k] + ': <b id="tv_' + k + '">' + TUNE[k] + '</b><br><input type="range" data-tk="' + k + '" min="' + r[0] + '" max="' + r[1] + '" step="' + r[2] + '" value="' + TUNE[k] + '" style="width:100%"></label></div>'; }).join('');
+  el.innerHTML = '<b>Controller tuning</b> (` to close)' + rows + '<button id="tuneReset">Reset</button> <button id="tuneCopy">Copy JSON</button>';
+  document.body.appendChild(el);
+  el.addEventListener('input', ev => {
+    const k = ev.target.dataset && ev.target.dataset.tk; if (!k) return;
+    TUNE[k] = +ev.target.value; document.getElementById('tv_' + k).textContent = TUNE[k]; tuneSave();
+  });
+  el.addEventListener('click', ev => {
+    ev.stopPropagation();
+    if (ev.target.id === 'tuneReset') { Object.assign(TUNE, TUNE_DEF); tuneSave(); el.remove(); toggleTunePanel(); }
+    if (ev.target.id === 'tuneCopy') { const t = JSON.stringify(TUNE); if (navigator.clipboard) navigator.clipboard.writeText(t).catch(() => {}); }
+  });
+  el.addEventListener('mousedown', ev => ev.stopPropagation());
+}
 function scavPlayerTick(dt) {
   const L = kd('left'), R = kd('right');
   P.vx = (R ? 1 : 0) - (L ? 1 : 0); if (P.vx) P.facing = P.vx;
-  P.x = clamp(P.x + P.vx * 185 * dt, 10, scav.len - 10); P.anim += P.vx ? dt * 10 : 0;
-  if ((kd('jump') || kd('up')) && P.grounded) { P.vy = -560; P.grounded = false; }
-  const oy = P.y; P.vy += 1500 * dt; P.y += P.vy * dt; P.grounded = false;
+  P.x = clamp(P.x + P.vx * TUNE.scavWalk * dt, 10, scav.len - 10); P.anim += P.vx ? dt * 10 : 0;
+  if ((kd('jump') || kd('up')) && P.grounded) { P.vy = -TUNE.scavJump; P.grounded = false; }
+  const oy = P.y; P.vy += TUNE.grav * dt; P.y += P.vy * dt; P.grounded = false;
   if (P.y >= SC_GROUND) { P.y = SC_GROUND; P.vy = 0; P.grounded = true; }
   if (P.vy >= 0 && !kd('down')) for (const p of scav.plats) if (P.x > p.x && P.x < p.x + p.w && oy <= p.y && P.y >= p.y) { P.y = p.y; P.vy = 0; P.grounded = true; }
   if (P.cd > 0) P.cd -= dt;
@@ -1646,6 +1737,7 @@ function drawEnemy(e, ox = 0) {
     if (e.type === 'raider' || e.type === 'cinder') { g.fillStyle = '#222'; g.fillRect(e.facing < 0 ? -18 : 4, -b.h + 12, 14, 3); }
   }
   else if (e.type === 'hound') { box(-13, -16 + bob * 0.5, 26, 10, b.color); box(e.facing < 0 ? -18 : 10, -20 + bob * 0.5, 8, 8, '#7a4f36'); g.fillStyle = '#ff4030'; g.fillRect(e.facing < 0 ? -16 : 15, -18, 2, 2); g.fillStyle = '#3a2818'; for (let i = 0; i < 4; i++) g.fillRect(-11 + i * 6, -6, 3, 6 + (i % 2 ? bob : -bob) * 0.5); }
+  else if (e.type === 'maw') { box(-22, -34, 44, 34, b.color); box(-18, -30, 36, 26, '#3a2e24'); g.fillStyle = '#e8e0d0'; for (let i = 0; i < 6; i++) g.fillRect(-16 + i * 6, -30 + (i % 2) * 3, 3, 8); g.fillStyle = '#ff4030'; g.fillRect(-10, -36, 4, 3); g.fillRect(6, -36, 4, 3); }
   else if (e.type === 'brute') { box(-13, -40, 26, 30, b.color); box(-9, -48, 18, 10, '#8a7a96'); g.fillStyle = '#2a2030'; g.fillRect(-12, -10, 9, 10); g.fillRect(3, -10, 9, 10); g.fillStyle = '#ff4030'; g.fillRect(e.facing < 0 ? -6 : 2, -45, 3, 3); }
   else {
     g.fillStyle = '#2a2018'; g.fillRect(-5, -10, 4, 10 + bob); g.fillRect(1, -10, 4, 10 - bob);
@@ -1655,7 +1747,7 @@ function drawEnemy(e, ox = 0) {
   }
   g.restore();
   hpBar(e.x - ox - 12, e.y - b.h - 10, 24, e.hp / e.max, '#ff5a4e');
-  if (b.boss) { g.fillStyle = '#ff5a4e'; g.font = '700 11px "Chakra Petch"'; g.fillText('CINDER', e.x - ox - 20, e.y - b.h - 16); }
+  if (b.boss) { g.fillStyle = '#ff5a4e'; g.font = '700 11px "Chakra Petch"'; g.fillText(b.name.toUpperCase(), e.x - ox - 20, e.y - b.h - 16); }
 }
 function tracer(x1, y1, x2, y2, c, sc) { fx.tracers.push({ x1, y1, x2, y2, c, t: 0.09, sc: !!sc }); }
 function burst(x, y, c, n, sc) { for (let i = 0; i < n; i++) fx.parts.push({ x, y, vx: rnd(-90, 90), vy: rnd(-140, 10), t: rnd(0.3, 0.7), c, sc: !!sc }); }
@@ -1996,7 +2088,7 @@ $('#dbody').addEventListener('change', e => {
 });
 
 // Relationship screen: links come from design/brief.md. Add a person here and they show up automatically.
-const REL_NAMES = { mara: 'Mara Voss', lamp: 'Lamp', dorrow: 'Sgt. Hale Dorrow', rook: 'Rook', juno: 'Juno Park', vesper: 'Vesper', warden: 'The Warden', cinder: 'Cinder', bram: 'Old Bram', anand: 'Dr. Priya Anand', nell: 'Nell', tick: 'Tick', reed: 'Doc Reed' };
+const REL_NAMES = { mara: 'Mara Voss', lamp: 'Lamp', dorrow: 'Sgt. Hale Dorrow', rook: 'Rook', juno: 'Juno Park', vesper: 'Vesper', warden: 'The Warden', cinder: 'Cinder', bram: 'Old Bram', anand: 'Dr. Priya Anand', nell: 'Nell', tick: 'Tick', reed: 'Doc Reed', builders: 'The original builders' };
 const REL = {
   mara: { role: 'Bunker leader (you)', color: '#d9a441', links: [
     { to: 'bram', kind: 'ally', text: 'Built the first door together.' },
@@ -2006,6 +2098,7 @@ const REL = {
     { to: 'dorrow', kind: 'none', text: 'No shared history yet.' },
     { to: 'lamp', kind: 'ally', text: 'Lamp addresses her as the bunker\u2019s leader and reports to her.' } ] },
   lamp: { role: 'Bunker AI and narrator', color: '#ffb347', links: [
+    { to: 'builders', kind: 'ally', text: 'Installed by the bunker\u2019s original builders. Maintained since by Old Bram and Dr. Anand.' },
     { to: 'bram', kind: 'ally', text: 'Maintained by Bram.' },
     { to: 'anand', kind: 'ally', text: 'Maintained by Dr. Anand.' },
     { to: 'nell', kind: 'friend', text: 'Nell reads it her drawings.' },
@@ -2472,6 +2565,7 @@ window.addEventListener('keydown', e => {
   if (k === 'm' && window.SFX) SFX.toggleMute();
   if (k === 'h') showHelp(true);
   if (k === 'v') toggleDbgCrew();
+  if (k === '`') toggleTunePanel();
   if (k === 'x' && scene === 'bunker' && S) toggleDig();
   if (k === 'p') { paused = !paused; renderHud(); }
   if (k === '1' || k === '2' || k === '3') setSpeed(+k);

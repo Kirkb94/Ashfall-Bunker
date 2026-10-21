@@ -29,7 +29,7 @@ Then open http://localhost:3000. No packages to install (Node 18+).
 - **Wanderers and revolts:** newcomers join from trips or knock at the hatch. If their morale drops, they may leave in the night with your supplies.
 - **XP and levels** for the crew and Mara.
 - **Goal:** build the 4-stage signal tower to win. You lose if everyone dies.
-- **Lamp,** the bunker AI, narrates and gives tips.
+- **Lamp,** the bunker AI installed by the original builders (and maintained by Old Bram and Dr. Anand), narrates and gives tips.
 - **Autosave** every in-game hour. Continue from the title screen.
 
 ## Controls

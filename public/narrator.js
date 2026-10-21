@@ -47,6 +47,22 @@
   const COOLDOWN_MS = 8000, VOLUME = 0.9;
   const last = {}, lastTake = {};
   let audio = null, playingUntilEnd = false, pendingClip = null;
+  let token = 0, wd = null, blocked = null, blockedAt = 0;
+  function armWd(ms) {
+    clearTimeout(wd);
+    wd = setTimeout(() => {
+      if (!playingUntilEnd) return;
+      playingUntilEnd = false;
+      try { if (audio) audio.pause(); } catch (e) {}
+      playPending();
+    }, ms);
+  }
+  // autoplay policy: retry a blocked clip on the next user gesture
+  ['pointerdown', 'keydown'].forEach(evName => window.addEventListener(evName, () => {
+    if (!blocked) return;
+    const c = blocked; blocked = null;
+    if (performance.now() - blockedAt < 15000) window.narrPlay(c);
+  }, true));
   function playPending() {
     if (!pendingClip) return;
     const c = pendingClip; pendingClip = null;
@@ -94,8 +110,9 @@
     const urgent = m ? INTERRUPT.test(m[0]) : false;
     if (!audio) {
       audio = new Audio();
-      audio.addEventListener('ended', () => { playingUntilEnd = false; playPending(); });
-      audio.addEventListener('error', () => { playingUntilEnd = false; playPending(); });
+      audio.addEventListener('ended', () => { clearTimeout(wd); playingUntilEnd = false; playPending(); });
+      audio.addEventListener('error', () => { clearTimeout(wd); playingUntilEnd = false; playPending(); });
+      audio.addEventListener('loadedmetadata', () => { if (playingUntilEnd) armWd((isFinite(audio.duration) ? audio.duration : 10) * 1000 + 3000); });
     }
     if (playingUntilEnd && !audio.paused && !audio.ended) {
       if (!urgent) { pendingClip = clip; return; } // never overlap: hold the latest and play it when this one ends
@@ -105,9 +122,16 @@
     try {
       audio.src = clip.indexOf('/') === 0 || /^https?:/.test(clip) ? clip : (clip.indexOf(DIR) === 0 ? clip : DIR + clip);
       audio.volume = Math.min(1, Math.max(0, narrVol()));
+      const my = ++token;
       playingUntilEnd = true;
+      armWd(10000);
       const p = audio.play();
-      if (p && p.catch) p.catch(() => { playingUntilEnd = false; });
-    } catch (e) { playingUntilEnd = false; }
+      if (p && p.catch) p.catch(err => {
+        if (my !== token) return; // superseded by a newer clip: ignore the AbortError
+        playingUntilEnd = false; clearTimeout(wd);
+        if (err && err.name === 'NotAllowedError') { blocked = clip; blockedAt = performance.now(); }
+        else playPending();
+      });
+    } catch (e) { playingUntilEnd = false; clearTimeout(wd); }
   };
 })();
