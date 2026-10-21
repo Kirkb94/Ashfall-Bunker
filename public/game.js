@@ -252,7 +252,7 @@ function newRun() {
     turrets: [{ type: 'rifle', hp: 130, max: 130, lvl: 1, cd: 0 }, null],
     rooms: { kitchen: 1, med: 1, bunks: 1, workshop: 1 }, makeParts: true,
     tower: { done: 0, paid: false, work: 0 },
-    crew: [], enemies: [], spawns: [], alarm: false, stats: { kills: 0, trips: 0, raids: 0, lost: [] }, won: false, hint: 0,
+    crew: [], enemies: [], spawns: [], alarm: false, stats: { kills: 0, trips: 0, raids: 0, lost: [], repelled: 0, scav: {}, moments: [] }, won: false, hint: 0,
     player: { hp: 100, maxHp: 100, food: 80, xp: 0, lvl: 1, down: 0 },
   };
   for (const n of NAMED) S.crew.push(makeCrew({ ...n, named: true }));
@@ -278,6 +278,11 @@ function clearSave() { try { localStorage.removeItem(SAVE_KEY); } catch {} }
 
 // ---------------------------------------------------------------- 3. simulation
 const day = () => Math.floor(S.t / 1440) + 1;
+// key moments for the post-run summary (old saves may lack the list)
+function moment(text) {
+  const m = S.stats.moments || (S.stats.moments = []);
+  if (m.length < 40) m.push('Day ' + day() + ' · ' + text);
+}
 const hourF = () => (S.t % 1440) / 60;
 const clockText = () => { const h = Math.floor(hourF()), m = Math.floor(S.t % 60); return 'DAY ' + day() + ' · ' + String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); };
 const isNight = () => { const h = hourF(); return h >= 20 || h < 6; };
@@ -367,8 +372,8 @@ function meal() {
   }
   if (hungry) lampEv('hungry', hungry + ' of us went without a meal. Hydroponics needs hands, or bring food back from topside.', 'warn');
 }
-function queueRaid(d) {
-  S.stats.raids++;
+function raidPlan(d) {
+  if (S.plan && S.plan.d === d) return S.plan.list;
   const n = 3 + d * 2;
   const types = d === 1 ? ['hound', 'ghoul', 'ghoul'] : d === 2 ? ['hound', 'ghoul', 'raider'] : ['hound', 'ghoul', 'raider', 'raider', 'brute'];
   const list = [];
@@ -376,6 +381,12 @@ function queueRaid(d) {
   if (d >= 3 && d % 2 === 1) list.push('brute');
   if (d === 3) { for (let i = 0; i < 4; i++) list.push('raider'); list.push('cinder'); }
   if (d >= 6) for (let i = 0; i < d - 4; i++) list.push(pick(['raider', 'brute', 'hound']));
+  S.plan = { d, list };
+  return list;
+}
+function queueRaid(d) {
+  S.stats.raids++;
+  const list = raidPlan(d).slice(); S.plan = null;
   let at = S.t; list.forEach(type => { S.spawns.push({ type, at }); at += rnd(7, 15); });
   S.raidActive = true;
   if (d === 3) lampEv('wave_stronger', 'Cinder’s raiders are at the wire. Hold the door.', 'warn'); else lampSay('raidNow', 'warn', { n: list.length, strong: d >= 3 });
@@ -482,6 +493,7 @@ function levelUp(c) {
 }
 function kill(c, how) {
   c.alive = false; c.hp = 0; S.stats.lost.push(c.name);
+  if (c.named || S.stats.lost.length === 1) moment(c.name + (how === 'starved' ? ' starved' : ' was killed'));
   for (const o of living()) if (o.bonds.includes(c.id) || c.bonds.includes(o.id)) { o.grief = 24; lamp(o.name + ' is grieving ' + c.name + '. They will work slower for a day.', 'warn'); }
   const lostTxt = c.name + (how === 'starved' ? ' starved.' : ' was killed.') + (c.named ? ' We will not forget them.' : '');
   const left = living().length;
@@ -556,8 +568,8 @@ function breach() {
   // Called each time something gets in. The alarm sounds once per night, so the player can still stand people down.
   if (!S.alarm && !S.alarmAuto) { S.alarmAuto = true; toggleAlarm(); }
   if (S.breached) return;
-  S.breached = true;
-  lampSay('breach', 'warn');
+  S.breached = true; addShake(0.5);
+  lampSay('breach', 'warn'); moment('The door was breached');
   if (!S.breachLog) {
     if (S.tower.done >= 1) { S.breachLog = 2; lamp(pick(LAMP_LINES.breachCause), 'warn', 2500); }
     else { S.breachLog = 1; lamp(pick(LAMP_LINES.breachClue), 'warn', 2500); }
@@ -613,7 +625,7 @@ function simTick(dt) {
   turretTick(dt);
   for (const e of S.enemies) if (e.hp > 0) enemyTick(e, dt);
   S.enemies = S.enemies.filter(e => e.hp > 0);
-  if (S.raidActive && !S.spawns.length && !S.enemies.length) { S.raidActive = false; lampEv('wave_clear', 'Wave cleared.', 'good'); }
+  if (S.raidActive && !S.spawns.length && !S.enemies.length) { S.raidActive = false; S.stats.repelled = (S.stats.repelled || 0) + 1; moment('Raid repelled'); lampEv('wave_clear', 'Wave cleared.', 'good'); }
   if (S.breached && !S.enemies.some(e => e.inside) && S.door.hp > 40) S.breached = false;
   // Mara's needs
   const pl = S.player;
@@ -622,7 +634,7 @@ function simTick(dt) {
   // tower
   if (S.tower.paid && !S.tower.half && S.tower.work >= TOWER[S.tower.done].work / 2 && S.tower.work < TOWER[S.tower.done].work) { S.tower.half = true; lampSay('towerHalf', 'good', { name: TOWER[S.tower.done].name }); }
   if (S.tower.paid && S.tower.work >= TOWER[S.tower.done].work) {
-    const st = TOWER[S.tower.done]; S.tower.done++; S.tower.paid = false; S.tower.work = 0; S.tower.half = false;
+    const st = TOWER[S.tower.done]; moment('Signal tower: ' + st.name + ' complete'); S.tower.done++; S.tower.paid = false; S.tower.work = 0; S.tower.half = false;
     if (S.tower.done >= TOWER.length) { lampSay('towerWin', 'good'); return gameOver(true); }
     lamp('Signal tower: ' + st.name + ' complete. ' + st.line, 'good'); lampSay('towerLeft', 'good', { n: TOWER.length - S.tower.done });
     if (S.breachLog === 1) { S.breachLog = 2; lamp(pick(LAMP_LINES.breachCause), 'good', 3000); }
@@ -708,6 +720,18 @@ function bulletsTick(dt) {
 }
 
 // Scavenging trips: a side-scrolling stretch of wasteland, rebuilt each trip.
+const CARRY_LIMIT = 30;
+function packCount() { return scav ? Object.values(scav.pack).reduce((a, b) => a + b, 0) : 0; }
+function packAdd(k, n) { const t = Math.min(n, Math.max(0, CARRY_LIMIT - packCount())); if (t > 0) scav.pack[k] += t; return t; }
+function packFullNote(x, y) {
+  fx.nums.push({ x, y: y - 50, t: 1.2, s: 'Pack full', scav: true, wide: true });
+  const now = performance.now();
+  if (!scav.fullAt || now - scav.fullAt > 4000) { scav.fullAt = now; lamp('Your pack is full (' + CARRY_LIMIT + '/' + CARRY_LIMIT + '). Head back to the hatch to unload.', 'warn'); }
+}
+function carryBar() {
+  const n = packCount(), f = n >= CARRY_LIMIT;
+  return `<span style="display:inline-block;width:80px;height:8px;border:1px solid #888;vertical-align:middle;margin-right:6px"><i style="display:block;height:100%;width:${Math.round(100 * Math.min(1, n / CARRY_LIMIT))}%;background:${f ? '#d44' : '#e0a040'}"></i></span>${n}/${CARRY_LIMIT}${f ? ' FULL' : ''}`;
+}
 function startScav() {
   S.stats.trips++;
   const len = 3600;
@@ -736,6 +760,8 @@ function endScav(keep) {
     const got = Object.entries(scav.pack).filter(([, v]) => v > 0);
     if (S.rooms.storage) for (const e of got) e[1] = Math.ceil(e[1] * ROOM_FX.storageLoot);
     for (const [k, v] of got) S.res[k] += v;
+    { const sc = S.stats.scav || (S.stats.scav = {}); for (const [k, v] of got) sc[k] = (sc[k] || 0) + v; }
+    if (got.length) moment('Scavenging trip: ' + got.map(([k, v]) => v + ' ' + k).join(', '));
     if (scav.recruit) { const c = makeCrew(scav.recruit); c.x = 300; c.floor = 0; c.y = FLOORS[0]; S.crew.push(c); lampEv('newcomer', c.name + ' joins the bunker. Give them a job in the Crew panel.', 'good'); }
     lampEv('topside_return', got.length ? 'Welcome back. You brought ' + got.map(([k, v]) => v + ' ' + RES.find(r => r.k === k).name.toLowerCase()).join(', ') + '.' : 'Welcome back. Nothing useful this time.', 'good');
   }
@@ -776,9 +802,10 @@ function scavPlayerTick(dt) {
 function scavHit(e, dmg) {
   e.hp -= dmg; fx.nums.push({ x: e.x, y: e.y - ENEMIES[e.type].h - 6, t: 0.7, s: Math.round(dmg), scav: true });
   burst(e.x, e.y - 12, '#7a2', 3, true);
-  if (e.hp <= 0) { S.stats.kills++; S.player.xp += ENEMIES[e.type].xp; if (Math.random() < 0.5) scav.pack.scrap += 2; burst(e.x, e.y - 10, '#5a3', 10, true); }
+  if (e.hp <= 0) { S.stats.kills++; S.player.xp += ENEMIES[e.type].xp; if (Math.random() < 0.5 && packAdd('scrap', 2) === 0) packFullNote(e.x, e.y - 20); burst(e.x, e.y - 10, '#5a3', 10, true); }
 }
 function openCrate(c) {
+  if (packCount() >= CARRY_LIMIT) { packFullNote(c.x, c.y); return; }
   c.open = true;
   const roll = () => {
     const g = { food: 0, scrap: 0, parts: 0, elec: 0, mat: 0 };
@@ -787,9 +814,10 @@ function openCrate(c) {
     if (Math.random() < 0.5) g.mat += Math.floor(rnd(2, 6)); if (Math.random() < (c.kind === 'locker' ? 0.7 : 0.4)) g.food += Math.floor(rnd(2, 7));
     return g;
   };
-  const g = roll(), txt = [];
-  for (const k in g) if (g[k]) { scav.pack[k] += g[k]; txt.push('+' + g[k] + ' ' + RES.find(r => r.k === k).name.toLowerCase()); }
+  const g = c.loot || roll(), txt = [], left = {}; c.loot = null;
+  for (const k in g) if (g[k]) { const t = packAdd(k, g[k]); if (t < g[k]) left[k] = g[k] - t; if (t) txt.push('+' + t + ' ' + RES.find(r => r.k === k).name.toLowerCase()); }
   fx.nums.push({ x: c.x, y: c.y - 30, t: 1.4, s: txt.join('  ') || 'empty', scav: true, wide: true });
+  if (Object.keys(left).length) { c.open = false; c.loot = left; packFullNote(c.x, c.y); }
 }
 
 // ---------------------------------------------------------------- 5. drawing
@@ -803,8 +831,32 @@ function skyColors() {
   return { top, bot, dayAmt };
 }
 function mix(a, b, t) { return 'rgb(' + a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(',') + ')'; }
+// ---- accessibility prefs (colorblind, reduced motion), saved in localStorage
+const PREF_KEY = 'ab_access';
+const prefs = (() => {
+  let p = {};
+  try { p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}; } catch (e) { p = {}; }
+  let osRm = false; try { osRm = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) {}
+  return { cb: !!p.cb, rm: typeof p.rm === 'boolean' ? p.rm : osRm };
+})();
+let shakeT = 0;
+function addShake(s) { if (!prefs.rm) shakeT = Math.max(shakeT, s); }
+function applyPrefs() {
+  document.body.classList.toggle('cb', prefs.cb);
+  document.body.classList.toggle('rm', prefs.rm);
+  const a = document.getElementById('tCb'), b = document.getElementById('tRm');
+  if (a) { a.firstChild.nodeValue = 'Colorblind: ' + (prefs.cb ? 'on' : 'off'); a.setAttribute('aria-pressed', prefs.cb ? 'true' : 'false'); }
+  if (b) { b.firstChild.nodeValue = 'Reduced motion: ' + (prefs.rm ? 'on' : 'off'); b.setAttribute('aria-pressed', prefs.rm ? 'true' : 'false'); }
+  if (prefs.rm) shakeT = 0;
+}
+function savePrefs() { try { localStorage.setItem(PREF_KEY, JSON.stringify({ cb: prefs.cb, rm: prefs.rm })); } catch (e) {} applyPrefs(); if (typeof renderHud === 'function') { renderHud(); renderDrawer(); } }
+{ const a = document.getElementById('tCb'), b = document.getElementById('tRm');
+  if (a) a.onclick = e => { prefs.cb = !prefs.cb; savePrefs(); e.currentTarget.blur(); };
+  if (b) b.onclick = e => { prefs.rm = !prefs.rm; savePrefs(); e.currentTarget.blur(); };
+  applyPrefs(); }
 function draw() {
   g.save();
+  if (shakeT > 0 && !prefs.rm) { const amp = Math.min(1, shakeT / 0.4) * 6; g.translate((Math.random() - 0.5) * 2 * amp, (Math.random() - 0.5) * 2 * amp); }
   if (scene === 'scav' && scav) drawScav(); else drawBunker();
   g.restore();
 }
@@ -835,10 +887,47 @@ function drawBunker() {
   // night over the surface only: the bunker keeps its lamps
   if (sky.dayAmt < 1) { g.fillStyle = 'rgba(5,6,18,' + (0.55 * (1 - sky.dayAmt)) + ')'; g.fillRect(0, 0, W, FLOORS[0] + 16); }
   for (const c of S.crew) if (c.alive) drawPerson(c.x, c.y, c.color, c.accent, c, c.anim, c.facing, c.state === 'sleep', c.climbing);
+  drawFocus();
+  drawCrewDebug();
   for (const e of S.enemies) drawEnemy(e);
   if (!S.player.down) drawMara();
   drawFx(0);
-  if (S.breached) { g.fillStyle = 'rgba(255,40,30,' + (0.06 + 0.05 * Math.sin(performance.now() / 150)) + ')'; g.fillRect(0, 0, W, H); }
+  drawRaidForecast();
+  if (S.breached && prefs.cb) { g.save(); g.strokeStyle = '#fff'; g.lineWidth = 6; g.setLineDash([22, 14]); g.strokeRect(3, 3, W - 6, H - 6); g.restore(); }
+  if (S.breached) { g.fillStyle = 'rgba(255,40,30,' + (prefs.rm ? 0.09 : 0.06 + 0.05 * Math.sin(performance.now() / 150)) + ')'; g.fillRect(0, 0, W, H); }
+}
+function drawRaidForecast() {
+  let list = null, label = '', urgent = false;
+  if (S.spawns.length) { list = S.spawns.map(s => s.type); label = 'INCOMING'; urgent = true; }
+  else if (!S.enemies.length) {
+    const to21 = (21 - hourF() + 24) % 24;
+    if (to21 <= 6) { list = raidPlan(day()); const m = Math.round(to21 * 60); label = 'RAID IN ' + Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0'); urgent = to21 < 1; }
+  }
+  if (!list || !list.length) return;
+  const tally = {};
+  for (const t of list) tally[t] = (tally[t] || 0) + 1;
+  const rows = Object.entries(tally);
+  const txt = rows.map(([t, n]) => n + '\u00d7 ' + ENEMIES[t].name).join('  \u00b7  ');
+  g.save();
+  g.font = '600 13px "IBM Plex Sans"';
+  const w = Math.max(g.measureText(txt).width, g.measureText(label).width) + 28, x = (W - w) / 2, y = 10;
+  g.fillStyle = 'rgba(20,10,8,.82)'; g.fillRect(x, y, w, 44);
+  g.strokeStyle = urgent ? '#ff5a4e' : '#c9a27a'; g.lineWidth = 2;
+  if (prefs.cb) g.setLineDash([8, 5]);
+  g.strokeRect(x, y, w, 44); g.setLineDash([]);
+  g.fillStyle = urgent ? '#ff8a7e' : '#ffe0a8';
+  g.fillText(label, W / 2 - g.measureText(label).width / 2, y + 18);
+  g.fillStyle = '#e8dfd0';
+  g.fillText(txt, W / 2 - g.measureText(txt).width / 2, y + 36);
+  // door-side chips: one per enemy type
+  rows.forEach(([t, n], i) => {
+    const cx = DOOR_X + 44 + i * 44, cy = FLOORS[0] - 96;
+    g.fillStyle = ENEMIES[t].color; g.fillRect(cx, cy, 14, 14);
+    g.strokeStyle = '#000'; g.lineWidth = 1; g.strokeRect(cx, cy, 14, 14);
+    g.fillStyle = '#ffe0a8'; g.fillText('\u00d7' + n, cx + 17, cy + 12);
+  });
+  if (urgent) { g.fillStyle = '#ff5a4e'; g.fillText('\u25c0', W - 30, FLOORS[0] - 30); }
+  g.restore();
 }
 function drawRoom(k, r) {
   const y0 = FLOORS[r.floor - 1] + (r.floor === 1 ? 16 : 10), y1 = FLOORS[r.floor];
@@ -866,6 +955,42 @@ function drawRoom(k, r) {
   g.restore();
 }
 function box(x, y, w, h, c) { g.fillStyle = c; g.fillRect(x, y, w, h); }
+// ---- crew debug overlay: need bars + state label per survivor (V or the Crew debug button)
+let dbgCrew = false;
+try { dbgCrew = localStorage.getItem('ab_dbg_crew') === '1'; } catch (e) {}
+function applyDbgCrew() {
+  const b = document.getElementById('tDbg');
+  if (b) { b.classList.toggle('on', dbgCrew); b.setAttribute('aria-pressed', dbgCrew ? 'true' : 'false'); }
+}
+function toggleDbgCrew() {
+  dbgCrew = !dbgCrew;
+  try { localStorage.setItem('ab_dbg_crew', dbgCrew ? '1' : '0'); } catch (e) {}
+  applyDbgCrew();
+}
+{ const b = document.getElementById('tDbg'); if (b) b.onclick = e => { toggleDbgCrew(); e.currentTarget.blur(); }; applyDbgCrew(); }
+function drawCrewDebug() {
+  if (!dbgCrew || !S) return;
+  g.save();
+  const rows = [['F', c => c.food, '#c9a27a'], ['R', c => restPct(c), '#7fc8ff'], ['H', c => c.hp / c.maxHp * 100, '#7ddc6f']];
+  for (const c of S.crew) {
+    if (!c.alive) continue;
+    const x = Math.round(c.x) - 12, y0 = Math.round(c.y) - 84;
+    const label = String(c.state || '?');
+    g.font = '600 9px "IBM Plex Sans", sans-serif';
+    const w = g.measureText(label).width;
+    g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(x + 12 - w / 2 - 2, y0 - 11, w + 4, 11);
+    g.fillStyle = '#ffe0a8'; g.fillText(label, x + 12 - w / 2, y0 - 2);
+    g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(x - 10, y0 + 1, 36, 20);
+    rows.forEach(([ch, fn, col], i) => {
+      const v = clamp(fn(c), 0, 100), y = y0 + 3 + i * 6, low = v < 25;
+      g.fillStyle = '#ddd'; g.font = '700 6px sans-serif'; g.fillText(ch, x - 8, y + 4);
+      g.fillStyle = 'rgba(255,255,255,.15)'; g.fillRect(x, y, 24, 4);
+      g.fillStyle = low ? '#ff5a4e' : col; g.fillRect(x, y, 24 * v / 100, 4);
+      if (low && prefs.cb) { g.fillStyle = '#fff'; g.font = '700 7px sans-serif'; g.fillText('!', x + 26, y + 4); }
+    });
+  }
+  g.restore();
+}
 function drawTowerRoom() {
   // Lamp, the bunker AI
   box(740, -88, 54, 40, '#2b2116'); g.fillStyle = 'rgba(255,170,60,' + (0.7 + 0.2 * Math.sin(performance.now() / 700)) + ')'; g.fillRect(746, -82, 42, 28);
@@ -1051,9 +1176,10 @@ setInterval(() => { const now = performance.now(); const before = logs.length; w
 function setSpeed(s) { speed = s; paused = false; renderHud(); }
 function nextThreat() {
   if (S.enemies.length) return { hot: true, text: S.enemies.length + ' hostiles' + (S.breached ? ' · HATCH BREACHED' : '') };
-  if (S.spawns.length) return { hot: true, text: 'Raid incoming' };
+  if (S.spawns.length) return { hot: true, text: 'Raid incoming · ' + S.spawns.length + ' to come' };
   const h = hourF(); const to21 = (21 - h + 24) % 24; const m = Math.round(to21 * 60);
-  return { hot: to21 < 1.5, text: 'Next raid in ' + (m >= 60 ? Math.floor(m / 60) + 'h ' : '') + (m % 60) + 'm' };
+  const fc = to21 <= 6 ? raidPlan(day()) : null;
+  return { hot: to21 < 1.5, text: 'Next raid in ' + (m >= 60 ? Math.floor(m / 60) + 'h ' : '') + (m % 60) + 'm' + (fc ? ' · ' + fc.length + ' hostiles' : '') };
 }
 function renderHud() {
   if (!S) { $('#hud').innerHTML = ''; return; }
@@ -1067,23 +1193,70 @@ function renderHud() {
 document.addEventListener('click', e => { const b = e.target.closest('[data-spd]'); if (!b) return; const s = +b.dataset.spd; if (s === 0) paused = !paused; else setSpeed(s); renderHud(); });
 
 let tab = 'crew', sel = null, hover = null;
+const crewView = { sort: 'default', need: 'all', job: 'all', state: 'all' };
+let focusFx = null; // { id, t } ring drawn on a crew member after clicking their card
+function crewStateKey(c) { return c.state === 'sleep' ? 'sleep' : c.state === 'patient' ? 'patient' : c.state === 'fight' ? 'fight' : c.state === 'walk' ? 'walk' : 'work'; }
+function crewNeeds(c) { return { hp: c.hp / c.maxHp * 100, food: c.food, rest: restPct(c) }; }
+function crewFilterActive() { return crewView.need !== 'all' || crewView.job !== 'all' || crewView.state !== 'all'; }
+function crewPass(c) {
+  const n = crewNeeds(c);
+  if (crewView.need === 'hp' && !(n.hp < 50)) return false;
+  if (crewView.need === 'food' && !(n.food < 35)) return false;
+  if (crewView.need === 'rest' && !(n.rest < 40)) return false;
+  if (crewView.need === 'any' && !(n.hp < 50 || n.food < 35 || n.rest < 40)) return false;
+  if (crewView.job !== 'all' && c.job !== crewView.job) return false;
+  if (crewView.state !== 'all' && crewStateKey(c) !== crewView.state) return false;
+  return true;
+}
+function crewCmp(a, b) {
+  const s = crewView.sort;
+  if (s === 'name') return a.name.localeCompare(b.name);
+  if (s === 'hp') return crewNeeds(a).hp - crewNeeds(b).hp;
+  if (s === 'food') return crewNeeds(a).food - crewNeeds(b).food;
+  if (s === 'rest') return crewNeeds(a).rest - crewNeeds(b).rest;
+  if (s === 'lvl') return b.lvl - a.lvl;
+  return b.named - a.named;
+}
+function crewControls() {
+  const sel2 = (key, opts) => `<select data-view="${key}" aria-label="${key}">${opts.map(([v, l]) => `<option value="${v}" ${crewView[key] === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+  return `<div class="row" style="margin:6px 0;gap:4px;flex-wrap:wrap">
+    ${sel2('sort', [['default', 'Sort: default'], ['name', 'Sort: name'], ['hp', 'Sort: health'], ['food', 'Sort: food'], ['rest', 'Sort: rest'], ['lvl', 'Sort: level']])}
+    ${sel2('need', [['all', 'Need: all'], ['any', 'Any need'], ['hp', 'Low health'], ['food', 'Hungry'], ['rest', 'Tired']])}
+    ${sel2('job', [['all', 'Job: all'], ...Object.entries(JOBS).map(([k, j]) => [k, j.label])])}
+    ${sel2('state', [['all', 'State: all'], ['work', 'Working'], ['walk', 'Walking'], ['sleep', 'Sleeping'], ['patient', 'Med bay'], ['fight', 'Fighting']])}
+  </div>`;
+}
+function drawFocus() {
+  if (!focusFx || !S) return;
+  const age = (performance.now() - focusFx.t) / 1000, c = S.crew.find(x => x.id === focusFx.id);
+  if (age > 3 || !c || !c.alive) { focusFx = null; return; }
+  const pulse = prefs.rm ? 0 : Math.sin(age * 8) * 3;
+  g.save(); g.globalAlpha = Math.min(1, (3 - age) / 1);
+  g.strokeStyle = '#ffd24a'; g.lineWidth = 3;
+  g.beginPath(); g.arc(c.x, c.y - 12, 18 + pulse, 0, 7); g.stroke();
+  g.restore();
+}
 function openDrawer(t) { tab = t; $('#drawer').hidden = false; $('#wrap').classList.add('dopen'); renderDrawer(); }
 function closeDrawer() { $('#drawer').hidden = true; $('#wrap').classList.remove('dopen'); }
 function toggleDrawer(t) { if (!$('#drawer').hidden && tab === t) closeDrawer(); else openDrawer(t); }
-function bar(pct, c) { return `<div class="bar"><i style="width:${clamp(pct, 0, 100)}%;background:${c}"></i></div>`; }
+function bar(pct, c, kind) { return `<div class="bar"><i class="${kind ? 'p-' + kind : ''}" style="width:${clamp(pct, 0, 100)}%;background:${c}"></i></div>`; }
 function canPay(c) { return Object.entries(c).every(([k, v]) => S.res[k] >= v); }
 function pay(c) { for (const [k, v] of Object.entries(c)) S.res[k] -= v; }
 function renderDrawer() {
   if ($('#drawer').hidden || !S) return;
   document.querySelectorAll('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-  const body = $('#dbody'); const keep = body.scrollTop;
+  const body = $('#dbody'); const keep = body.scrollTop; const fk = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.view : null;
   body.innerHTML = tab === 'crew' ? crewHTML() : tab === 'build' ? buildHTML() : tab === 'rel' ? relHTML() : towerHTML();
   body.scrollTop = keep;
+  if (fk) { const el = body.querySelector(`[data-view="${fk}"]`); if (el) el.focus(); }
 }
 function crewHTML() {
-  const list = [...S.crew].sort((a, b) => (b.alive - a.alive) || (b.named - a.named));
+  const filtering = crewFilterActive();
+  const list = S.crew.filter(c => c.alive ? crewPass(c) : !filtering).sort((a, b) => (b.alive - a.alive) || (a.alive ? crewCmp(a, b) : 0));
+  const total = S.crew.filter(c => c.alive).length, shown = list.filter(c => c.alive).length;
   const gunners = j => living().filter(c => c.job === j).length;
-  return `<p class="note" style="margin:0">Jobs decide where people go when they are awake. Shifts decide when they sleep: after about 16 hours awake they slow down fast. Turrets only fire with someone on them.</p>
+  return `<p class="note" style="margin:0">Jobs decide where people go when they are awake. Shifts decide when they sleep: after about 16 hours awake they slow down fast. Turrets only fire with someone on them. Click a person to find them in the bunker.</p>
+  ${crewControls()}<p class="note" style="margin:0">Showing ${shown} of ${total}</p>${shown === 0 && total > 0 ? '<p class="note">Nobody matches these filters.</p>' : ''}
   ${[0, 1].map(i => !S.turrets[i] ? '' : !gunners(i ? 'turretB' : 'turretA') ? `<p class="note bad" style="margin:0">Turret ${i + 1} has nobody assigned.</p>` : '').join('')}
   ${list.map(c => {
     if (!c.alive) return `<div class="card dead"><div class="ch"><span class="sw" style="background:${c.color}"></span><b>${esc(c.name)}</b><span class="tag">${c.left ? 'left the bunker' : 'lost'}</span></div></div>`;
@@ -1092,7 +1265,7 @@ function crewHTML() {
     const bondNames = c.bonds.map(id => S.crew.find(o => o.id === id)).filter(o => o && o.alive).map(o => o.name);
     return `<div class="card ${sel === c.id ? 'sel' : ''}" data-crew="${c.id}">
       <div class="ch"><span class="sw" style="background:${c.color}"></span><b>${esc(c.name)}</b><span class="tag">${esc(c.role)} · ${state}</span><span class="lvl">LV ${c.lvl}</span></div>
-      <div class="bars"><span>Health</span>${bar(c.hp / c.maxHp * 100, '#7ddc6f')}<span>Food</span>${bar(c.food, '#c9a27a')}<span>Rest</span>${bar(rest, sf < 0.6 ? '#ff5a4e' : '#7fc8ff')}</div>
+      <div class="bars"><span>Health</span>${bar(c.hp / c.maxHp * 100, '#7ddc6f', 'hp')}<span>Food</span>${bar(c.food, '#c9a27a', 'food')}<span style="white-space:nowrap">Rest${prefs.cb && sf < 0.6 ? ' \u26A0' : ''}</span>${bar(rest, sf < 0.6 ? '#ff5a4e' : '#7fc8ff', sf < 0.6 ? 'low' : 'rest')}</div>
       <div class="row">${Object.entries(JOBS).map(([k, j]) => { const dis = (k === 'turretA' && !S.turrets[0]) || (k === 'turretB' && !S.turrets[1]); return `<button class="chip ${c.job === k ? 'on' : ''}" data-job="${k}" data-id="${c.id}" ${dis ? 'disabled title="Build this turret first"' : ''}>${j.label}</button>`; }).join('')}</div>
       <div class="row" style="margin-top:5px">${Object.entries(SHIFTS).map(([k, s]) => `<button class="chip ${c.shift === k ? 'on' : ''}" data-shift="${k}" data-id="${c.id}">${s.label}${s.sleep ? ' ' + s.sleep[0] + '–' + s.sleep[1] : ''}</button>`).join('')}</div>
       <div class="note">Aim ${pctS(c.stats.acc)} · Build ${pctS(c.stats.build)} · Cook ${pctS(c.stats.cook)} · Medic ${pctS(c.stats.med)} · Tech ${pctS(c.stats.tech)}${sf < 1 ? ` · <span style="color:var(--red)">working at ${Math.round(sf * 100)}% (tired)</span>` : ''}${c.grief > 0 ? ' · grieving' : ''}${bondNames.length ? `<br>Works better beside ${esc(bondNames.join(', '))}` : ''}${!c.named && c.loyalty < 1 ? `<br>Morale ${Math.round(morale(c))}${morale(c) < 40 ? ' <span style="color:var(--red)">· might leave</span>' : ''}` : ''}</div>
@@ -1100,6 +1273,11 @@ function crewHTML() {
   }).join('')}`;
 }
 const pctS = v => Math.round(v * 100);
+$('#dbody').addEventListener('change', e => {
+  const v = e.target.closest ? e.target.closest('[data-view]') : null;
+  if (!v) return;
+  crewView[v.dataset.view] = v.value; renderDrawer();
+});
 
 // Relationship screen: links come from design/brief.md. Add a person here and they show up automatically.
 const REL_NAMES = { mara: 'Mara Voss', lamp: 'Lamp', dorrow: 'Sgt. Hale Dorrow', rook: 'Rook', juno: 'Juno Park', vesper: 'Vesper', warden: 'The Warden', cinder: 'Cinder', bram: 'Old Bram', anand: 'Dr. Priya Anand', nell: 'Nell', tick: 'Tick', reed: 'Doc Reed' };
@@ -1181,7 +1359,7 @@ $('#dbody').addEventListener('click', e => {
   if (j) { const c = S.crew.find(x => x.id === j.dataset.id); c.job = j.dataset.job; c.alarmSlot = null; sel = c.id; renderDrawer(); return; }
   if (s) { const c = S.crew.find(x => x.id === s.dataset.id); c.shift = s.dataset.shift; sel = c.id; renderDrawer(); return; }
   if (b) { doBuild(b.dataset.build); renderDrawer(); renderHud(); return; }
-  if (card) { sel = card.dataset.crew; renderDrawer(); }
+  if (card) { sel = card.dataset.crew; focusFx = { id: sel, t: performance.now() }; renderDrawer(); }
 });
 function doBuild(a) {
   const rep = s => { const c = { scrap: Math.ceil((s.max - s.hp) / 10) }; if (!canPay(c)) return false; pay(c); s.hp = s.max; return true; };
@@ -1245,6 +1423,7 @@ function personAt(x, y) { return living().find(c => Math.abs(c.x - x) < 11 && y 
 window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (e.target.tagName === 'INPUT') return;
+  if (document.querySelector('#overlay .help')) { helpKey(e, k); return; }
   if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
   if (scene === 'menu' || scene === 'over') return;
   keys[k] = true;
@@ -1256,6 +1435,7 @@ window.addEventListener('keydown', e => {
   if (k === 'g') toggleAlarm();
   if (k === 'm' && window.SFX) SFX.toggleMute();
   if (k === 'h') showHelp(true);
+  if (k === 'v') toggleDbgCrew();
   if (k === 'p') { paused = !paused; renderHud(); }
   if (k === '1' || k === '2' || k === '3') setSpeed(+k);
   if (k === 'escape') { if (!$('#drawer').hidden) closeDrawer(); else showPauseMenu(); }
@@ -1304,10 +1484,10 @@ $('#tMute').onclick = e => { if (window.SFX) SFX.toggleMute(); e.currentTarget.b
 
 // menus
 function overlay(html) { const o = $('#overlay'); o.innerHTML = html; o.hidden = !html; }
-const HELP = `<div class="help">
+const HELP = `<div class="help" tabindex="0" aria-label="Controls and tips. Use the arrow keys to scroll.">
   <h3>THE LOOP</h3><ul><li>Days are for work: give the crew jobs and shifts, build, and scavenge topside.</li><li>At 21:00 every night something attacks from the east. Bigger every night. Cinder comes on night 3.</li><li>Finish the four stages of the <b>signal tower</b> to win. Lose if everyone dies.</li></ul>
   <h3>THE CREW</h3><ul><li>Turrets only fire with someone on them. Good shots hit more.</li><li>Shifts decide who sleeps when. Past 16 hours awake people slow down fast. Hungry or grieving people work slower.</li><li>Meals are at 07:00, 13:00 and 19:00 (1 food each). Kitchen crew grow food.</li><li>Badly hurt crew go to the med bay on their own. Doc heals them faster.</li><li>Bram, Doc and Tick share history: paired on a job they work better. Lose one and the others grieve.</li><li>Newcomers may leave in the night with your supplies if morale is low.</li></ul>
-  <h3>CONTROLS</h3><ul><li><kbd>A</kbd><kbd>D</kbd> move · <kbd>W</kbd><kbd>S</kbd> climb the shaft · <kbd>Space</kbd> jump · <kbd>J</kbd> or click to shoot</li><li><kbd>E</kbd> interact: walk off the right edge of the surface to scavenge · search crates · invite wanderers</li><li><kbd>C</kbd> crew · <kbd>B</kbd> build · <kbd>T</kbd> tower · <kbd>G</kbd> battle stations · <kbd>P</kbd> pause · <kbd>1</kbd>–<kbd>3</kbd> speed · click a person to select them</li><li class="touchonly"><b>Touch:</b> left pad moves and climbs (▲▼), JUMP jumps, FIRE shoots, E interacts. Tap a person to select them. Use the top buttons for Crew, Build and Tower.</li></ul>
+  <h3>CONTROLS</h3><ul><li><kbd>A</kbd><kbd>D</kbd> move · <kbd>W</kbd><kbd>S</kbd> climb the shaft · <kbd>Space</kbd> jump · <kbd>J</kbd> or click to shoot</li><li><kbd>E</kbd> interact: walk off the right edge of the surface to scavenge · search crates · invite wanderers</li><li><kbd>C</kbd> crew · <kbd>B</kbd> build · <kbd>T</kbd> tower · <kbd>G</kbd> battle stations · <kbd>H</kbd> help · <kbd>P</kbd> pause · <kbd>1</kbd>–<kbd>3</kbd> speed · click a person to select them</li><li class="touchonly"><b>Touch:</b> left pad moves and climbs (▲▼), JUMP jumps, FIRE shoots, E interacts. Tap a person to select them. Use the top buttons for Crew, Build and Tower.</li></ul>
 </div>`;
 function showMenu() {
   scene = 'menu'; const sv = loadSave();
@@ -1318,10 +1498,51 @@ function showMenu() {
   $('#mHelp').onclick = () => showHelp(false);
   if (sv) $('#mContinue').onclick = () => { S = sv.S; uid = 1 + S.crew.length + 1000; placePlayer('bunker'); if (sv.P) { P.x = sv.P.x; P.y = sv.P.y; P.floor = Math.max(0, FLOORS.findIndex(y => Math.abs(y - P.y) < 3)); } logs.length = 0; lamp('Welcome back, Mara. ' + summaryLine()); start(); };
 }
-function showHelp(inGame) {
-  const was = paused; if (inGame) paused = true;
-  overlay(`<div class="menu" style="width:640px"><h1 style="font-size:36px">HOW TO PLAY</h1>${HELP}<button class="btn" id="hBack">${inGame ? 'Back to the bunker' : 'Back'}</button></div>`);
-  $('#hBack').onclick = () => { if (inGame) { overlay(''); paused = was; renderHud(); } else showMenu(); };
+// help dialog: keyboard navigable (Esc/H close, arrows/PgUp/PgDn/Home/End scroll, Tab trapped)
+function helpKey(e, k) {
+  const h = document.querySelector('#overlay .help'), b = $('#hBack');
+  if (!h || !b) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (k === 'escape' || k === 'h') { e.preventDefault(); b.click(); return; }
+  const page = h.clientHeight * 0.9;
+  const step = { arrowdown: 48, arrowup: -48, pagedown: page, pageup: -page };
+  if (k in step) { e.preventDefault(); h.scrollBy({ top: step[k] }); }
+  else if (k === 'home') { e.preventDefault(); h.scrollTo({ top: 0 }); }
+  else if (k === 'end') { e.preventDefault(); h.scrollTo({ top: h.scrollHeight }); }
+  else if (k === 'tab') {
+    const a = document.activeElement;
+    if (!e.shiftKey && a === b) { e.preventDefault(); h.focus(); }
+    else if (e.shiftKey && a === h) { e.preventDefault(); b.focus(); }
+    else if (a !== h && a !== b) { e.preventDefault(); (e.shiftKey ? b : h).focus(); }
+  }
+}
+const HELP_KEY = 'ab_help_seen';
+let hintTimer = 0;
+function helpSeen() { try { return localStorage.getItem(HELP_KEY) === '1'; } catch (_) { return true; } }
+function hideHint() { clearTimeout(hintTimer); const h = $('#hint'); if (h) h.hidden = true; }
+function markHelpSeen() { try { localStorage.setItem(HELP_KEY, '1'); } catch (_) {} hideHint(); }
+function showHint() {
+  if (helpSeen()) return;
+  const h = $('#hint'), touch = document.body.classList.contains('touch');
+  h.innerHTML = `<span>First time? ${touch ? 'Tap <b>Help</b>' : 'Press <kbd>H</kbd>'} for controls</span><button id="hintX" aria-label="Dismiss hint">✕</button>`;
+  h.hidden = false;
+  $('#hintX').onclick = markHelpSeen;
+  clearTimeout(hintTimer); hintTimer = setTimeout(markHelpSeen, 15000);
+}
+function showHelp(inGame, from) {
+  if (document.querySelector('#overlay .help')) return;
+  if (!from && $('#pRes')) from = 'pause';
+  const was = paused;
+  if (inGame) { paused = true; clearInput(); }
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  markHelpSeen();
+  overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="hTitle" style="width:640px"><h1 id="hTitle" style="font-size:36px">HOW TO PLAY</h1>${HELP}<button class="btn" id="hBack">${inGame ? 'Back to the bunker' : 'Back'}</button></div>`);
+  $('#hBack').onclick = () => {
+    if (from === 'pause') showPauseMenu();
+    else if (inGame) { overlay(''); paused = was; renderHud(); }
+    else showMenu();
+  };
+  const hp = document.querySelector('#overlay .help'); if (hp) hp.focus();
 }
 function showPauseMenu() {
   paused = true; renderHud();
@@ -1330,20 +1551,38 @@ function showPauseMenu() {
   $('#pHelp').onclick = () => showHelp(true);
   $('#pMenu').onclick = () => { save(); showMenu(); };
 }
-function start() { overlay(''); scene = 'bunker'; paused = false; speed = 1; closeDrawer(); renderHud(); $('#tAlarm').classList.toggle('on', !!S.alarm); }
+function start() { overlay(''); scene = 'bunker'; paused = false; speed = 1; closeDrawer(); renderHud(); $('#tAlarm').classList.toggle('on', !!S.alarm); showHint(); }
+function summaryHtml() {
+  const st = S.stats, lost = st.lost || [];
+  const sc = Object.entries(st.scav || {}).filter(([, v]) => v > 0).map(([k, v]) => v + ' ' + ((RES.find(r => r.k === k) || { name: k }).name.toLowerCase())).join(', ');
+  const mom = (st.moments || []).map(m => '<li>' + esc(m) + '</li>').join('');
+  return `<div style="text-align:left;margin:10px auto;max-width:520px;font-size:15px;line-height:1.5">`
+    + `<div>Days survived: <b>${day()}</b></div>`
+    + `<div>Crew alive: <b>${living().length}</b> · lost: <b>${lost.length}</b>${lost.length ? ' (' + esc(lost.join(', ')) + ')' : ''}</div>`
+    + `<div>Raids repelled: <b>${st.repelled || 0}</b> of ${st.raids}</div>`
+    + `<div>Hostiles stopped: <b>${st.kills}</b> · scavenging trips: <b>${st.trips}</b></div>`
+    + `<div>Scavenged: <b>${sc || 'nothing'}</b></div>`
+    + `<div style="margin-top:8px"><b>Key moments</b></div><ul style="max-height:140px;overflow:auto;margin:4px 0 0;padding-left:20px">${mom || '<li>A quiet run.</li>'}</ul></div>`;
+}
 function gameOver(won) {
   S.over = true; S.won = won; clearSave(); scene = 'over';
   if (!won) narrPlay(narrPick('defeat'));
   const alive = living().map(c => c.name);
   overlay(won
     ? `<div class="menu"><h1 style="font-size:46px">THE SIGNAL IS OUT</h1><p class="sub">Lamp reads the reply aloud, slowly, the way it reads old maintenance logs: <i>“Bunker 12. We hear you. Hold on. We are coming.”</i> Somewhere above the ash, Nell would finally see the sky.</p>
-       <p class="sub">Day ${day()} · ${alive.length} survivors · ${S.stats.kills} hostiles stopped · ${S.stats.trips} scavenging trip${S.stats.trips === 1 ? '' : 's'}${S.stats.lost.length ? ' · lost: ' + esc(S.stats.lost.join(', ')) : ''}</p><button class="btn" id="oNew">Play again</button></div>`
-    : `<div class="menu"><h1 style="font-size:46px">THE BUNKER IS SILENT</h1><p class="sub">Lamp keeps reading the maintenance logs to empty rooms.</p><p class="sub">You held out until day ${day()} · ${S.stats.kills} hostiles stopped</p><button class="btn" id="oNew">Try again</button></div>`);
+       ${summaryHtml()}<button class="btn" id="oNew">Play again</button></div>`
+    : `<div class="menu"><h1 style="font-size:46px">THE BUNKER IS SILENT</h1><p class="sub">Lamp keeps reading the maintenance logs to empty rooms.</p>${summaryHtml()}<button class="btn" id="oNew">Try again</button></div>`);
   $('#oNew').onclick = () => { newRun(); start(); };
+  $('#oNew').focus();
 }
 
 // ---------------------------------------------------------------- 7. main loop
-function fit() { const s = Math.min(innerWidth / W, innerHeight / H); $('#wrap').style.transform = `scale(${s})`; }
+function fit() {
+  const s = Math.min(innerWidth / W, innerHeight / H), w = $('#wrap');
+  w.style.transform = `scale(${s})`;
+  // on small screens the stage is scaled down a lot, so grow touch UI to keep it readable and tappable
+  w.style.setProperty('--u', Math.max(1, Math.min(1.7, 0.7 / s)).toFixed(2));
+}
 addEventListener('resize', fit); fit();
 let last = performance.now(), hudT = 0, drawerT = 0;
 function frame(now) {
@@ -1358,8 +1597,9 @@ function frame(now) {
     }
     const it = interactable(); $('#prompt').textContent = it ? (document.body.classList.contains('touch') ? it.text.replace(/^E · /, 'Tap E · ') : it.text) : '';
     hudT -= dtReal; if (hudT <= 0) { hudT = 0.25; renderHud(); renderScavHud(); }
-    drawerT -= dtReal; if (drawerT <= 0) { drawerT = 0.6; if (!document.querySelector('#drawer:hover')) renderDrawer(); }
+    drawerT -= dtReal; if (drawerT <= 0) { drawerT = 0.6; if (!document.querySelector('#drawer:hover') && !(document.activeElement && document.activeElement.tagName === 'SELECT')) renderDrawer(); }
   }
+  shakeT = Math.max(0, shakeT - dtReal);
   if (S) draw(); else { g.fillStyle = '#000'; g.fillRect(0, 0, W, H); }
   requestAnimationFrame(frame);
 }
@@ -1368,7 +1608,7 @@ function renderScavHud() {
   if (scene !== 'scav' || !scav) { h.hidden = true; return; }
   h.hidden = false;
   const pk = Object.entries(scav.pack).filter(([, v]) => v > 0);
-  h.innerHTML = `<b>TOPSIDE</b><span>Pack: ${pk.length ? pk.map(([k, v]) => v + ' ' + RES.find(r => r.k === k).name.toLowerCase()).join(', ') : 'empty'}</span><span>Hatch ${Math.ceil(S.door.hp)}/${S.door.max} · Wall ${Math.ceil(S.wall.hp)}</span>${S.enemies.length ? `<span style="color:var(--red)">Bunker under attack</span>` : ''}`;
+  h.innerHTML = `<b>TOPSIDE</b><span>${carryBar()}</span><span>Pack: ${pk.length ? pk.map(([k, v]) => v + ' ' + RES.find(r => r.k === k).name.toLowerCase()).join(', ') : 'empty'}</span><span>Hatch ${Math.ceil(S.door.hp)}/${S.door.max} · Wall ${Math.ceil(S.wall.hp)}</span>${S.enemies.length ? `<span style="color:var(--red)">Bunker under attack</span>` : ''}`;
 }
 // a quiet backdrop behind the menu
 quiet = true; newRun(); quiet = false; showMenu();

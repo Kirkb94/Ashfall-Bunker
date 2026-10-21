@@ -133,8 +133,50 @@
   body.touch .btn{padding:10px 16px;font-size:15px}
   body.touch .dbody{font-size:15px}
   body.touch .prompt{bottom:118px;font-size:15px}
+  .hint{position:absolute;left:50%;bottom:62px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--amber);border-radius:8px;padding:7px 8px 7px 14px;font-weight:600;display:flex;gap:10px;align-items:center;white-space:nowrap;animation:fade .3s ease}
+  .hint[hidden]{display:none}
+  .hint kbd{font:600 12px var(--disp);background:#2d2215;border-radius:4px;padding:1px 5px}
+  .hint button{background:none;border:1px solid var(--line);border-radius:5px;padding:1px 7px}
+  body.touch .hint{bottom:170px;font-size:15px}
+  .help:focus-visible,.menu .btn:focus-visible,.hint button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
   .help .touchonly{display:none}
   body.touch .help .touchonly{display:list-item}
+  /* responsive touch layout: --u is set by fit() (1 on big screens, up to 1.7 on phones) */
+  body.touch .hud{font-size:calc(15px*var(--u,1));height:calc(42px*var(--u,1));gap:calc(10px*var(--u,1))}
+  body.touch .clock{font-size:calc(17px*var(--u,1))}
+  body.touch .threat{font-size:calc(12.5px*var(--u,1))}
+  body.touch .spd button{font-size:calc(15px*var(--u,1));padding:calc(6px*var(--u,1)) calc(12px*var(--u,1))}
+  body.touch .tools{top:calc(46px*var(--u,1));max-width:calc(100% - 24px)}
+  body.touch .tools button{font-size:calc(15px*var(--u,1));padding:calc(10px*var(--u,1)) calc(13px*var(--u,1))}
+  body.touch .log,body.touch .scavhud{top:calc(50px*var(--u,1));font-size:calc(13px*var(--u,1))}
+  body.touch .log{width:calc(470px*var(--u,1));max-width:45%}
+  body.touch .log div{font-size:calc(13px*var(--u,1))}
+  body.touch .dopen .log{right:calc(470px*var(--u,1) + 16px)}
+  body.touch .drawer{top:calc(50px*var(--u,1));bottom:calc(88px*var(--u,1) + 22px);width:calc(470px*var(--u,1));max-width:58%}
+  body.touch .dbody{font-size:calc(15px*var(--u,1))}
+  body.touch .tabs button{font-size:calc(15px*var(--u,1))}
+  body.touch .chip{font-size:calc(14px*var(--u,1))}
+  body.touch .btn{font-size:calc(15px*var(--u,1))}
+  body.touch .prompt{bottom:calc(88px*var(--u,1) + 22px);font-size:calc(15px*var(--u,1))}
+  #touch .pl{left:max(14px,env(safe-area-inset-left));bottom:max(14px,env(safe-area-inset-bottom));grid-template-columns:repeat(3,calc(80px*var(--u,1)));grid-template-rows:repeat(2,calc(80px*var(--u,1)))}
+  #touch .pr{right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));grid-template-columns:repeat(3,calc(84px*var(--u,1)));grid-template-rows:calc(84px*var(--u,1))}
+  #touch button{font-size:calc(20px*var(--u,1))}
+  body.touch .menu{max-width:92%}
+  body.touch .help{max-height:calc(430px*var(--u,1))}
+  /* accessibility: reduced motion */
+  body.rm *,body.rm *::before,body.rm *::after{animation:none!important;transition:none!important}
+  /* accessibility: colorblind (icons + patterns instead of color alone) */
+  body.cb .res .low{text-decoration:underline}
+  body.cb .res .low::before{content:'\26A0\FE0E ';text-decoration:none;display:inline-block}
+  body.cb .threat.hot::before{content:'\203C\FE0E ';}
+  body.cb .log div.warn::before{content:'\26A0\FE0E ';color:#fff}
+  body.cb .log div.good::before{content:'\2714\FE0E ';color:#fff}
+  body.cb .log div.warn{border-left-style:dashed}
+  body.cb .bar i.p-hp{background:#56B4E9!important}
+  body.cb .bar i.p-food{background:repeating-linear-gradient(45deg,#F0E442 0 4px,#7a7000 4px 7px)!important}
+  body.cb .bar i.p-rest{background:repeating-linear-gradient(90deg,#E69F00 0 3px,#4a3200 3px 6px)!important}
+  body.cb .bar i.p-low{background:repeating-linear-gradient(-45deg,#D55E00 0 3px,#fff 3px 6px)!important}
+  .tools button[aria-pressed="true"]{border-color:var(--amber);color:var(--amber);font-weight:600}
 </style>
 </head>
 <body>
@@ -150,8 +192,12 @@
     <button id="tAlarm" title="Everyone drops what they're doing and defends: turrets first, then the door. Sleep waits.">Battle stations<kbd>G</kbd></button>
     <button id="tHelp">Help<kbd>H</kbd></button>
     <button id="tMute">Sound on<kbd>M</kbd></button>
+    <button id="tCb" aria-pressed="false">Colorblind: off</button>
+    <button id="tRm" aria-pressed="false">Reduced motion: off</button>
+    <button id="tDbg" aria-pressed="false" title="Show each survivor's food, rest, health and state">Crew debug<kbd>V</kbd></button>
   </div>
   <div class="prompt" id="prompt"></div>
+  <div class="hint" id="hint" role="status" hidden></div>
   <div id="touch" aria-hidden="true">
     <div class="pad pl">
       <button class="up" data-k="w">▲</button><button class="lf" data-k="a">◀</button><button class="dn" data-k="s">▼</button><button class="rt" data-k="d">▶</button>
