@@ -1,0 +1,8 @@
+{
+  "name": "ashfall-bunker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Side-view bunker defense and colony sim. Web prototype.",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}
