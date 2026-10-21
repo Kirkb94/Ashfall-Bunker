@@ -46,8 +46,8 @@ function powerTick(h) {
   if (!S.rooms.generator) { S.powered = false; return; }
   const need = ROOM_FX.fuelPerHour * h, was = !!S.powered;
   if (S.res.scrap >= need) { S.res.scrap -= need; S.powered = true; } else S.powered = false;
-  if (was && !S.powered) { S.powerOut = true; lamp('The generator has run out of scrap and gone dark. Rooms are back to manual.', 'warn'); }
-  if (S.powered && S.powerOut) { S.powerOut = false; lamp('Generator is running again. Power is back.', 'good'); }
+  if (was && !S.powered) { S.powerOut = true; lampEv('power_out', 'The generator has run out of scrap and gone dark. Rooms are back to manual.', 'warn'); }
+  if (S.powered && S.powerOut) { S.powerOut = false; lampEv('power_back', 'Generator is running again. Power is back.', 'good'); }
 }
 const JOBS = {
   turretA:  { label: 'Turret 1', short: 'T1' },
@@ -114,12 +114,112 @@ const LAMP_LINES = {
   breach: ['The hatch has been breached. Hostiles are in the shaft. All hands to battle stations, please. I know you can hold them.', 'Breach. I am sorry, Mara. The hatch has failed. Everyone to the floors, and look after one another.', 'Maintenance log, hatch: "Do not rely on the hatch alone." The builders were wise. The hatch is open. Please defend the shaft.'],
   towerHalf: ['The {name} is half complete. Well done, everyone. Please keep the crew on it.', 'Halfway through the {name}. I can hear the tower beginning to hum, and I find it encouraging.', 'Maintenance log, signal room: "Beacon dormant, awaiting a steady hand." The {name} is half done. Many steady hands, I think.'],
   towerLeft: ['{n} stage(s) remain. We are closer than we have ever been.', 'We are {n} stage(s) from a signal. Nell will be pleased.', 'Only {n} stage(s) lie between us and the surface. I have begun to hope.'],
+  breachClue: ['Maintenance log, hatch: "Seal integrity ▒▒▒▒▒▒▒. Cause ▒▒▒▒▒▒▒▒, see entry ▒▒▒." The rest is unreadable. I am sorry, Mara. I will keep looking.'],
+  breachCause: ['I have recovered the hatch log, Mara. "Seal fatigue, flagged and left unrepaired." The first breach was not the wasteland alone. It was a warning we never answered. With the tower rising, I wanted you to know.'],
   towerWin: ['The carrier is decoded, Mara. That is a voice, and it is answering us. I believe we are going home.', 'Maintenance log, final entry: "Signal received. Open the hatch." Decode complete. Someone is calling back. Thank you, all of you.']
 };
+// Exact narrator script text, one entry per recorded take (no [tags]). Popups show the take that plays.
+const VO_TEXT = {
+  vo_match_start_01: "Bunker systems online. Survivors present. Optimism, pending.",
+  vo_match_start_02: "Welcome back. The apocalypse is outside. The snacks are inside.",
+  vo_new_day_01: "Good morning. Everyone is alive, which is a pleasant surprise.",
+  vo_new_day_02: "Another dawn. Stores counted. Please try not to look at them.",
+  vo_raid_warn_01: "Movement on the ridge. One hour. Wake your gunners.",
+  vo_raid_warn_02: "Heat signatures approaching. Raid in one hour. Man the turrets.",
+  vo_wave_start_01: "Incoming wave. It looks hungry and rude.",
+  vo_wave_start_02: "New threats detected. Please act surprised, then act fast.",
+  vo_wave_stronger_01: "Threat level rising. Your sandbags are looking optimistic.",
+  vo_wave_stronger_02: "They've gotten bigger. I did warn you. Quietly.",
+  vo_wave_clear_01: "Wave cleared. Enjoy the silence. It won't last.",
+  vo_wave_clear_02: "All clear. Nicely done, squishy ones.",
+  vo_probe_01: "Hounds at the outer wall. They're mostly curious. Mostly.",
+  vo_probe_02: "Scratching outside. Early visitors. Terrible manners.",
+  vo_boss_warn_01: "A convoy with a painted grin. That's Cinder. One hour.",
+  vo_boss_warn_02: "Scanner shows Cinder's convoy. Do tidy up. He's the judgmental type.",
+  vo_boss_arrive_01: "Cinder is here. Hold the door. Please.",
+  vo_boss_arrive_02: "Big threat at the gate! Everyone to your posts!",
+  vo_boss_down_01: "Cinder is down! His raiders are scattering. Well, that was rude of him.",
+  vo_boss_down_02: "Cinder has fallen. I'd say he's out of the leader category.",
+  vo_door_attack_01: "Something is knocking. It did not bring snacks.",
+  vo_door_attack_02: "Door under attack. Please respond with enthusiasm.",
+  vo_door_low_01: "Door integrity critical. It's more of a suggestion now.",
+  vo_door_low_02: "That door is failing! Reinforce it or wave goodbye!",
+  vo_door_breach_01: "Door breached. Well. That's one way to get fresh air.",
+  vo_door_breach_02: "Breach! We now have an open-plan bunker.",
+  vo_door_repair_01: "Door restored. Almost as good as new. Almost.",
+  vo_door_repair_02: "Reinforced. The monsters are mildly inconvenienced.",
+  vo_wall_down_01: "The outer wall is down. The door is now the plan.",
+  vo_wall_down_02: "Wall gone. That was our first line. Now it's the only line.",
+  vo_turret_lost_01: "Turret destroyed. It died doing what it loved. Shooting.",
+  vo_turret_lost_02: "We've lost a turret. Scrap is available, if you're feeling brave.",
+  vo_power_out_01: "Generator's dry. We're back to elbow grease.",
+  vo_power_out_02: "Power's out. Feed the generator some scrap. It's very polite about it.",
+  vo_power_back_01: "Lights are back. I missed having opinions about them.",
+  vo_power_back_02: "Power restored. The rooms are working properly again.",
+  vo_topside_exit_01: "Heading topside. Remember: the radiation is not a tan.",
+  vo_topside_exit_02: "Scavenger on the surface. Please bring back something useful.",
+  vo_topside_return_01: "Supplies acquired. The scavenger lives. Everyone's pleasantly surprised.",
+  vo_topside_return_02: "Loot secured. I'd call that a successful errand.",
+  vo_topside_danger_01: "Scavenger in trouble. Run first, loot later.",
+  vo_topside_danger_02: "Your scavenger is being chased. Cardio time.",
+  vo_survivor_lost_01: "We've lost a survivor. Moment of silence. Brief one.",
+  vo_survivor_lost_02: "One fewer survivor. The bunker feels roomier. Sorry.",
+  vo_survivor_lost_many_01: "Multiple casualties. This is going badly. I'm being polite.",
+  vo_survivor_lost_many_02: "Casualties are mounting. So is my concern.",
+  vo_survivor_down_01: "Survivor down. Medical attention, please. Any attention, really.",
+  vo_survivor_down_02: "Someone's hurt. Please help. Gently.",
+  vo_survivor_revive_01: "Back on their feet. Resilient little things, aren't you?",
+  vo_survivor_revive_02: "Survivor recovered. Medicine works. Who knew?",
+  vo_hungry_01: "Some of us skipped a meal. Hydroponics needs hands.",
+  vo_hungry_02: "Food is short. Please farm, or go foraging. Preferably before grumbling.",
+  vo_newcomer_01: "A new survivor. Please be nice. They're not sure about us yet.",
+  vo_newcomer_02: "Someone knocked and I opened. Give them a job. And a pillow.",
+  vo_deserter_01: "Someone left in the night. They took supplies. Morale matters, apparently.",
+  vo_deserter_02: "A survivor has quit. With luggage. I'd call that a review.",
+  vo_exit_build_start_01: "Construction started. Escape is now a project, not a dream.",
+  vo_exit_build_start_02: "Exit build underway. Hammers up. Panic optional.",
+  vo_exit_half_01: "Halfway there. The future looks structurally plausible.",
+  vo_exit_half_02: "Fifty percent complete. Do not lean on it.",
+  vo_exit_almost_01: "Almost done! Keep the doors shut a little longer.",
+  vo_exit_almost_02: "Nearly finished. Don't die now. It'd be embarrassing.",
+  vo_exit_resources_01: "Insufficient materials. Someone should go shopping topside.",
+  vo_exit_resources_02: "We're short on parts. Duct tape is not a plan.",
+  vo_victory_01: "Escape successful! Everyone out. Please enjoy the sun responsibly.",
+  vo_victory_02: "Signal sent, help is coming. I knew you could do it. Mostly.",
+  vo_defeat_01: "The bunker has fallen. I'll file this under learning experiences.",
+  vo_defeat_02: "All survivors lost. Shall we try again? I'll tidy up.",
+  vo_pop_50_01: "Population halved. Fewer queues for the showers.",
+  vo_pop_50_02: "Half the survivors are gone. That's concerning. Mathematically.",
+  vo_pop_10_01: "Ten survivors left. Everyone gets a bunk now.",
+  vo_pop_10_02: "Ten remain. Please stop losing people.",
+  vo_pop_03_01: "Three survivors. A very exclusive club.",
+  vo_pop_03_02: "Three left. Please don't make it two."
+};
+// Text for the take that plays (clip may be an id or a file path); else a random take for the event; else the old text.
+function narrText(clip, ev, fallback) {
+  if (clip) { const m = String(clip).match(/(vo_[a-z0-9_]+?_\d+)(?:\.\w+)?$/i); if (m && VO_TEXT[m[1]]) return VO_TEXT[m[1]]; }
+  if (ev) {
+    const base = 'vo_' + (ev === 'pop_3' ? 'pop_03' : ev) + '_';
+    const ids = Object.keys(VO_TEXT).filter(k => k.startsWith(base) && /^\d+$/.test(k.slice(base.length)));
+    if (ids.length) return VO_TEXT[pick(ids)];
+  }
+  return fallback;
+}
+let doorLowSaid = false;
+const LAMP_CLIPS = { raidNow: 'wave_start', breach: 'door_breach', towerHalf: 'exit_half', towerLeft: 'exit_almost', towerWin: 'victory', raidWarn: 'raid_warn', probe: 'probe' };
 function lampSay(key, kind, vars) {
-  let t = pick(LAMP_LINES[key]);
+  let ev = LAMP_CLIPS[key];
+  if (key === 'towerLeft' && vars && vars.n > 1) ev = null; // exit_almost only fits the last stage
+  if (key === 'raidNow' && vars && vars.strong) ev = 'wave_stronger';
+  const clip = ev ? narrPick(ev) : null;
+  let t = narrText(clip, ev, pick(LAMP_LINES[key]));
   if (vars) for (const k in vars) t = t.split('{' + k + '}').join(vars[k]);
-  lamp(t, kind);
+  lamp(t, kind, 0, clip);
+}
+// One-off line with a narrator clip: NARR_TEXT (if filled in) replaces the fallback text.
+function lampEv(ev, text, kind, delayMs) {
+  const clip = narrPick(ev);
+  lamp(narrText(clip, ev, text), kind, delayMs, clip);
 }
 
 // ---------------------------------------------------------------- 2. game state
@@ -162,13 +262,13 @@ function newRun() {
   placePlayer('bunker');
   fx.tracers = []; fx.parts = []; fx.nums = []; fx.bullets = [];
   logs.length = 0;
-  lamp('Lamp online. Good morning, Mara. It is day 1, 08:00. The first raid is due at 21:00.');
+  lampEv('match_start', 'Lamp online. Good morning, Mara. It is day 1, 08:00. The first raid is due at 21:00.');
   lamp('Someone has to sit at a turret or it will not fire. Open Crew (C) to give people jobs and shifts.', '', 900);
   lamp('The signal tower needs electronics we do not have. Walk right across the surface to scavenge. Time keeps running while you are out.', '', 1800);
 }
 function save() {
   if (!S || S.over) return;
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ S, P: { x: P.x, y: P.y } })); } catch {}
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(scene === 'scav' ? { S } : { S, P: { x: P.x, y: P.y } })); } catch {}
 }
 function loadSave() {
   try { const d = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); if (d && d.S && d.S.v === 1 && !d.S.over) return d; } catch {}
@@ -246,8 +346,9 @@ function moveTo(m, floor, x, dt, spd) {
 function hourEvents(h) {
   const d = day();
   if (h === 7 || h === 13 || h === 19) meal();
-  if (h === 8) { if (S.alarm) toggleAlarm(); S.alarmAuto = false; if (d > 1) lamp('Day ' + d + '. ' + summaryLine()); }
-  if (h === 20) { if (d === 3) lamp('Long-range scanner: a convoy with a painted-grin banner. That is Cinder. Raid in one hour.', 'warn'); else lampSay('raidWarn', 'warn'); }
+  if (h === 8) { if (S.alarm) toggleAlarm(); S.alarmAuto = false; if (d > 1) lampEv('new_day', 'Day ' + d + '. ' + summaryLine()); }
+  if (h === 20) { if (d === 3) lampEv('boss_warn', 'Long-range scanner: a convoy with a painted-grin banner. That is Cinder. Raid in one hour.', 'warn'); else lampSay('raidWarn', 'warn'); }
+  if (h === 8 && S.tower && !S.tower.paid && TOWER[S.tower.done] && !canPay(TOWER[S.tower.done].cost)) lampEv('exit_resources', 'Not enough materials for the next tower stage. Someone should scavenge topside.', 'warn');
   if (h === 21) queueRaid(d);
   if (h === 5 && d >= 2) queueProbe(d);
   if (h === 2) revoltCheck();
@@ -264,7 +365,7 @@ function meal() {
     if (c.down) continue;
     if (S.res.food >= 1) { S.res.food -= 1; c.food = Math.min(100, c.food + 42); } else hungry++;
   }
-  if (hungry) lamp(hungry + ' of us went without a meal. Hydroponics needs hands, or bring food back from topside.', 'warn');
+  if (hungry) lampEv('hungry', hungry + ' of us went without a meal. Hydroponics needs hands, or bring food back from topside.', 'warn');
 }
 function queueRaid(d) {
   S.stats.raids++;
@@ -276,7 +377,8 @@ function queueRaid(d) {
   if (d === 3) { for (let i = 0; i < 4; i++) list.push('raider'); list.push('cinder'); }
   if (d >= 6) for (let i = 0; i < d - 4; i++) list.push(pick(['raider', 'brute', 'hound']));
   let at = S.t; list.forEach(type => { S.spawns.push({ type, at }); at += rnd(7, 15); });
-  if (d === 3) lamp('Cinder’s raiders are at the wire. Hold the door.', 'warn'); else lampSay('raidNow', 'warn', { n: list.length });
+  S.raidActive = true;
+  if (d === 3) lampEv('wave_stronger', 'Cinder’s raiders are at the wire. Hold the door.', 'warn'); else lampSay('raidNow', 'warn', { n: list.length, strong: d >= 3 });
   if (speed > 1) setSpeed(1);
 }
 function queueProbe(d) {
@@ -287,7 +389,7 @@ function queueProbe(d) {
 function spawnEnemy(type) {
   const b = ENEMIES[type], scale = 1 + (day() - 1) * 0.1;
   S.enemies.push({ id: uid++, type, enemy: true, x: W + 30 + rnd(0, 60), y: FLOORS[0], floor: 0, climbing: false, hp: Math.round(b.hp * scale), max: Math.round(b.hp * scale), cd: rnd(0, 0.5), facing: -1, anim: Math.random() * 10, inside: false });
-  if (type === 'cinder') lamp('Cinder (over a loudspeaker): “Open up, little mole. Only the strong get to leave the ground.”', 'warn');
+  if (type === 'cinder') lampEv('boss_arrive', 'Cinder is here. Hold the door.', 'warn'); if (type === 'cinder') lamp('Cinder (over a loudspeaker): “Open up, little mole. Only the strong get to leave the ground.”', 'warn');
 }
 function revoltCheck() {
   for (const c of living()) {
@@ -295,7 +397,7 @@ function revoltCheck() {
     if (morale(c) < 38 && Math.random() > c.loyalty) {
       const k = pick(['food', 'scrap', 'parts', 'elec']); const took = Math.ceil(S.res[k] * (S.rooms.storage ? ROOM_FX.storageTheft : 0.3));
       S.res[k] -= took; c.alive = false; c.left = true;
-      lamp(c.name + ' slipped out in the night with ' + took + ' ' + RES.find(r => r.k === k).name.toLowerCase() + '. Morale was too low to hold them.', 'warn');
+      lampEv('deserter', c.name + ' slipped out in the night with ' + took + ' ' + RES.find(r => r.k === k).name.toLowerCase() + '. Morale was too low to hold them.', 'warn');
     }
   }
 }
@@ -303,7 +405,7 @@ function wandererAtDoor() {
   if (living().length >= 14) return;
   const w = makeCrew(randomSurvivor()); w.x = 300; w.floor = 0; w.y = FLOORS[0];
   S.crew.push(w);
-  lamp(w.name + ' (' + w.role.toLowerCase() + ') knocked at the hatch and asked to stay. I let them in. Keep morale up: newcomers are not always loyal.', 'good');
+  lampEv('newcomer', w.name + ' (' + w.role.toLowerCase() + ') knocked at the hatch and asked to stay. I let them in. Keep morale up: newcomers are not always loyal.', 'good');
 }
 
 function crewTick(c, dt, mins) {
@@ -362,7 +464,7 @@ function workshopTick(c, e, h) {
     const miss = s.max - s.hp; if (miss <= 0) continue;
     const amt = Math.min(miss, work, S.res.scrap * 10); if (amt <= 0) break;
     s.hp += amt; S.res.scrap -= amt / 10; work -= amt;
-    if (s === S.door && S.breached && S.door.hp > 40) { S.breached = false; lamp('The hatch is sealed again.', 'good'); }
+    if (s === S.door && S.breached && S.door.hp > 40) { S.breached = false; lampEv('door_repair', 'The hatch is sealed again.', 'good'); }
   }
   if (work > 0 && S.makeParts && S.res.scrap >= 2) { const n = Math.min(work / 30, S.res.scrap / 2); S.res.parts += n; S.res.scrap -= n * 2; }
 }
@@ -381,7 +483,14 @@ function levelUp(c) {
 function kill(c, how) {
   c.alive = false; c.hp = 0; S.stats.lost.push(c.name);
   for (const o of living()) if (o.bonds.includes(c.id) || c.bonds.includes(o.id)) { o.grief = 24; lamp(o.name + ' is grieving ' + c.name + '. They will work slower for a day.', 'warn'); }
-  lamp(c.name + (how === 'starved' ? ' starved.' : ' was killed.') + (c.named ? ' We will not forget them.' : ''), 'warn');
+  const lostTxt = c.name + (how === 'starved' ? ' starved.' : ' was killed.') + (c.named ? ' We will not forget them.' : '');
+  const left = living().length;
+  S.lostT = (S.lostT || []).filter(t => S.t - t < 60); S.lostT.push(S.t);
+  if (left === 49) lampEv('pop_50', lostTxt + ' Fewer than fifty survivors remain.', 'warn');
+  else if (left === 10) lampEv('pop_10', lostTxt + ' Ten survivors remain.', 'warn');
+  else if (left === 3) lampEv('pop_3', lostTxt + ' Three survivors remain.', 'warn');
+  else if (S.lostT.length >= 3) lampEv('survivor_lost_many', lostTxt, 'warn');
+  else lampEv('survivor_lost', lostTxt, 'warn');
   burst(c.x, c.y - 14, '#a33', 14);
   if (!living().length && S.player.down) gameOver(false);
 }
@@ -435,8 +544,13 @@ function attack(e, b, target, tx, what) {
   if (target === P) return hurtPlayer(b.dmg);
   if (target.stats) { target.hp -= b.dmg; burst(target.x, target.y - 16, '#c33', 4); if (target.hp <= 0) kill(target); return; }
   target.hp = Math.max(0, target.hp - b.dmg); burst(tx + 6, FLOORS[0] - 20, '#bbb', 3);
-  if (what === 'wall' && target.hp <= 0) lamp('The outer wall is down!', 'warn');
-  if (what === 'turret' && target.hp <= 0) { lamp('A turret was destroyed.', 'warn'); const i = S.turrets.indexOf(target); S.turrets[i] = null; }
+  if (window.SFX) SFX.hit(what);
+  if (what === 'door') {
+    if (target.hp > 0 && target.hp < target.max * 0.25) { if (!doorLowSaid) { doorLowSaid = true; lampEv('door_low', 'Door integrity critical.', 'warn'); } }
+    else { if (target.hp > target.max * 0.5) doorLowSaid = false; narrPlay(narrPick('door_attack')); }
+  }
+  if (what === 'wall' && target.hp <= 0) lampEv('wall_down', 'The outer wall is down!', 'warn');
+  if (what === 'turret' && target.hp <= 0) { lampEv('turret_lost', 'A turret was destroyed.', 'warn'); const i = S.turrets.indexOf(target); S.turrets[i] = null; }
 }
 function breach() {
   // Called each time something gets in. The alarm sounds once per night, so the player can still stand people down.
@@ -444,6 +558,10 @@ function breach() {
   if (S.breached) return;
   S.breached = true;
   lampSay('breach', 'warn');
+  if (!S.breachLog) {
+    if (S.tower.done >= 1) { S.breachLog = 2; lamp(pick(LAMP_LINES.breachCause), 'warn', 2500); }
+    else { S.breachLog = 1; lamp(pick(LAMP_LINES.breachClue), 'warn', 2500); }
+  }
   if (speed > 1) setSpeed(1);
 }
 function hitEnemy(e, dmg, by) {
@@ -456,7 +574,7 @@ function hitEnemy(e, dmg, by) {
     if (by && by.stats) { by.xp += xp; by.kills++; if (by.xp >= 60 * by.lvl) { by.xp -= 60 * by.lvl; levelUp(by); } }
     else if (by === P) { S.player.xp += xp; if (S.player.xp >= 50 * S.player.lvl) { S.player.xp -= 50 * S.player.lvl; S.player.lvl++; S.player.maxHp += 10; S.player.hp += 10; lamp('Mara is now level ' + S.player.lvl + ': more health and a harder-hitting pistol.', 'good'); } }
     if (Math.random() < 0.35) S.res.scrap += e.type === 'raider' ? 3 : 1;
-    if (e.type === 'cinder') { lamp('Cinder is down. His raiders scatter into the ash. Rook will want to hear about this.', 'good'); S.res.parts += 8; S.res.elec += 3; }
+    if (e.type === 'cinder') { lampEv('boss_down', 'Cinder is down. His raiders scatter into the ash. Rook will want to hear about this.', 'good'); S.res.parts += 8; S.res.elec += 3; }
     burst(e.x, e.y - 10, '#5a3', 12);
   }
 }
@@ -471,6 +589,7 @@ function turretTick(dt) {
     const target = S.enemies.filter(e => !e.inside && e.hp > 0 && e.x > SLOT_X[i] && e.x - SLOT_X[i] < spec.range && e.x < W + 10).sort((a, z) => a.x - z.x)[0];
     if (!target) return;
     t.cd = spec.cd; t.flash = 0.08;
+    if (window.SFX) SFX.turret(t.type);
     const e = eff(gunner);
     for (let k = 0; k < spec.pellets; k++) {
       const ty = target.y - ENEMIES[target.type].h / 2 + rnd(-8, 8);
@@ -494,6 +613,7 @@ function simTick(dt) {
   turretTick(dt);
   for (const e of S.enemies) if (e.hp > 0) enemyTick(e, dt);
   S.enemies = S.enemies.filter(e => e.hp > 0);
+  if (S.raidActive && !S.spawns.length && !S.enemies.length) { S.raidActive = false; lampEv('wave_clear', 'Wave cleared.', 'good'); }
   if (S.breached && !S.enemies.some(e => e.inside) && S.door.hp > 40) S.breached = false;
   // Mara's needs
   const pl = S.player;
@@ -505,6 +625,7 @@ function simTick(dt) {
     const st = TOWER[S.tower.done]; S.tower.done++; S.tower.paid = false; S.tower.work = 0; S.tower.half = false;
     if (S.tower.done >= TOWER.length) { lampSay('towerWin', 'good'); return gameOver(true); }
     lamp('Signal tower: ' + st.name + ' complete. ' + st.line, 'good'); lampSay('towerLeft', 'good', { n: TOWER.length - S.tower.done });
+    if (S.breachLog === 1) { S.breachLog = 2; lamp(pick(LAMP_LINES.breachCause), 'good', 3000); }
   }
   // tutorial nudges
   if (S.hint === 0 && S.t > 9.5 * 60) { S.hint = 1; lamp('Tip: Old Bram in the Workshop repairs the door, wall and turrets with scrap, and turns spare scrap into parts.'); }
@@ -520,10 +641,11 @@ function placePlayer(where) {
 function hurtPlayer(d, quiet) {
   const pl = S.player; if (pl.down) return;
   pl.hp -= d; if (!quiet) { burst(P.x, P.y - 18, '#c33', 5); P.hurt = 0.2; }
+  if (scene === 'scav' && pl.hp > 0 && pl.hp < pl.maxHp * 0.3 && pl.hp + d >= pl.maxHp * 0.3) lampEv('topside_danger', 'Mara is in trouble on the surface. Run first, loot later.', 'warn');
   if (pl.hp <= 0) {
     pl.hp = 0; pl.down = 8;
-    if (scene === 'scav') { lamp('Mara is down out there. Tick dragged you home, but the pack was lost.', 'warn'); endScav(false); }
-    else lamp('Mara is down! Doc will patch you up in the med bay.', 'warn');
+    if (scene === 'scav') { lampEv('survivor_down', 'Mara is down out there. Tick dragged you home, but the pack was lost.', 'warn'); endScav(false); }
+    else lampEv('survivor_down', 'Mara is down! Doc will patch you up in the med bay.', 'warn');
     if (!living().length) gameOver(false);
   }
 }
@@ -531,7 +653,7 @@ function playerTick(dt) {
   const pl = S.player;
   if (pl.down) {
     pl.down -= dt;
-    if (pl.down <= 0) { pl.down = 0; pl.hp = Math.round(pl.maxHp * 0.5); scene = 'bunker'; P.x = 900; P.y = FLOORS[2]; P.floor = 2; P.climbing = P.onLadder = false; P.vy = 0; }
+    if (pl.down <= 0) { lampEv('survivor_revive', 'Mara is back on her feet.', 'good'); pl.down = 0; pl.hp = Math.round(pl.maxHp * 0.5); scene = 'bunker'; P.x = 900; P.y = FLOORS[2]; P.floor = 2; P.climbing = P.onLadder = false; P.vy = 0; }
     return;
   }
   if (scene === 'scav') return scavPlayerTick(dt);
@@ -607,15 +729,15 @@ function startScav() {
   scav = { len, plats, crates, enemies, wanderer, pack: { food: 0, scrap: 0, parts: 0, elec: 0, mat: 0 }, cam: 0, ruins: Array.from({ length: 40 }, () => ({ x: rnd(0, len), w: rnd(60, 180), h: rnd(60, 260), c: rnd(0, 1) })) };
   scene = 'scav';
   Object.assign(P, { x: 80, y: 620, vx: 0, vy: 0, onLadder: false, grounded: true, facing: 1 });
-  lamp('You are topside. The bunker keeps running without you: I will call if the door is in trouble. Walk back to the left edge to come home.');
+  lampEv('topside_exit', 'You are topside. The bunker keeps running without you: I will call if the door is in trouble. Walk back to the left edge to come home.');
 }
 function endScav(keep) {
   if (keep && scav) {
     const got = Object.entries(scav.pack).filter(([, v]) => v > 0);
     if (S.rooms.storage) for (const e of got) e[1] = Math.ceil(e[1] * ROOM_FX.storageLoot);
     for (const [k, v] of got) S.res[k] += v;
-    if (scav.recruit) { const c = makeCrew(scav.recruit); c.x = 300; c.floor = 0; c.y = FLOORS[0]; S.crew.push(c); lamp(c.name + ' joins the bunker. Give them a job in the Crew panel.', 'good'); }
-    lamp(got.length ? 'Welcome back. You brought ' + got.map(([k, v]) => v + ' ' + RES.find(r => r.k === k).name.toLowerCase()).join(', ') + '.' : 'Welcome back. Nothing useful this time.', 'good');
+    if (scav.recruit) { const c = makeCrew(scav.recruit); c.x = 300; c.floor = 0; c.y = FLOORS[0]; S.crew.push(c); lampEv('newcomer', c.name + ' joins the bunker. Give them a job in the Crew panel.', 'good'); }
+    lampEv('topside_return', got.length ? 'Welcome back. You brought ' + got.map(([k, v]) => v + ' ' + RES.find(r => r.k === k).name.toLowerCase()).join(', ') + '.' : 'Welcome back. Nothing useful this time.', 'good');
   }
   scav = null; scene = 'bunker';
   placePlayer('surface-right');
@@ -800,10 +922,7 @@ function drawPerson(x, y, color, accent, c, anim, facing, sleeping, climbing) {
     g.fillStyle = 'rgba(220,220,255,.8)'; g.font = '600 10px "IBM Plex Sans"'; g.fillText('z', 6, -16 - (Math.floor(anim) % 3) * 3);
   } else {
     const step = Math.sin(anim) * 3;
-    g.fillStyle = '#2a2018'; g.fillRect(-5, -10, 4, 10 + (climbing ? 0 : step * 0.3)); g.fillRect(1, -10, 4, 10 - (climbing ? 0 : step * 0.3));
-    box(-6, -26, 12, 16, color);
-    g.fillStyle = '#e2c29a'; g.fillRect(-4, -34, 8, 8);
-    g.fillStyle = accent; g.fillRect(facing > 0 ? 0 : -4, -33, 4, 2);
+    SPR.person(g, color, accent, (climbing || Math.abs(step) < 0.8) ? 0 : (step > 0 ? 1 : 2), facing < 0);
     if (c && c.id === 'bram') { g.fillStyle = '#c9c4b8'; g.fillRect(-4, -28, 8, 3); }
     if (c && c.id === 'juno') { g.fillStyle = '#222'; g.fillRect(facing > 0 ? 2 : -18, -22, 16, 3); }
     if (c && c.id === 'reed') { g.fillStyle = '#b0b8c0'; g.fillRect(-4, -31, 8, 2); }
@@ -822,11 +941,7 @@ function drawMara() {
   g.save(); g.translate(Math.round(P.x), Math.round(P.y));
   const step = Math.sin(P.anim) * 3;
   if (P.hurt > 0) g.globalAlpha = 0.6;
-  g.fillStyle = '#2a2018'; g.fillRect(-5, -11, 4, 11 + step * 0.4); g.fillRect(1, -11, 4, 11 - step * 0.4);
-  box(-7, -28, 14, 17, '#7a5a3a'); box(-7, -14, 14, 3, '#3a2a1a');
-  g.fillStyle = '#e2c29a'; g.fillRect(-4, -36, 8, 8);
-  g.fillStyle = '#2b1d12'; g.fillRect(-5, -38, 10, 3);
-  g.fillStyle = '#ffb347'; g.fillRect(-5, -40, 10, 3); // the goggles
+  SPR.mara(g, Math.abs(step) < 0.8 ? 0 : (step > 0 ? 1 : 2), P.facing < 0);
   g.fillStyle = '#222'; g.fillRect(P.facing > 0 ? 5 : -15, -24, 10, 3);
   g.restore();
   g.fillStyle = '#ffb347'; g.font = '700 10px "Chakra Petch"'; g.fillText('MARA', P.x - 13, P.y - 46);
@@ -835,7 +950,11 @@ function drawEnemy(e, ox = 0) {
   const b = ENEMIES[e.type];
   g.save(); g.translate(Math.round(e.x - ox), Math.round(e.y));
   const bob = Math.sin(e.anim) * 2;
-  if (e.type === 'hound') { box(-13, -16 + bob * 0.5, 26, 10, b.color); box(e.facing < 0 ? -18 : 10, -20 + bob * 0.5, 8, 8, '#7a4f36'); g.fillStyle = '#ff4030'; g.fillRect(e.facing < 0 ? -16 : 15, -18, 2, 2); g.fillStyle = '#3a2818'; for (let i = 0; i < 4; i++) g.fillRect(-11 + i * 6, -6, 3, 6 + (i % 2 ? bob : -bob) * 0.5); }
+  if (SPR.hasEnemy(e.type)) {
+    SPR.enemy(g, e.type, b.color, Math.abs(bob) < 0.7 ? 0 : (bob > 0 ? 1 : 2), e.facing < 0);
+    if (e.type === 'raider' || e.type === 'cinder') { g.fillStyle = '#222'; g.fillRect(e.facing < 0 ? -18 : 4, -b.h + 12, 14, 3); }
+  }
+  else if (e.type === 'hound') { box(-13, -16 + bob * 0.5, 26, 10, b.color); box(e.facing < 0 ? -18 : 10, -20 + bob * 0.5, 8, 8, '#7a4f36'); g.fillStyle = '#ff4030'; g.fillRect(e.facing < 0 ? -16 : 15, -18, 2, 2); g.fillStyle = '#3a2818'; for (let i = 0; i < 4; i++) g.fillRect(-11 + i * 6, -6, 3, 6 + (i % 2 ? bob : -bob) * 0.5); }
   else if (e.type === 'brute') { box(-13, -40, 26, 30, b.color); box(-9, -48, 18, 10, '#8a7a96'); g.fillStyle = '#2a2030'; g.fillRect(-12, -10, 9, 10); g.fillRect(3, -10, 9, 10); g.fillStyle = '#ff4030'; g.fillRect(e.facing < 0 ? -6 : 2, -45, 3, 3); }
   else {
     g.fillStyle = '#2a2018'; g.fillRect(-5, -10, 4, 10 + bob); g.fillRect(1, -10, 4, 10 - bob);
@@ -896,10 +1015,34 @@ function drawScav() {
 // ---------------------------------------------------------------- 6. UI panels and input
 const logs = [];
 let quiet = false;
-function lamp(text, kind = '', delayMs = 0) {
+// Lamp messages are staggered: each one holds the queue long enough to be read and spoken.
+const LAMP_BASE_MS = 1200, LAMP_PER_CHAR_MS = 65, LAMP_MIN_MS = 3000, LAMP_QUEUE_MAX = 5;
+const LAMP_URGENT = /door_breach|victory|defeat/;
+let lampQ = [], lampBusyUntil = 0, lampTimer = null, lampRid = null;
+function lampPump() {
+  lampTimer = null;
+  while (lampQ.length && S && S.rid !== lampQ[0].rid) lampQ.shift();
+  if (!lampQ.length) return;
+  const now = performance.now();
+  if (now < lampBusyUntil) { lampTimer = setTimeout(lampPump, lampBusyUntil - now); return; }
+  const it = lampQ.shift();
+  logs.push({ text: it.text, kind: it.kind, at: now }); if (logs.length > 3) logs.shift(); renderLog();
+  if (it.clip) narrPlay(it.clip);
+  lampBusyUntil = now + Math.max(LAMP_MIN_MS, LAMP_BASE_MS + it.text.length * LAMP_PER_CHAR_MS);
+  if (lampQ.length) lampTimer = setTimeout(lampPump, lampBusyUntil - now);
+}
+function lamp(text, kind = '', delayMs = 0, clip = null) {
   if (quiet) return;
   const rid = S && S.rid;
-  const add = () => { if (S && S.rid !== rid) return; logs.push({ text, kind, at: performance.now() }); if (logs.length > 3) logs.shift(); renderLog(); };
+  const add = () => {
+    if (S && S.rid !== rid) return;
+    if (S && S.rid !== lampRid) { lampRid = S.rid; lampQ = []; lampBusyUntil = 0; }
+    if (clip && LAMP_URGENT.test(String(clip))) { lampQ = []; lampBusyUntil = 0; }
+    lampQ.push({ text, kind, clip, rid });
+    while (lampQ.length > LAMP_QUEUE_MAX) lampQ.shift();
+    if (lampTimer) { clearTimeout(lampTimer); lampTimer = null; }
+    lampPump();
+  };
   delayMs ? setTimeout(add, delayMs) : add();
 }
 function renderLog() { $('#log').innerHTML = logs.map(l => `<div class="${l.kind}"><b>LAMP</b>${esc(l.text)}</div>`).join(''); }
@@ -934,7 +1077,7 @@ function renderDrawer() {
   if ($('#drawer').hidden || !S) return;
   document.querySelectorAll('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   const body = $('#dbody'); const keep = body.scrollTop;
-  body.innerHTML = tab === 'crew' ? crewHTML() : tab === 'build' ? buildHTML() : towerHTML();
+  body.innerHTML = tab === 'crew' ? crewHTML() : tab === 'build' ? buildHTML() : tab === 'rel' ? relHTML() : towerHTML();
   body.scrollTop = keep;
 }
 function crewHTML() {
@@ -957,6 +1100,51 @@ function crewHTML() {
   }).join('')}`;
 }
 const pctS = v => Math.round(v * 100);
+
+// Relationship screen: links come from design/brief.md. Add a person here and they show up automatically.
+const REL_NAMES = { mara: 'Mara Voss', lamp: 'Lamp', dorrow: 'Sgt. Hale Dorrow', rook: 'Rook', juno: 'Juno Park', vesper: 'Vesper', warden: 'The Warden', cinder: 'Cinder', bram: 'Old Bram', anand: 'Dr. Priya Anand', nell: 'Nell', tick: 'Tick', reed: 'Doc Reed' };
+const REL = {
+  mara: { role: 'Bunker leader (you)', color: '#d9a441', links: [
+    { to: 'bram', kind: 'ally', text: 'Built the first door together.' },
+    { to: 'tick', kind: 'family', text: 'Pulled him from the wreckage; treats him like a younger sibling.' },
+    { to: 'cinder', kind: 'rival', text: 'His raiders killed her brother on the highway.' },
+    { to: 'rook', kind: 'tension', text: 'Cinder raised him, so he is tied to her brother\u2019s loss.' },
+    { to: 'dorrow', kind: 'none', text: 'No shared history yet.' },
+    { to: 'lamp', kind: 'ally', text: 'Lamp addresses her as the bunker\u2019s leader and reports to her.' } ] },
+  lamp: { role: 'Bunker AI and narrator', color: '#ffb347', links: [
+    { to: 'bram', kind: 'ally', text: 'Maintained by Bram.' },
+    { to: 'anand', kind: 'ally', text: 'Maintained by Dr. Anand.' },
+    { to: 'nell', kind: 'friend', text: 'Nell reads it her drawings.' },
+    { to: 'mara', kind: 'ally', text: 'Hopes she can lead everyone out.' } ] },
+  dorrow: { role: 'Former checkpoint guard', color: '#7d8a70', links: [
+    { to: 'juno', kind: 'mentor', text: 'Trained her at the checkpoint.' },
+    { to: 'vesper', kind: 'rival', text: 'She served under him before leaving.' },
+    { to: 'warden', kind: 'guilt', text: 'The Warden was his unit\u2019s guardian robot; he carries the guilt of its fall.' },
+    { to: 'rook', kind: 'mentor', text: 'Willing to train him: the start of Rook\u2019s redemption.' } ] },
+  rook: { role: 'Defector, former raider', color: '#b0553a', links: [
+    { to: 'cinder', kind: 'rival', text: 'Raised by Cinder as a raider.' },
+    { to: 'vesper', kind: 'rival', text: 'Shaped by her; she recruited his loyalty.' },
+    { to: 'juno', kind: 'tension', text: 'His raiders were in the attack that destroyed her checkpoint.' },
+    { to: 'dorrow', kind: 'mentor', text: 'Dorrow gives him a second chance.' } ] }
+};
+const REL_KIND = { ally: ['Ally', '#7ddc6f'], family: ['Family', '#7ddc6f'], friend: ['Friend', '#7ddc6f'], mentor: ['Mentor', '#7fc8ff'], tension: ['Tension', '#ffb347'], guilt: ['Guilt', '#ffb347'], rival: ['Rival', '#ff5a4e'], none: ['None', '#b8a78a'] };
+function relStatus(id) {
+  if (id === 'mara') return S.player.down ? 'down' : 'in the bunker';
+  if (id === 'lamp') return 'online';
+  const c = S.crew.find(x => x.id === id);
+  if (!c) return REL[id] ? 'not in the bunker yet' : '';
+  if (!c.alive) return c.left ? 'left the bunker' : 'lost';
+  return c.grief > 0 ? 'grieving' : 'in the bunker';
+}
+function relHTML() {
+  return `<p class="note" style="margin:0">Shared history shapes who works well together, who grieves, and who sides with whom in a revolt.</p>`
+    + Object.entries(REL).map(([id, r]) => {
+      const st = relStatus(id);
+      return `<div class="card"><div class="ch"><span class="sw" style="background:${r.color}"></span><b>${esc(REL_NAMES[id])}</b><span class="tag">${esc(r.role)} · ${esc(st)}</span></div>`
+        + r.links.map(l => { const k = REL_KIND[l.kind], os = relStatus(l.to); return `<div class="note"><b style="color:${k[1]}">${k[0]}</b> · ${esc(REL_NAMES[l.to] || l.to)}${os && os !== 'in the bunker' && os !== 'online' ? ' <span class="tag">(' + esc(os) + ')</span>' : ''}<br>${esc(l.text)}</div>`; }).join('')
+        + `</div>`;
+    }).join('');
+}
 function buildHTML() {
   const item = (title, desc, cost, act, ok = true, label = 'Build') => `<div class="card bitem"><div><b>${title}</b><p>${desc}</p>${cost ? `<span class="cost">${fmtCost(cost)}</span>` : ''}</div><button class="btn" data-build="${act}" ${ok && (!cost || canPay(cost)) ? '' : 'disabled'}>${label}</button></div>`;
   const repCost = s => ({ scrap: Math.ceil((s.max - s.hp) / 10) });
@@ -997,7 +1185,7 @@ $('#dbody').addEventListener('click', e => {
 });
 function doBuild(a) {
   const rep = s => { const c = { scrap: Math.ceil((s.max - s.hp) / 10) }; if (!canPay(c)) return false; pay(c); s.hp = s.max; return true; };
-  if (a === 'repDoor') { if (S.enemies.some(e => e.inside) || !rep(S.door)) return; S.breached = false; lamp('Hatch repaired.', 'good'); }
+  if (a === 'repDoor') { if (S.enemies.some(e => e.inside) || !rep(S.door)) return; S.breached = false; lampEv('door_repair', 'Hatch repaired.', 'good'); }
   else if (a === 'repWall') { if (rep(S.wall)) lamp('Wall repaired.', 'good'); }
   else if (a === 'upWall') { const c = { scrap: 30, mat: 12 }; if (!canPay(c)) return; pay(c); S.wall.lvl = 2; S.wall.max = 600; S.wall.hp = 600; lamp('The wall is reinforced.', 'good'); }
   else if (/^turret\d/.test(a)) { const i = +a[6], k = a.slice(7), sp = TURRETS[k]; if (!canPay(sp.cost) || S.turrets[i]) return; pay(sp.cost); S.turrets[i] = { type: k, hp: sp.hp, max: sp.hp, lvl: 1, cd: 0 }; lamp(sp.name + ' built in slot ' + (i + 1) + '. Assign someone to it in Crew.', 'good'); }
@@ -1006,7 +1194,7 @@ function doBuild(a) {
   else if (a === 'upKitchen' || a === 'upMed' || a === 'upBunks') { const k = a.slice(2).toLowerCase(); const c = { kitchen: { elec: 3, mat: 8 }, med: { elec: 3, mat: 6 }, bunks: { scrap: 10, mat: 10 } }[k]; if (!canPay(c)) return; pay(c); S.rooms[k] = 2; lamp(ROOMS[k].name + ' upgraded.', 'good'); }
   else if (/^room_/.test(a)) { const k = a.slice(5), r = BUILD_ROOMS[k]; if (!r || S.rooms[k] || !canPay(r.cost)) return; pay(r.cost); S.rooms[k] = 1; lamp(ROOMS[k].name + ' built. ' + r.done, 'good'); }
   else if (a === 'toggleParts') S.makeParts = !S.makeParts;
-  else if (a === 'tower') { const t = TOWER[S.tower.done]; if (!t || S.tower.paid || !canPay(t.cost)) return; pay(t.cost); S.tower.paid = true; S.tower.work = 0; lamp('Signal tower: work on the ' + t.name.toLowerCase() + ' can begin. Put people with Tech on the Signal tower job.', 'good'); }
+  else if (a === 'tower') { const t = TOWER[S.tower.done]; if (!t || S.tower.paid || !canPay(t.cost)) return; pay(t.cost); S.tower.paid = true; S.tower.work = 0; lampEv('exit_build_start', 'Signal tower: work on the ' + t.name.toLowerCase() + ' can begin. Put people with Tech on the Signal tower job.', 'good'); }
 }
 function toggleAlarm() {
   S.alarm = !S.alarm;
@@ -1042,15 +1230,17 @@ function interactable() {
 }
 const mouse = { x: 0, y: 0, wx: 0, down: false };
 function toCanvas(e) { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H }; }
-cv.addEventListener('mousemove', e => { const p = toCanvas(e); mouse.x = p.x; mouse.y = p.y; mouse.wx = p.x + (scene === 'scav' && scav ? scav.cam : 0); hover = scene === 'bunker' && S ? personAt(p.x, p.y) : null; });
-cv.addEventListener('mousedown', e => {
+cv.addEventListener('pointermove', e => { const p = toCanvas(e); mouse.x = p.x; mouse.y = p.y; mouse.wx = p.x + (scene === 'scav' && scav ? scav.cam : 0); hover = scene === 'bunker' && S ? personAt(p.x, p.y) : null; });
+cv.addEventListener('pointerdown', e => {
   if (scene !== 'bunker' && scene !== 'scav') return;
   const p = toCanvas(e);
   const c = scene === 'bunker' ? personAt(p.x, p.y) : null;
   if (c) { sel = c.id; openDrawer('crew'); setTimeout(() => document.querySelector(`[data-crew="${c.id}"]`)?.scrollIntoView({ block: 'nearest' }), 0); return; }
+  if (e.pointerType === 'touch') { markTouch(); return; } // touch shoots via the FIRE button
   mouse.down = true;
 });
-window.addEventListener('mouseup', () => mouse.down = false);
+window.addEventListener('pointerup', () => mouse.down = false);
+window.addEventListener('pointercancel', () => mouse.down = false);
 function personAt(x, y) { return living().find(c => Math.abs(c.x - x) < 11 && y < c.y + 2 && y > c.y - 40) || null; }
 window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
@@ -1062,14 +1252,47 @@ window.addEventListener('keydown', e => {
   if (k === 'c') toggleDrawer('crew');
   if (k === 'b') toggleDrawer('build');
   if (k === 't') toggleDrawer('tower');
+  if (k === 'r') toggleDrawer('rel');
   if (k === 'g') toggleAlarm();
+  if (k === 'm' && window.SFX) SFX.toggleMute();
   if (k === 'h') showHelp(true);
   if (k === 'p') { paused = !paused; renderHud(); }
   if (k === '1' || k === '2' || k === '3') setSpeed(+k);
   if (k === 'escape') { if (!$('#drawer').hidden) closeDrawer(); else showPauseMenu(); }
 });
 window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
-window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouse.down = false; });
+function clearInput() { for (const k in keys) keys[k] = false; mouse.down = false; document.querySelectorAll('#touch button.on').forEach(b => b.classList.remove('on')); }
+function autoPause() {
+  clearInput();
+  if (!S || S.over || (scene !== 'bunker' && scene !== 'scav')) return;
+  save();
+  if (!$('#overlay').hidden) { paused = true; return; }
+  showPauseMenu();
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) autoPause(); else clearInput(); });
+window.addEventListener('pagehide', autoPause);
+window.addEventListener('blur', autoPause);
+
+// touch controls: buttons drive the same key state as the keyboard
+function markTouch() { document.body.classList.add('touch'); }
+if (window.matchMedia && matchMedia('(pointer: coarse)').matches) markTouch();
+window.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') markTouch(); }, true);
+document.querySelectorAll('#touch button').forEach(b => {
+  const k = b.dataset.k;
+  const release = () => { if (k !== undefined) keys[k] = false; b.classList.remove('on'); };
+  b.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    if (scene !== 'bunker' && scene !== 'scav') return;
+    try { b.setPointerCapture(e.pointerId); } catch (_) {}
+    b.classList.add('on');
+    if (k !== undefined) keys[k] = true;
+    else if (b.dataset.act === 'interact') { const it = interactable(); if (it && it.act) it.act(); }
+  });
+  b.addEventListener('pointerup', release);
+  b.addEventListener('pointercancel', release);
+  b.addEventListener('lostpointercapture', release);
+  b.addEventListener('contextmenu', e => e.preventDefault());
+});
 document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => openDrawer(b.dataset.tab));
 $('#dClose').onclick = closeDrawer;
 $('#tCrew').onclick = () => toggleDrawer('crew');
@@ -1077,13 +1300,14 @@ $('#tBuild').onclick = () => toggleDrawer('build');
 $('#tTower').onclick = () => toggleDrawer('tower');
 $('#tAlarm').onclick = () => toggleAlarm();
 $('#tHelp').onclick = () => showHelp(true);
+$('#tMute').onclick = e => { if (window.SFX) SFX.toggleMute(); e.currentTarget.blur(); };
 
 // menus
 function overlay(html) { const o = $('#overlay'); o.innerHTML = html; o.hidden = !html; }
 const HELP = `<div class="help">
   <h3>THE LOOP</h3><ul><li>Days are for work: give the crew jobs and shifts, build, and scavenge topside.</li><li>At 21:00 every night something attacks from the east. Bigger every night. Cinder comes on night 3.</li><li>Finish the four stages of the <b>signal tower</b> to win. Lose if everyone dies.</li></ul>
   <h3>THE CREW</h3><ul><li>Turrets only fire with someone on them. Good shots hit more.</li><li>Shifts decide who sleeps when. Past 16 hours awake people slow down fast. Hungry or grieving people work slower.</li><li>Meals are at 07:00, 13:00 and 19:00 (1 food each). Kitchen crew grow food.</li><li>Badly hurt crew go to the med bay on their own. Doc heals them faster.</li><li>Bram, Doc and Tick share history: paired on a job they work better. Lose one and the others grieve.</li><li>Newcomers may leave in the night with your supplies if morale is low.</li></ul>
-  <h3>CONTROLS</h3><ul><li><kbd>A</kbd><kbd>D</kbd> move · <kbd>W</kbd><kbd>S</kbd> climb the shaft · <kbd>Space</kbd> jump · <kbd>J</kbd> or click to shoot</li><li><kbd>E</kbd> interact: walk off the right edge of the surface to scavenge · search crates · invite wanderers</li><li><kbd>C</kbd> crew · <kbd>B</kbd> build · <kbd>T</kbd> tower · <kbd>G</kbd> battle stations · <kbd>P</kbd> pause · <kbd>1</kbd>–<kbd>3</kbd> speed · click a person to select them</li></ul>
+  <h3>CONTROLS</h3><ul><li><kbd>A</kbd><kbd>D</kbd> move · <kbd>W</kbd><kbd>S</kbd> climb the shaft · <kbd>Space</kbd> jump · <kbd>J</kbd> or click to shoot</li><li><kbd>E</kbd> interact: walk off the right edge of the surface to scavenge · search crates · invite wanderers</li><li><kbd>C</kbd> crew · <kbd>B</kbd> build · <kbd>T</kbd> tower · <kbd>G</kbd> battle stations · <kbd>P</kbd> pause · <kbd>1</kbd>–<kbd>3</kbd> speed · click a person to select them</li><li class="touchonly"><b>Touch:</b> left pad moves and climbs (▲▼), JUMP jumps, FIRE shoots, E interacts. Tap a person to select them. Use the top buttons for Crew, Build and Tower.</li></ul>
 </div>`;
 function showMenu() {
   scene = 'menu'; const sv = loadSave();
@@ -1109,6 +1333,7 @@ function showPauseMenu() {
 function start() { overlay(''); scene = 'bunker'; paused = false; speed = 1; closeDrawer(); renderHud(); $('#tAlarm').classList.toggle('on', !!S.alarm); }
 function gameOver(won) {
   S.over = true; S.won = won; clearSave(); scene = 'over';
+  if (!won) narrPlay(narrPick('defeat'));
   const alive = living().map(c => c.name);
   overlay(won
     ? `<div class="menu"><h1 style="font-size:46px">THE SIGNAL IS OUT</h1><p class="sub">Lamp reads the reply aloud, slowly, the way it reads old maintenance logs: <i>“Bunker 12. We hear you. Hold on. We are coming.”</i> Somewhere above the ash, Nell would finally see the sky.</p>
@@ -1123,6 +1348,7 @@ addEventListener('resize', fit); fit();
 let last = performance.now(), hudT = 0, drawerT = 0;
 function frame(now) {
   const dtReal = Math.min(0.05, (now - last) / 1000); last = now;
+  if (window.SFX) SFX.update(dtReal, S && !S.over && !paused && (scene === 'bunker' || scene === 'scav') ? { scene, alarm: !!S.alarm } : null);
   if (S && (scene === 'bunker' || scene === 'scav')) {
     if (!paused) {
       const dt = dtReal * speed;
@@ -1130,7 +1356,7 @@ function frame(now) {
       const steps = Math.ceil(dt / 0.034); for (let i = 0; i < steps; i++) simTick(dt / steps);
       playerTick(dtReal); bulletsTick(dtReal); fxTick(dtReal);
     }
-    const it = interactable(); $('#prompt').textContent = it ? it.text : '';
+    const it = interactable(); $('#prompt').textContent = it ? (document.body.classList.contains('touch') ? it.text.replace(/^E · /, 'Tap E · ') : it.text) : '';
     hudT -= dtReal; if (hudT <= 0) { hudT = 0.25; renderHud(); renderScavHud(); }
     drawerT -= dtReal; if (drawerT <= 0) { drawerT = 0.6; if (!document.querySelector('#drawer:hover')) renderDrawer(); }
   }

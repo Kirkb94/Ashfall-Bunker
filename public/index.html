@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Ashfall Bunker</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%223%22 fill=%22%231a120a%22/%3E%3Crect x=%224%22 y=%227%22 width=%228%22 height=%227%22 fill=%22%23ffb347%22/%3E%3Crect x=%222%22 y=%225%22 width=%2212%22 height=%222%22 fill=%22%237a6650%22/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -96,6 +96,45 @@
   .help kbd{font:600 12px var(--disp);background:#2d2215;border-radius:4px;padding:1px 5px}
   .scavhud{position:absolute;top:46px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:6px 14px;font-size:13px;display:flex;gap:14px;align-items:center}
   .scavhud[hidden]{display:none}
+  /* touch controls */
+  html,body,canvas,#wrap{touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+  .dbody{touch-action:pan-y}
+  #touch{display:none}
+  body.touch #touch{display:block}
+  #touch .pad{position:absolute;bottom:14px;display:grid;gap:8px}
+  #touch .pl{left:14px;grid-template-columns:repeat(3,88px);grid-template-rows:repeat(2,88px)}
+  #touch .pr{right:14px;grid-template-columns:repeat(3,92px);grid-template-rows:92px}
+  #touch button{border-radius:50%;border:2px solid var(--line);background:rgba(20,16,12,.62);color:var(--fg);font:700 22px var(--disp);touch-action:none;padding:0}
+  #touch button.on{background:rgba(255,179,71,.75);color:#1a0f02;border-color:var(--amber)}
+  #touch .up{grid-column:2;grid-row:1}
+  #touch .lf{grid-column:1;grid-row:2}
+  #touch .dn{grid-column:2;grid-row:2}
+  #touch .rt{grid-column:3;grid-row:2}
+  #touch .shoot{border-color:var(--red)}
+  #rotate{display:none;position:fixed;left:0;right:0;top:0;padding:8px;text-align:center;background:var(--amber);color:#1a0f02;font:700 14px var(--disp);z-index:9;pointer-events:none}
+  @media (orientation:portrait){body.touch #rotate{display:block}}
+  body.touch .tools{bottom:auto;top:44px;left:12px}
+  body.touch .tools button{padding:11px 14px;font-size:15px}
+  body.touch .hud{font-size:15px;gap:10px;height:42px}
+  body.touch .res{gap:8px}
+  body.touch .spd button{padding:6px 12px;font-size:15px}
+  body.touch .log,body.touch .scavhud{top:50px}
+  body.touch .drawer{top:50px;bottom:116px;width:470px}
+  body.touch .tools kbd{display:none}
+  body.touch .tools{gap:4px;max-width:740px;flex-wrap:wrap}
+  body.touch .clock{min-width:0;white-space:nowrap}
+  body.touch .res{min-width:0;overflow:hidden;gap:6px}
+  body.touch .hud{overflow:hidden}
+  body.touch .spd{flex:none}
+  html,body{overscroll-behavior:none}
+  body.touch .dopen .log{right:486px}
+  body.touch .tabs button{padding:15px 6px;font-size:15px}
+  body.touch .chip{padding:8px 12px;font-size:14px}
+  body.touch .btn{padding:10px 16px;font-size:15px}
+  body.touch .dbody{font-size:15px}
+  body.touch .prompt{bottom:118px;font-size:15px}
+  .help .touchonly{display:none}
+  body.touch .help .touchonly{display:list-item}
 </style>
 </head>
 <body>
@@ -110,16 +149,29 @@
     <button id="tTower">Signal tower<kbd>T</kbd></button>
     <button id="tAlarm" title="Everyone drops what they're doing and defends: turrets first, then the door. Sleep waits.">Battle stations<kbd>G</kbd></button>
     <button id="tHelp">Help<kbd>H</kbd></button>
+    <button id="tMute">Sound on<kbd>M</kbd></button>
   </div>
   <div class="prompt" id="prompt"></div>
+  <div id="touch" aria-hidden="true">
+    <div class="pad pl">
+      <button class="up" data-k="w">▲</button><button class="lf" data-k="a">◀</button><button class="dn" data-k="s">▼</button><button class="rt" data-k="d">▶</button>
+    </div>
+    <div class="pad pr">
+      <button data-k=" ">JUMP</button><button class="shoot" data-k="j">FIRE</button><button data-act="interact">E</button>
+    </div>
+  </div>
   <aside class="drawer" id="drawer" hidden>
     <div class="tabs" role="tablist">
-      <button data-tab="crew" role="tab">CREW</button><button data-tab="build" role="tab">BUILD</button><button data-tab="tower" role="tab">TOWER</button><button class="x" id="dClose" aria-label="Close panel">✕</button>
+      <button data-tab="crew" role="tab">CREW</button><button data-tab="build" role="tab">BUILD</button><button data-tab="tower" role="tab">TOWER</button><button data-tab="rel" role="tab">REL</button><button class="x" id="dClose" aria-label="Close panel">✕</button>
     </div>
     <div class="dbody" id="dbody"></div>
   </aside>
   <div class="overlay" id="overlay"></div>
 </div></div>
+<div id="rotate">Rotate your device to landscape to play</div>
+<script src="narrator.js"></script>
+<script src="audio.js"></script>
+<script src="sprites.js"></script>
 <script src="game.js"></script>
 </body>
 </html>
