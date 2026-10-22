@@ -142,7 +142,7 @@
   }
   // one distant rumble: slow swell and long decay on the ambient bus
   function distantRumble(k) {
-    const t = ctx.currentTime, dur = 4 + Math.random() * 2.5, peak = (k || 1) * (0.35 + Math.random() * 0.3) * (vol.music === undefined ? 1 : vol.music);
+    const t = ctx.currentTime, dur = 4 + Math.random() * 2.5, peak = (k || 1) * (0.22 + Math.random() * 0.18); // level comes from ambBus (Ambience slider), like the wind
     const s = ctx.createBufferSource(); s.buffer = windBuf;
     const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.Q.value = 1;
     f.frequency.setValueAtTime(160, t); f.frequency.exponentialRampToValueAtTime(40, t + dur);
@@ -779,12 +779,13 @@
       }
       // topside ambience: wind + sub bed fade in only in the scav scene; rumbles on a random timer (skipped while muted)
       const topside = !!(st && st.scene === 'scav');
-      const windK = 1; // level comes from ambBus (Ambience slider); Music slider no longer scales wind
-      if (windFade) windFade.gain.setTargetAtTime(topside ? 0.16 * windK : 0, t, topside ? 1.2 : 0.5);
-      if (subFade) subFade.gain.setTargetAtTime(topside ? 0.05 * windK : 0, t, topside ? 1.2 : 0.5);
+      // tuning knobs (levels go through ambBus, so the Ambience slider and mute apply)
+      const TOPSIDE_WIND = 0.16, TOPSIDE_SUB = 0.05, TOPSIDE_RUMBLE_GAP = [14, 20];
+      if (windFade) windFade.gain.setTargetAtTime(topside ? TOPSIDE_WIND : 0, t, topside ? 1.2 : 0.5);
+      if (subFade) subFade.gain.setTargetAtTime(topside ? TOPSIDE_SUB : 0, t, topside ? 1.2 : 0.5);
       if (topside) {
         rumbleT -= dt;
-        if (rumbleT <= 0) { rumbleT = 14 + Math.random() * 20; if (!muted && windBuf) distantRumble(); }
+        if (rumbleT <= 0) { rumbleT = TOPSIDE_RUMBLE_GAP[0] + Math.random() * TOPSIDE_RUMBLE_GAP[1]; if (!muted && windBuf) distantRumble(); }
       } else rumbleT = Math.max(rumbleT, 8);
       // gusts: random swell + brighter filter for 2-5s, then settle back
       if (topside && gustG) {

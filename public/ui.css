@@ -296,7 +296,7 @@ body.touch .tools{bottom:auto}
   .tabs [data-tab="log"]::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22%23fff%22%3E%3Cpath d=%22M4 3h16v18H4zM7 7h10v2H7zm0 4h10v2H7zm0 4h6v2H7z%22 fill-rule=%22evenodd%22/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22%23fff%22%3E%3Cpath d=%22M4 3h16v18H4zM7 7h10v2H7zm0 4h10v2H7zm0 4h6v2H7z%22 fill-rule=%22evenodd%22/%3E%3C/svg%3E")}
 
 /* ---------- build menu: category rail ---------- */
-#narrCaption{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);max-width:min(720px,92vw);z-index:45;pointer-events:none;text-align:center;padding:8px 16px;border-radius:8px;background:rgba(8,6,4,.94);color:#fff;border:1px solid #8a6a3c;box-shadow:0 2px 10px rgba(0,0,0,.6);font:600 15px/1.4 "Chakra Petch",sans-serif;opacity:0;transition:opacity .25s ease}
+#narrCaption{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);max-width:min(720px,92vw);z-index:45;pointer-events:none;text-align:center;padding:8px 16px;border-radius:8px;background:rgba(8,6,4,.94);color:#fff;border:1px solid #8a6a3c;box-shadow:0 2px 10px rgba(0,0,0,.6);font:600 15px/1.4 "Chakra Petch",sans-serif;opacity:0;transition:opacity .25s ease}
 body.hc #narrCaption{background:#000;color:#fff;border:2px solid #fff;font-weight:700;box-shadow:none}
 body.rm #narrCaption{transition:none}
 /* day-transition title card */

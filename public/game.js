@@ -469,6 +469,7 @@ function lampSay(key, kind, vars) {
 // ---- toast notifications (visual only; srSay already announces the same text via lamp())
 const TOAST_EVENTS = { newcomer: 'Arrival', survivor_lost: 'Survivor lost', survivor_lost_many: 'Survivors lost', power_out: 'Power out', power_back: 'Power restored' };
 function lampEv(ev, text, kind, delayMs) {
+  if (quiet) return;   // the silent title-screen run must not use up clips (narrPick starts an 8 s repeat cooldown)
   if (TOAST_EVENTS[ev] && !quiet) {
     const t = () => toast(TOAST_EVENTS[ev] + ': ' + String(text || '').split(/(?<=[.!?])\s/)[0].slice(0, 110), kind);
     delayMs ? setTimeout(t, delayMs) : t();
@@ -531,8 +532,8 @@ function newRun(goal) {
   lamp('Someone has to sit at a turret or it will not fire. Open Crew (C) to give people jobs and shifts.', '', 900);
   lamp('The signal tower needs electronics we do not have. Walk right across the surface to scavenge. Time keeps running while you are out.', '', 1800);
   // First-run controls hint (voice + caption), once per browser. Take 02 = touch wording, 01 = keyboard.
-  let helpSeen = false;
-  try { helpSeen = localStorage.getItem('ashfall.helpHint') === '1'; localStorage.setItem('ashfall.helpHint', '1'); } catch (e) {}
+  let helpSeen = quiet;   // the silent title-screen run doesn't count as having heard the hint
+  if (!quiet) { try { helpSeen = localStorage.getItem('ashfall.helpHint') === '1'; localStorage.setItem('ashfall.helpHint', '1'); } catch (e) {} }
   if (!helpSeen) {
     const touchUI = document.body.classList.contains('touch');
     const hClip = narrPickTake('help_hint', touchUI ? 2 : 1);
@@ -4230,7 +4231,9 @@ $('#dbody').addEventListener('keydown', e => {
 // Lamp messages are staggered: each one holds the queue long enough to be read and spoken.
 const LAMP_BASE_MS = 1200, LAMP_PER_CHAR_MS = 65, LAMP_MIN_MS = 3000, LAMP_QUEUE_MAX = 5;
 const LAMP_URGENT = /door_breach|victory|defeat/;
-let lampQ = [], lampBusyUntil = 0, lampTimer = null, lampRid = null;
+let lampQ = [], lampBusyUntil = 0, lampTimer = null, lampRid = null, lampCurVoiced = false;
+// Show a queued line right away without holding the queue (used when plain text overflows it).
+function lampShowNow(it) { lampHistAdd(it.text, it.kind); logs.push({ text: it.text, kind: it.kind, at: performance.now(), ev: it.ev }); if (logs.length > LOG_MAX) logs.shift(); renderLog(); }
 function lampPump() {
   lampTimer = null;
   while (lampQ.length && S && S.rid !== lampQ[0].rid) lampQ.shift();
@@ -4241,6 +4244,7 @@ function lampPump() {
   lampHistAdd(it.text, it.kind); logs.push({ text: it.text, kind: it.kind, at: now, ev: it.ev }); if (logs.length > LOG_MAX) logs.shift(); renderLog();
   if (typeof narrShowText === 'function') narrShowText(it.text);
   if (it.clip) narrPlay(it.clip);
+  lampCurVoiced = !!it.clip;
   lampBusyUntil = now + Math.max(LAMP_MIN_MS, LAMP_BASE_MS + it.text.length * LAMP_PER_CHAR_MS);
   if (lampQ.length) lampTimer = setTimeout(lampPump, lampBusyUntil - now);
 }
@@ -4255,8 +4259,18 @@ function lamp(text, kind = '', delayMs = 0, clip = null) {
     if (S && S.rid !== lampRid) { lampRid = S.rid; lampQ = []; lampBusyUntil = 0; }
     if (clip && LAMP_URGENT.test(String(clip))) { lampQ = []; lampBusyUntil = 0; }
     srSay(text, kind);
-    lampQ.push({ text, kind, clip, rid, ev });
-    while (lampQ.length > LAMP_QUEUE_MAX) lampQ.shift();
+    // Voiced lines go ahead of plain text and are never the ones dropped: plain chatter used to push them out of
+    // the queue, so Lamp went silent in busy moments. Plain lines that overflow still show in the log at once.
+    const item = { text, kind, clip, rid, ev };
+    if (clip) {
+      const i = lampQ.findIndex(x => !x.clip);
+      if (i < 0) lampQ.push(item); else lampQ.splice(i, 0, item);
+      if (!lampCurVoiced) lampBusyUntil = Math.min(lampBusyUntil, performance.now() + 1500);   // don't make a voice wait long behind plain text
+    } else lampQ.push(item);
+    while (lampQ.length > LAMP_QUEUE_MAX) {
+      const i = lampQ.findIndex(x => !x.clip);
+      if (i >= 0) lampShowNow(lampQ.splice(i, 1)[0]); else lampQ.shift();
+    }
     if (lampTimer) { clearTimeout(lampTimer); lampTimer = null; }
     lampPump();
   };
@@ -4638,6 +4652,7 @@ function crewPass(c) {
 }
 function crewCmp(a, b) {
   const s = crewView.sort;
+  if (s === 'urgent') { const u = (c) => { const n = crewNeeds(c); return Math.min(n.hp / 50, n.food / 35, n.rest / 40); }; return (u(a) - u(b)) || a.name.localeCompare(b.name); }
   if (s === 'name') return a.name.localeCompare(b.name);
   if (s === 'hp') return crewNeeds(a).hp - crewNeeds(b).hp;
   if (s === 'food') return crewNeeds(a).food - crewNeeds(b).food;
@@ -4652,7 +4667,7 @@ function crewControls() {
   const sel2 = (key, opts) => `<select data-view="${key}" aria-label="${lbl[key] || key}" style="min-height:44px;font-size:14px">${opts.map(([v, l]) => `<option value="${v}" ${crewView[key] === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
   return `<div class="row" role="group" aria-label="Crew sort and filter" style="margin:6px 0;gap:4px;flex-wrap:wrap">
     <input type="search" data-q="1" value="${esc(crewView.q)}" placeholder="Search crew ( / )" aria-label="Search crew by name, job or state" autocomplete="off" style="min-height:44px;font-size:14px;flex:1 1 120px;min-width:0">
-    ${sel2('sort', [['default', 'Sort: default'], ['name', 'Sort: name'], ['hp', 'Sort: health'], ['food', 'Sort: food'], ['rest', 'Sort: rest'], ['lvl', 'Sort: level'], ['mood', 'Sort: mood'], ['job', 'Sort: job']])}
+    ${sel2('sort', [['default', 'Sort: default'], ['urgent', 'Sort: most urgent'], ['name', 'Sort: name'], ['hp', 'Sort: health'], ['food', 'Sort: food'], ['rest', 'Sort: rest'], ['lvl', 'Sort: level'], ['mood', 'Sort: mood'], ['job', 'Sort: job']])}
     ${sel2('need', [['all', 'Need: all'], ['any', 'Any need'], ['hp', 'Low health'], ['food', 'Hungry'], ['rest', 'Tired']])}
     ${sel2('job', [['all', 'Job: all'], ...Object.entries(JOBS).filter(([k, j]) => !j.hidden).map(([k, j]) => [k, j.label])])}
     ${sel2('state', [['all', 'State: all'], ['work', 'Working'], ['walk', 'Walking'], ['sleep', 'Sleeping'], ['patient', 'Med bay'], ['fight', 'Fighting']])}
@@ -5637,50 +5652,7 @@ cv.addEventListener('pointerdown', e => {
   }
   mouse.down = true;
 });
-// ---- bunker minimap: canvas overlay, click or drag to pan ----
-const MM = { w: 168, pad: 10, drag: false };
-function mmRect() { const s = MM.w / W; return { x: W - MM.w - MM.pad, y: MM.pad, w: MM.w, h: WH * s, s }; }
-function drawMinimap() {
-  if (scene !== 'bunker' || !S || !S.door) return;
-  const r = mmRect(), s = r.s;
-  g.save();
-  g.translate(r.x, r.y);
-  g.fillStyle = 'rgba(10,8,6,.82)'; g.fillRect(0, 0, r.w, r.h);
-  g.fillStyle = 'rgba(75,58,42,.9)'; g.fillRect(0, FLOORS[0] * s, r.w, 2);
-  for (const k of Object.keys(ROOMS)) {
-    const rm = ROOMS[k]; if (rm.build) continue;
-    g.fillStyle = 'rgba(120,100,70,.35)'; g.fillRect(rm.x0 * s, FLOORS[rm.floor - 1] * s, (rm.x1 - rm.x0) * s - 1, (FLOORS[rm.floor] - FLOORS[rm.floor - 1]) * s - 1);
-  }
-  g.fillStyle = '#0e0a07'; g.fillRect((LADDER_X - 18) * s, FLOORS[0] * s, 36 * s, (FLOORS[3] - FLOORS[0]) * s);
-  const dk = S.door.max ? S.door.hp / S.door.max : 1;
-  const flash = S.breached && (prefs.rm || Math.floor(performance.now() / 300) % 2 === 0);
-  g.fillStyle = S.breached ? (flash ? '#ff3a2a' : '#7a1a12') : (dk < 0.25 ? '#e0a030' : '#7ddc6f');
-  g.fillRect((DOOR_X - 6) * s - 1, FLOORS[0] * s - 5, 8, 8);
-  for (const c of S.crew) {
-    if (!c.alive || c.exp) continue;
-    g.fillStyle = '#f2e6c9'; g.fillRect(c.x * s - 1, c.y * s - 2, 3, 3);
-  }
-  if (!S.player.down) { g.fillStyle = '#7fc8ff'; g.fillRect(P.x * s - 2, P.y * s - 3, 4, 4); }
-  const v = bcamView();
-  g.strokeStyle = '#fff'; g.lineWidth = 1; g.strokeRect(v.ox * s, v.oy * s, W / v.z * s, H / v.z * s);
-  g.strokeStyle = 'rgba(200,170,120,.8)'; g.strokeRect(0.5, 0.5, r.w - 1, r.h - 1);
-  g.restore();
-}
-function mmHit(p) { const r = mmRect(); return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h; }
-function mmPan(p) {
-  const r = mmRect();
-  bcam.follow = null; bcam.anchor = null;
-  bcam.cx = (p.x - r.x) / r.s; bcam.cy = (p.y - r.y) / r.s;
-  const v = bcamView(); bcam.cx = v.ox + W / v.z / 2; bcam.cy = v.oy + H / v.z / 2;
-}
-window.addEventListener('pointerdown', e => {
-  if (e.target !== cv || scene !== 'bunker' || !S || e.button !== 0) return;
-  const p = toCanvas(e); if (!mmHit(p)) return;
-  e.stopPropagation(); MM.drag = true; mmPan(p);
-}, true);
-window.addEventListener('pointermove', e => { if (MM.drag) mmPan(toCanvas(e)); });
-window.addEventListener('pointerup', () => { MM.drag = false; });
-window.addEventListener('pointercancel', () => { MM.drag = false; });
+// (a second, canvas-drawn bunker minimap was here; it redeclared MM and drawMinimap and stopped the game from starting. The #minimap below is the one minimap.)
 let aimId = null;
 cv.addEventListener('pointerleave', e => { if (e.pointerType !== 'touch') mouse.inCv = false; });
 function aimRelease(e) {
@@ -6153,89 +6125,7 @@ function cycleCrew(dir) {
   try { bcamFocus(sel); } catch (_) {}
   renderDrawer();
 }
-// bunker minimap: rooms, crew, hatch, breach alert; click/drag pans the camera
-(function miniMap() {
-  const st = document.createElement('style');
-  st.textContent = '#minimap{position:absolute;left:8px;bottom:34px;z-index:4;background:#120d08e6;border:1px solid var(--line);padding:3px}#minimap button{display:block;width:100%;margin:0 0 3px;font-size:11px;padding:1px 6px;cursor:pointer}#minimap canvas{display:block;cursor:crosshair;touch-action:none}#minimap.off canvas{display:none}#minimap.off button{margin:0}body.hc #minimap{border-color:#fff;background:#000}';
-  document.head.appendChild(st);
-  const MW = 200;
-  const box = document.createElement('div');
-  box.id = 'minimap'; box.hidden = true;
-  const btn = document.createElement('button');
-  btn.type = 'button'; btn.textContent = 'Map'; btn.setAttribute('aria-label', 'Toggle bunker minimap');
-  const cv = document.createElement('canvas');
-  cv.setAttribute('aria-label', 'Bunker minimap. Click to move the camera.');
-  cv.width = MW; cv.height = Math.round(MW * (typeof WH === 'number' ? WH : H) / W);
-  box.appendChild(btn); box.appendChild(cv);
-  const w = document.getElementById('wrap'); if (w) w.appendChild(box);
-  let off = false; try { off = localStorage.getItem('ashfall-minimap-off') === '1'; } catch (e) {}
-  const apply = () => { box.classList.toggle('off', off); btn.setAttribute('aria-pressed', String(!off)); };
-  apply();
-  btn.addEventListener('click', () => { off = !off; try { localStorage.setItem('ashfall-minimap-off', off ? '1' : '0'); } catch (e) {} apply(); });
-  const mg = cv.getContext('2d');
-  const WORLD_H = () => (typeof WH === 'number' ? WH : H);
-  function pan(ev) {
-    const r = cv.getBoundingClientRect();
-    const wx = (ev.clientX - r.left) / r.width * W, wy = (ev.clientY - r.top) / r.height * WORLD_H();
-    bcam.follow = null; bcam.anchor = null;
-    bcam.tz = Math.max(bcam.tz || 1, 1.8);
-    bcam.cx = wx; bcam.cy = wy;
-  }
-  let drag = false;
-  cv.addEventListener('pointerdown', ev => { drag = true; try { cv.setPointerCapture(ev.pointerId); } catch (e) {} pan(ev); ev.preventDefault(); });
-  cv.addEventListener('pointermove', ev => { if (drag) pan(ev); });
-  cv.addEventListener('pointerup', () => { drag = false; });
-  cv.addEventListener('pointercancel', () => { drag = false; });
-  function drawMini() {
-    const sc = cv.width / W, hh = WORLD_H();
-    mg.clearRect(0, 0, cv.width, cv.height);
-    mg.fillStyle = '#0b0805'; mg.fillRect(0, 0, cv.width, cv.height);
-    for (const k in ROOMS) {
-      const r = ROOMS[k];
-      if (r.build && !(S.rooms && S.rooms[k])) continue;
-      const y1 = FLOORS[r.floor], y0 = y1 - 150;
-      mg.fillStyle = '#3a2d1f'; mg.fillRect(r.x0 * sc, y0 * sc, (r.x1 - r.x0) * sc - 1, (y1 - y0) * sc - 1);
-    }
-    mg.strokeStyle = '#8a7556'; mg.lineWidth = 1;
-    for (const fy of FLOORS) { mg.beginPath(); mg.moveTo(IN_L * sc, fy * sc); mg.lineTo(IN_R * sc, fy * sc); mg.stroke(); }
-    mg.fillStyle = '#6b5a40'; mg.fillRect(LADDER_X * sc - 1, FLOORS[0] * sc, 2, (FLOORS[FLOORS.length - 1] - FLOORS[0]) * sc);
-    // crew
-    mg.fillStyle = '#e0c070';
-    for (const c of S.crew || []) {
-      if (c.alive === false || c.left || c.exp) continue;
-      mg.fillRect(c.x * sc - 1, c.y * sc - 3, 3, 3);
-    }
-    // enemies inside (triangles)
-    mg.fillStyle = '#ff5040';
-    for (const e of S.enemies || []) {
-      if (e.hidden || e.hp <= 0) continue;
-      const ex = e.x * sc, ey = e.y * sc;
-      mg.beginPath(); mg.moveTo(ex, ey - 5); mg.lineTo(ex - 3, ey); mg.lineTo(ex + 3, ey); mg.closePath(); mg.fill();
-    }
-    // Mara
-    if (typeof P !== 'undefined' && P && scene === 'bunker') { mg.fillStyle = '#fff'; mg.fillRect(P.x * sc - 2, P.y * sc - 5, 5, 5); }
-    // hatch + breach alert (shape + colour)
-    const hx = IN_R * sc, hy = FLOORS[0] * sc;
-    const alert = !!(S.breached || S.alarm);
-    const pulse = alert && !(typeof prefs !== 'undefined' && prefs.rm) ? 0.5 + 0.5 * Math.sin(Date.now() / 160) : 1;
-    const frac = S.door && S.door.max ? Math.max(0, S.door.hp / S.door.max) : 1;
-    mg.globalAlpha = pulse;
-    mg.fillStyle = alert ? '#ff3020' : frac < 0.4 ? '#e0a030' : '#9ad07a';
-    mg.beginPath(); mg.moveTo(hx, hy - 6); mg.lineTo(hx + 6, hy); mg.lineTo(hx, hy + 6); mg.lineTo(hx - 6, hy); mg.closePath(); mg.fill();
-    mg.globalAlpha = 1;
-    if (alert) { mg.fillStyle = '#fff'; mg.font = 'bold 9px sans-serif'; mg.textAlign = 'center'; mg.fillText('!', hx, hy + 3); }
-    // camera view
-    const z = bcam.z || 1, vw = W / z, vh = H / z;
-    mg.strokeStyle = '#ffffffaa'; mg.strokeRect((bcam.cx - vw / 2) * sc, (bcam.cy - vh / 2) * sc, vw * sc, vh * sc);
-  }
-  setInterval(() => {
-    try {
-      const show = scene === 'bunker' && S && !S.over;
-      box.hidden = !show;
-      if (show && !off) drawMini();
-    } catch (e) { /* state not ready yet */ }
-  }, 100);
-})();
+// (a third bunker minimap was here; it reused id="minimap", injected styles that stretched the real one across the screen. The #minimap built by mmInit() is the one minimap.)
 // visible keyboard hint bar (hidden on touch devices and outside bunker/scavenge play)
 (function keyBar() {
   const st = document.createElement('style');
@@ -7175,7 +7065,8 @@ function tourStart() {
 function tutStart() {
   tutHide();
   tourHide();
-  if (tutDone() || !S) return;
+  if (!S) return;
+  if (tutDone()) { tourStart(); return; }
   tut = { rid: S.rid, step: -1, job: false };
   tourStart();
 }
@@ -7244,8 +7135,20 @@ function gameOver(won) {
        <p class="sub"><b>Lamp:</b> <i>“${esc(winLine)}”</i></p>${summaryHtml()}<button class="btn" id="oNew">Restart</button></div>`
     : `<div class="menu" role="dialog" aria-modal="true" aria-labelledby="oTitle"><h1 id="oTitle" style="font-size:46px">THE BUNKER IS SILENT</h1><p class="sub">Lamp keeps reading the maintenance logs to empty rooms.</p>${summaryHtml()}<button class="btn" id="oNew">Restart</button></div>`);
   $('#oNew').onclick = () => { try { if (window.SFX && SFX.stingStop) SFX.stingStop(); } catch (e) {} newRun(S && S.goalKind); start(); };
+  try {
+    const dlg = $('#overlay').firstElementChild, sm = dlg && dlg.querySelector('.summary');
+    if (sm) { sm.id = 'oSummary'; dlg.setAttribute('aria-describedby', 'oSummary'); }
+    if (typeof srSay === 'function') srSay((won ? 'Victory. ' : 'Game over. ') + 'Days survived ' + day() + '. Survivors lost ' + ((S.stats.lost || []).length) + '. Press Restart to play again.');
+  } catch (_) {}
   $('#oNew').focus();
 }
+// focus trap for the end screen: if focus escapes the dialog (mouse click, script), pull it back to Restart
+document.addEventListener('focusin', e => {
+  if (scene !== 'over') return;
+  const o = $('#overlay');
+  if (!o || o.hidden || o.contains(e.target)) return;
+  const b = $('#oNew'); if (b) b.focus();
+});
 
 // ---------------------------------------------------------------- 7. main loop
 function fit() {
