@@ -126,8 +126,29 @@
     subFade = ctx.createGain(); subFade.gain.value = 0;
     ss.connect(slp); slp.connect(subFade); subFade.connect(ambBus);
     ss.start();
+    // ash storm: high-passed grit hiss with slow tremolo + a thin whistle that drifts in pitch (scav scene only)
+    const as = ctx.createBufferSource(); as.buffer = windBuf; as.loop = true; as.playbackRate.value = 1.7;
+    const ahp = ctx.createBiquadFilter(); ahp.type = 'highpass'; ahp.frequency.value = 2400; ahp.Q.value = 0.5;
+    const atrem = ctx.createGain(); atrem.gain.value = 0.7;
+    const al = ctx.createOscillator(); al.frequency.value = 0.19;
+    const alg = ctx.createGain(); alg.gain.value = 0.3;
+    al.connect(alg); alg.connect(atrem.gain);
+    ashFade = ctx.createGain(); ashFade.gain.value = 0;
+    as.connect(ahp); ahp.connect(atrem); atrem.connect(ashFade);
+    const wh = ctx.createOscillator(); wh.type = 'sine'; wh.frequency.value = 1150;
+    const whl = ctx.createOscillator(); whl.frequency.value = 0.13;
+    const whlg = ctx.createGain(); whlg.gain.value = 140;
+    whl.connect(whlg); whlg.connect(wh.frequency);
+    const whg = ctx.createGain(); whg.gain.value = 0.12;
+    const whl2 = ctx.createOscillator(); whl2.frequency.value = 0.09;
+    const whl2g = ctx.createGain(); whl2g.gain.value = 0.1;
+    whl2.connect(whl2g); whl2g.connect(whg.gain);
+    wh.connect(whg); whg.connect(ashFade);
+    ashFade.connect(ambBus);
+    as.start(); al.start(); wh.start(); whl.start(); whl2.start();
   }
   // bunker drip: tiny pitched blip with a pitch bend up, plus a faint echo drop; on the ambient bus
+  let ashFade = null;
   let dripT = 4, bunkRumbleT = 20;
   function drip() {
     const t0 = ctx.currentTime, base = 900 + Math.random() * 900;
@@ -289,6 +310,13 @@
       if (!gate('hit:' + what, what === 'door' ? 0.12 : 0.08)) return;
       if (what === 'door') { const pv = 0.9 + Math.random() * 0.2; tone(95 * pv, 38 * pv, 0.3, 0.7, 'sine'); noise(0.18, 'lowpass', 500, 120, 0.4); tone(420 + Math.random() * 80, 230, 0.22, 0.14, 'square'); noise(0.14, 'bandpass', 2200, 900, 0.18, 5); }
       else { noise(0.2, 'bandpass', 1400, 600, 0.25, 6); tone(320, 200, 0.12, 0.15, 'square'); }
+    },
+    // dusk warning: soft two-note chime at 19:00 (SFX bus, rate limited)
+    duskChime() {
+      if (!ready()) return;
+      if (!gate('duskchime', 5)) return;
+      tone(523, 520, 0.9, 0.16, 'sine');
+      setTimeout(() => { try { tone(392, 390, 1.3, 0.16, 'sine'); } catch (e) {} }, 420);
     },
     // ambient water drip landing: soft plink, very quiet and rate limited
     drip() {
@@ -745,7 +773,26 @@
       o.connect(f); o2.connect(f); f.connect(g); g.connect(sfxBus);
       o.start(t); o2.start(t); o.stop(t + cyc * 2 + 0.05); o2.stop(t + cyc * 2 + 0.05);
     },
-    preview() { if (ready()) this.turret('rifle'); },
+    preview(name) {
+      if (!ready()) return;
+      if (!name || name === 'fx') { this.turret('rifle'); return; }
+      if (name === 'ui') { uiTone(880, 880, 0.08, 0.1, 'triangle'); return; }
+      const dest = name === 'music' && musicBus ? musicBus : name === 'amb' && ambBus ? ambBus : null;
+      const o = ctx.createOscillator(), g = ctx.createGain(), t = ctx.currentTime;
+      o.type = 'sine';
+      if (name === 'narr') {
+        if (this.narrMuted()) return;
+        o.frequency.setValueAtTime(200, t); o.frequency.linearRampToValueAtTime(260, t + 0.12);
+        g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.18 * ev('narr'), t + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+        o.connect(g); g.connect(master || ctx.destination);
+      } else {
+        const f = name === 'music' ? 330 : name === 'amb' ? 140 : 262;
+        o.frequency.setValueAtTime(f, t);
+        g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.18, t + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+        o.connect(g); g.connect(dest || master || ctx.destination);
+      }
+      o.start(t); o.stop(t + 0.35);
+    },
     // st: { scene, alarm } while playing, or null (menu / paused / game over)
     update(dt, st) {
       if (!ctx || ctx.state !== 'running') return;
@@ -783,6 +830,7 @@
       const TOPSIDE_WIND = 0.16, TOPSIDE_SUB = 0.05, TOPSIDE_RUMBLE_GAP = [14, 20];
       if (windFade) windFade.gain.setTargetAtTime(topside ? TOPSIDE_WIND : 0, t, topside ? 1.2 : 0.5);
       if (subFade) subFade.gain.setTargetAtTime(topside ? TOPSIDE_SUB : 0, t, topside ? 1.2 : 0.5);
+      if (ashFade && !(topside && gustT <= 0)) ashFade.gain.setTargetAtTime(topside ? 0.05 : 0, t, topside ? 1.5 : 0.5);
       if (topside) {
         rumbleT -= dt;
         if (rumbleT <= 0) { rumbleT = TOPSIDE_RUMBLE_GAP[0] + Math.random() * TOPSIDE_RUMBLE_GAP[1]; if (!muted && windBuf) distantRumble(); }
@@ -792,6 +840,7 @@
         gustT -= dt;
         if (gustT <= 0) {
           gustT = 4 + Math.random() * 11;
+          if (ashFade) { const ak = 0.07 + Math.random() * 0.06; ashFade.gain.setTargetAtTime(ak, t, 0.6); ashFade.gain.setTargetAtTime(0.05, t + 2.5, 1.2); }
           const s = 0.4 + Math.random() * 0.6, dur = 2 + Math.random() * 3;
           gustG.gain.cancelScheduledValues(t); gustG.gain.setTargetAtTime(1 + 1.3 * s, t, dur * 0.25); gustG.gain.setTargetAtTime(1, t + dur * 0.45, dur * 0.3);
           gustF.detune.cancelScheduledValues(t); gustF.detune.setTargetAtTime(700 * s, t, dur * 0.25); gustF.detune.setTargetAtTime(0, t + dur * 0.45, dur * 0.3);

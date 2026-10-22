@@ -84,6 +84,7 @@
       t = String(t);
       const el = ensureCap(); if (!el) return;
       el.textContent = t;
+      void el.offsetWidth; // reflow: leave display:none (:empty) before .on so the fade runs
       el.classList.add('on');
       clearTimeout(capTimer);
       capTimer = setTimeout(hideCap, Math.max(3500, 2000 + t.length * 60));

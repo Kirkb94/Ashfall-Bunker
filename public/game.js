@@ -934,6 +934,7 @@ function hourEvents(h) {
   meal(h);
   if (h === 8) bossFailCheck();
   if (h === 8) { if (S.alarm) toggleAlarm(); S.alarmAuto = false; if (d > 1) { lampEv('new_day', 'Day ' + d + '. ' + summaryLine()); showDayCard(d - 1); } }
+  if (h === 19 && window.SFX && SFX.duskChime) SFX.duskChime();
   if (h === 20) { if (d === 3) lampEv('boss_warn', 'Long-range scanner: a convoy with a painted-grin banner. That is Cinder. Raid in one hour.', 'warn'); else lampSay('raidWarn', 'warn'); }
   if (h === 8 && S.tower && !S.tower.paid && TOWER[S.tower.done] && !canPay(TOWER[S.tower.done].cost)) lampEv('exit_resources', 'Not enough materials for the next tower stage. Someone should scavenge topside.', 'warn');
   if (h === RAID_HOUR) queueRaid(d);
@@ -986,6 +987,7 @@ function queueRaid(d) {
   atLoc({ x: DOOR_X, y: FLOORS[0] });
   if (d === 3) lampEv('wave_stronger', 'Cinder’s raiders are at the wire. Hold the door.', 'warn'); else lampSay('raidNow', 'warn', { n: list.length, strong: d >= 3 });
   if (speed > 1) setSpeed(1);
+  if (d >= 3 && scene === 'bunker') { addShake(0.25); screenFlash(0.5, '200,120,80'); }
 }
 function queueProbe(d) {
   const n = 1 + Math.floor(d / 2);
@@ -995,6 +997,7 @@ function queueProbe(d) {
 function spawnEnemy(type) {
   const b = ENEMIES[type], scale = 1 + (day() - 1) * ENEMY_HP_PER_DAY;
   S.enemies.push({ id: uid++, type, enemy: true, x: W + 30 + rnd(0, 60), y: FLOORS[0], floor: 0, climbing: false, hp: Math.round(b.hp * scale), max: Math.round(b.hp * scale), cd: rnd(0, 0.5), facing: -1, anim: Math.random() * 10, inside: false, gear: rollGear(type) });
+  if (type === 'cinder' && scene === 'bunker') { addShake(0.4); screenFlash(0.6, '200,120,80'); }
   if (type === 'cinder') S.cinderRaid = true; if (type === 'cinder') lampEv('boss_arrive', 'Cinder is here. Hold the door.', 'warn'); if (type === 'cinder') lamp('Cinder (over a loudspeaker): “Open up, little mole. Only the strong get to leave the ground.”', 'warn');
 }
 function spawnMaw() {
@@ -2831,6 +2834,31 @@ function draw() {
   drawLossVignette();
   drawHurtVignette();
 }
+// Dusk-to-night colour grade: 0 by day, ramps 17:00-21:00, full at night, eases out 05:00-07:00.
+function duskGrade() {
+  const h = hourF();
+  if (h >= 17) return clamp((h - 17) / 4, 0, 1);
+  if (h < 7) return clamp((7 - h) / 2, 0, 1);
+  return 0;
+}
+// Orange wash peaking mid-dusk, then deep indigo; warmer toward the bottom (horizon) of the rect. Static, skipped under reduced motion.
+function drawDuskGrade(x, y, w, hh) {
+  if (prefs.rm || typeof S === 'undefined' || !S) return;
+  const k = duskGrade();
+  if (k < 0.01) return;
+  const warm = Math.sin(Math.PI * k) * (1 - k * 0.3); // peaks mid-ramp
+  const night = clamp((k - 0.4) / 0.6, 0, 1);
+  g.save();
+  const gr = g.createLinearGradient(0, y, 0, y + hh);
+  gr.addColorStop(0, 'rgba(255,120,50,' + (0.10 * warm).toFixed(3) + ')');
+  gr.addColorStop(1, 'rgba(255,140,60,' + (0.24 * warm).toFixed(3) + ')');
+  g.fillStyle = gr; g.fillRect(x, y, w, hh);
+  const ig = g.createLinearGradient(0, y, 0, y + hh);
+  ig.addColorStop(0, 'rgba(18,16,60,' + (0.34 * night).toFixed(3) + ')');
+  ig.addColorStop(1, 'rgba(40,24,64,' + (0.22 * night).toFixed(3) + ')');
+  g.fillStyle = ig; g.fillRect(x, y, w, hh);
+  g.restore();
+}
 // Dusk warning gradient: warm red-orange glow building from ~17:00, peaking ~20:00, gone by ~21:30 (weaker dawn glow 4:30-6:30).
 // Honors the Night lighting toggle (prefs.nl). Reduced motion / Low effects: steady, no pulse. Topside gets a ground-up glow, bunker a sky-down one.
 function drawDuskGlow() {
@@ -2995,6 +3023,7 @@ function drawBunker() {
   drawSurface(sky);
   // night over the surface only: the bunker keeps its lamps
   if (sky.dayAmt < 1) { g.fillStyle = 'rgba(5,6,18,' + (0.55 * (1 - sky.dayAmt)) + ')'; g.fillRect(0, 0, W, FLOORS[0] + 16); }
+  drawDuskGrade(0, 0, W, FLOORS[0] + 16); // surface strip only, the lamp-lit interior is unchanged
   drawDrops();
   for (const c of S.crew) if (c.alive && !c.exp) drawPerson(c.x, c.y, c.color, c.accent, c, c.anim, c.facing, c.state === 'sleep', c.climbing);
   for (const c of S.crew) if (c.alive && !c.exp && !c.left) drawTaskIcon(c);
@@ -3663,6 +3692,8 @@ const SHEET_FILES = { mara: 'mara-voss', reed: 'doc-tobias-reed', juno: 'juno-pa
 // get one of the Sprite Forge wanderer sprites, picked from their name so a person keeps the same look across saves.
 const POOL_SHEETS = ['wanderer-ex-soldier', 'wanderer-field-nurse', 'wanderer-old-farmhand', 'wanderer-scrap-picker', 'wanderer-tarp-poncho', 'wanderer-young-courier'];
 POOL_SHEETS.forEach(f => { SHEET_FILES['pool:' + f] = f; });
+// Enemies drawn from their own Sprite Forge sheets (keyed by ENEMIES type; maw and cinder are registered above)
+Object.assign(SHEET_FILES, { hound: 'mutant-hound', ghoul: 'ash-ghoul', raider: 'raider', brute: 'brute', burrower: 'burrower', ram: 'pike-s-ram-rig' });
 function crewSheetId(c) {
   if (!c) return null;
   if (c.id && SHEET_FILES[c.id] && !String(c.id).startsWith('pool:')) return c.id;
@@ -3812,7 +3843,7 @@ function drawEnemy(e, ox = 0) {
   const bob = Math.sin(e.anim) * 2;
   if (e.hidden) { box(-14, -6, 28, 6, '#5a4a38'); box(-8, -10, 16, 4, '#6e5a44'); g.restore(); return; }
   const ART = typeof VEC !== 'undefined' ? VEC : SPR;
-  if ((e.type === 'maw' || e.type === 'cinder') && sheetDrawEnemy(e)) { /* drawn from Sprite Forge sheet */ }
+  if (SHEET_FILES[e.type] && sheetDrawEnemy(e)) { /* drawn from Sprite Forge sheet */ }
   else if (e.type === 'burrower') { box(-14, -18 + bob * 0.5, 28, 14, b.color); box(e.facing < 0 ? -20 : 10, -20 + bob * 0.5, 10, 10, '#4a3a2c'); g.fillStyle = '#e8e0d0'; g.fillRect(e.facing < 0 ? -22 : 18, -16, 2, 5); g.fillStyle = '#ff4030'; g.fillRect(e.facing < 0 ? -16 : 12, -18, 2, 2); }
   else if (ART.hasEnemy(e.type)) {
     ART.enemy(g, e.type, b.color, Math.abs(bob) < 0.7 ? 0 : (bob > 0 ? 1 : 2), e.facing < 0, performance.now() / 1000);
@@ -3879,7 +3910,7 @@ function lootPop(x, y, items) {
 }
 // Dust puff and sparks (fewer in Reduced motion; particle list capped)
 function fxDust(x, y, n) { if (prefs.rm) n = Math.ceil(n / 2); n = partRoom(n); for (let i = 0; i < n; i++) fx.parts.push({ x: x + rnd(-6, 6), y: y + rnd(-4, 4), vx: rnd(-45, 45), vy: rnd(-90, -20), t: rnd(0.4, 0.9), c: i % 2 ? '#a8957a' : '#7d6c58', sc: false }); }
-function fxSparks(x, y, n, dir) { if (prefs.rm) n = Math.ceil(n / 2); n = partRoom(n); for (let i = 0; i < n; i++) fx.parts.push({ x, y, vx: (dir || 0) * rnd(60, 200) + rnd(-80, 80), vy: rnd(-170, -30), t: rnd(0.15, 0.4), c: i % 2 ? '#ffd27a' : '#ff8a3a', sc: false }); }
+function fxSparks(x, y, n, dir) { if (prefs.rm || prefs.ps || prefs.fx <= 0) return; n = Math.max(1, Math.round(n * Math.min(1, prefs.fx))); n = partRoom(n); for (let i = 0; i < n; i++) fx.parts.push({ x, y, vx: (dir || 0) * rnd(60, 200) + rnd(-80, 80), vy: rnd(-170, -30), t: rnd(0.15, 0.4), c: i % 2 ? '#ffd27a' : '#ff8a3a', sc: false }); }
 // Shell casing: capped at 40 (oldest dropped); skipped in Reduced motion
 function fxCasing(x, y) {
   if (prefs.rm) return;
@@ -4076,6 +4107,7 @@ function drawScav() {
   if (!prefs.hc) drawScavDebris(ox);
   if (!prefs.hc && !prefs.rm && !prefs.le) drawScavAsh(ox);
   if (sky.dayAmt < 1) { g.fillStyle = 'rgba(5,6,18,' + (0.5 * (1 - sky.dayAmt)) + ')'; g.fillRect(0, 0, W, H); }
+  drawDuskGrade(0, 0, W, H); // before lantern, compass and map so they stay readable
   lampTick();
   drawScavLantern(ox);
   drawScavCompass(ox);
@@ -4278,7 +4310,12 @@ function lamp(text, kind = '', delayMs = 0, clip = null) {
 }
 // ---- toast notifications: stacking, capped, auto-dismiss ----
 const TOAST_RE = /did not survive|killed|died|has fallen|asking to stay|follow you home|repaired|rebuilt|recovered|sabotaged|grieving|was caught outside|is now level|downed/i;
-const TOAST_MAX = 4, TOAST_MS = 6000, TOAST_FADE_MS = 300;
+const TOAST_MAX = 4, TOAST_MS = 6000, TOAST_WARN_MS = 9000, TOAST_FADE_MS = 300;
+function toastArm(el) {
+  clearTimeout(el._timer);
+  if (el._gone || el._hold) return;
+  el._timer = setTimeout(() => toastClose(el), el._ms || TOAST_MS);
+}
 function toast(text, kind = '', loc = null) {
   let box = document.getElementById('toasts');
   if (!box) {
@@ -4291,24 +4328,33 @@ function toast(text, kind = '', loc = null) {
   if (same) {
     same._n = (same._n || 1) + 1;
     same.querySelector('.tn').textContent = ' \u00d7' + same._n;
-    clearTimeout(same._timer);
-    same._timer = setTimeout(() => toastClose(same), TOAST_MS);
+    toastArm(same);
     return;
   }
   const el = document.createElement('div');
   el.className = 'toast ' + (kind === 'good' || kind === 'warn' || kind === 'bad' ? kind : '');
   el._txt = text;
+  el._ms = (kind === 'warn' || kind === 'bad') ? TOAST_WARN_MS : TOAST_MS;
+  const ic = document.createElement('span'); ic.className = 'tic';
+  ic.textContent = (kind === 'warn' ? '\u25B2' : kind === 'good' ? '\u25CF' : kind === 'bad' ? '\u25C6' : '\u25A0') + ' ';
   const s = document.createElement('span');
-  s.textContent = (kind === 'warn' ? '\u25B2 ' : kind === 'good' ? '\u25CF ' : kind === 'bad' ? '\u25C6 ' : '\u25A0 ') + text + (loc ? ' \u2197' : '');
+  s.textContent = text + (loc ? ' \u2197' : '');
   const n = document.createElement('span'); n.className = 'tn';
-  el.appendChild(s); el.appendChild(n);
-  if (loc) { el.title = 'Click to jump'; el.style.cursor = 'pointer'; }
+  el.appendChild(ic); el.appendChild(s); el.appendChild(n);
+  el.addEventListener('mouseenter', () => { el._hold = true; clearTimeout(el._timer); });
+  el.addEventListener('mouseleave', () => { el._hold = false; toastArm(el); });
+  el.addEventListener('focus', () => { el._hold = true; clearTimeout(el._timer); });
+  el.addEventListener('blur', () => { el._hold = false; toastArm(el); });
+  if (loc) {
+    el.title = 'Click to jump'; el.style.cursor = 'pointer'; el.tabIndex = 0; el.setAttribute('role', 'button');
+    el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); } });
+  }
   el.onclick = () => { if (loc) { try { jumpTo(loc); } catch (e) {} } toastClose(el); };
   box.appendChild(el);
   const live = Array.from(box.children).filter(x => !x._gone);
   for (let i = 0; i < live.length - TOAST_MAX; i++) toastClose(live[i], true);
   requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('in')));
-  el._timer = setTimeout(() => toastClose(el), TOAST_MS);
+  toastArm(el);
 }
 function toastClose(el, now) {
   if (!el || el._gone) return;
@@ -4617,7 +4663,10 @@ function renderHud() {
   const raidLeft = (RAID_HOUR - hourF() + 24) % 24, clockWarn = raidLeft > 0 && raidLeft < 2, clockMin = Math.max(1, Math.ceil(raidLeft * 60));
   const clockCls = 'clock' + (clockWarn ? ' dusk' : '') + (isNight() ? ' night' : '');
   const clockDelay = clockWarn && !prefs.rm ? ' style="animation-delay:-' + ((performance.now() / 1000) % 1.6).toFixed(2) + 's"' : '';
-  const clockSuffix = raidLeft > 0 ? ' <small class="clockcd">raid ' + (clockMin >= 60 ? Math.floor(clockMin / 60) + 'h ' : '') + (clockMin % 60) + 'm</small>' : '';
+  const dawnMin = Math.max(1, Math.ceil(((6 - hourF() + 24) % 24) * 60));
+  const afterRaid = isNight() && raidLeft >= 12; // raid already happened tonight: count down to dawn instead
+  const cdMin = afterRaid ? dawnMin : clockMin;
+  const clockSuffix = (raidLeft > 0 || afterRaid) ? ' <small class="clockcd">' + (afterRaid ? 'dawn ' : 'raid ') + (cdMin >= 60 ? Math.floor(cdMin / 60) + 'h ' : '') + (cdMin % 60) + 'm</small>' : '';
   hudSet(`<span class="${clockCls}"${clockDelay} ${tipAttrs('clock', 'Day number and time of day. Crew sleep shifts and the nightly raid follow this clock.', 'Clock ' + clockText() + (clockWarn ? ', night approaching, raid in ' + clockMin + ' minutes' : ''))}><span aria-hidden="true">${isNight() ? '&#9790; ' : clockWarn ? '&#9680; ' : '&#9728; '}</span>${clockText()}${clockSuffix}</span>
     <span class="res">${RES.map(r => { const v = Math.floor(S.res[r.k]); const low = resLow(r.k); return `<span class="${low ? 'lowres' : ''}" ${tipAttrs('res-' + r.k, resTip(r, low), r.name + ' ' + v + (low ? ', low' : ''))}><i style="background:${r.color}"></i>${low ? '<em class="lowico" aria-hidden="true">&#9888;</em>' : ''}${({ elec: 'Elec', mat: 'Mat' })[r.k] || r.name} <b class="${low ? 'low' : ''}">${v}</b>${low ? '<em class="lowtag">LOW</em>' : ''}</span>`; }).join('') + powerHud()}</span>
     <span class="res"><span class="${kit().cooked < 2 ? 'lowres' : ''}" ${tipAttrs('meals', 'Prepared meals at the serving station. Crew eat these.' + (kit().cooked < 2 ? ' Running low.' : ''), 'Meals ' + Math.floor(kit().cooked) + (kit().cooked < 2 ? ', low' : ''))}><i style="background:#e8b86a"></i>${kit().cooked < 2 ? '<em class="lowico" aria-hidden="true">&#9888;</em>' : ''}Meals <b class="${kit().cooked < 2 ? 'low' : ''}">${Math.floor(kit().cooked)}</b></span></span>
@@ -5481,7 +5530,8 @@ function interactable() {
 }
 const mouse = { x: 0, y: 0, wx: 0, wy: 0, down: false };
 // ---- hover / keyboard focus / long-press info tooltip (bunker view) ----
-var hoverRoom = null, hoverItem = null, hoverCell = null, focusT = null, lpTimer = null, lpStart = null, tipSR = null;
+var hoverRoom = null, hoverItem = null, hoverCell = null, focusT = null, lpTimer = null, lpStart = null, tipSR = null, selRoom = null;
+window.addEventListener('keydown', e => { if (e.key === 'Escape' && selRoom) selRoom = null; });
 const ROOM_UP_COST = { hydro: { elec: 3, mat: 8 }, med: { elec: 3, mat: 6 }, bunks: { scrap: 10, mat: 10 } };
 function tipItemAt(x, y) { const c = itemCellAt({ x, y }); return c ? itemHit(c.k, c.col) || null : null; }
 cv.tabIndex = 0;
@@ -5545,6 +5595,9 @@ function tipInfo(t) {
   if (r.job === 'sleep' || r.job === 'idle') lines.push('Status: ' + staff + (staff === 1 ? ' occupant' : ' occupants'));
   else if (r.build && !lv) lines.push('Status: Offline');
   else if (r.job) lines.push('Status: ' + (!staff ? 'Unstaffed' : (POWERED_JOBS.includes(r.job) && !S.powered) ? 'Unpowered' : 'Operating'));
+  const inside = living().filter(c => roomAt(c.x, c.y - 4) === t.k).length + (P && roomAt(P.x, P.y - 4) === t.k ? 1 : 0);
+  lines.push('Inside now: ' + inside + (inside === 1 ? ' person' : ' people'));
+  lines.push(r.job && POWERED_JOBS.includes(r.job) ? 'Power: ' + (S.powered ? 'On' : 'OFF (needs power)') : 'Power: not required');
   const sc = breachState().scars.find(s => s.room === t.k);
   if (sc) lines.push('Scarred: rebuild ' + fmtCost(scarCost(sc)));
   if (ROOM_UP_COST[t.k] && typeof lv === 'number') lines.push(lv >= 2 ? 'Fully upgraded' : 'Upgrade: ' + fmtCost(ROOM_UP_COST[t.k]));
@@ -5557,6 +5610,7 @@ function curTipTarget() {
   if (mouse.inCv && hoverItem) return { type: 'item', id: hoverItem.id };
   if (mouse.inCv && hoverRoom) return { type: 'room', k: hoverRoom };
   if (mouse.inCv && hoverCell) return { type: 'cell', c: hoverCell.c, r: hoverCell.r };
+  if (!focusT && selRoom && ROOMS[selRoom]) return { type: 'room', k: selRoom };
   return focusT;
 }
 function setFocusT(t, ms) {
@@ -5565,6 +5619,11 @@ function setFocusT(t, ms) {
   if (tipSR) tipSR.textContent = i ? i.lines.join('. ') : '';
 }
 function drawTipHighlight() {
+  if (scene === 'bunker' && S) {
+    const tintRoom = (k, a) => { if (!k || !ROOMS[k] || ROOMS[k].build) return; const b = roomBox(k); g.save(); g.fillStyle = prefs.hc ? 'rgba(255,255,255,' + (a + .1) + ')' : 'rgba(255,200,87,' + a + ')'; g.fillRect(b.x, b.y, b.w, b.h); g.restore(); };
+    if (selRoom && ROOMS[selRoom]) { tintRoom(selRoom, .16); const b = roomBox(selRoom); g.save(); g.strokeStyle = prefs.hc ? '#fff' : '#ffc857'; g.lineWidth = 3; g.setLineDash([10, 4]); g.strokeRect(b.x + 2, b.y + 2, b.w - 4, b.h - 4); g.restore(); }
+    if (mouse.inCv && hoverRoom && hoverRoom !== selRoom) tintRoom(hoverRoom, .08);
+  }
   const i = tipInfo(curTipTarget()); if (!i) return;
   g.save(); g.strokeStyle = prefs.hc ? '#ffffff' : '#ffc857'; g.lineWidth = prefs.hc ? 4 : 2; if (prefs.cb) g.setLineDash([8, 5]);
   g.strokeRect(i.box.x, i.box.y, i.box.w, i.box.h); g.restore();
@@ -5644,6 +5703,7 @@ cv.addEventListener('pointerdown', e => {
   const bp = scene === 'bunker' ? bcamToWorld(p) : p;
   const c = scene === 'bunker' ? personAt(bp.x, bp.y) : null;
   if (c) { sel = c.id; openDrawer('crew'); setTimeout(() => document.querySelector(`[data-crew="${c.id}"]`)?.scrollIntoView({ block: 'nearest' }), 0); return; }
+  if (e.button === 0 && scene === 'bunker' && S && e.pointerType !== 'touch') { const rk = tipItemAt(bp.x, bp.y) ? null : roomAt(bp.x, bp.y); selRoom = rk ? (selRoom === rk ? null : rk) : null; }
   if (e.pointerType === 'touch') {
     markTouch();
     // touch aim: in scav, tap/drag on the canvas sets shoot direction; otherwise touch shoots via the FIRE button
@@ -6822,7 +6882,7 @@ const KEYBINDS = [
 const TEXT_SIZES = [['normal', '100%', 1], ['large', '125%', 1.25], ['xlarge', '150%', 1.5]];
 function getTextSize() { try { const v = localStorage.getItem('ashfall.textsize'); if (TEXT_SIZES.some(t => t[0] === v)) return v; } catch (_) {} return 'normal'; }
 function applyTextSize(k) {
-  const t = TEXT_SIZES.find(x => x[0] === k) || TEXT_SIZES[1];
+  const t = TEXT_SIZES.find(x => x[0] === k) || TEXT_SIZES[0];
   document.documentElement.style.setProperty('--ts', String(t[2]));
   CANVAS_TS = t[2];
 }
@@ -6851,13 +6911,13 @@ function showSettings(from) {
   const curTs = getTextSize();
   const tmBtns = '<div class="tsrow">' + TOUCH_MODES.map(([k, label]) => `<button class="btn ghost" data-touch="${k}" aria-pressed="${k === touchMode}">${label}</button>`).join('') + '</div>';
   const curPct = Math.round(getTextScale() * 100);
-  const tsBtns = `<label class="srow"><span>Text scale</span><input type="range" id="sTs" min="85" max="160" step="5" value="${curPct}" aria-label="UI text size" aria-valuetext="${curPct} percent"><b>${curPct}%</b></label><button class="btn ghost" id="sTsReset" style="min-width:0">Reset text size</button>`;
+  const tsBtns = `<label class="srow"><span>Text scale</span><input type="range" id="sTs" min="85" max="160" step="5" value="${curPct}" aria-label="UI text size" aria-valuetext="${curPct} percent"><b>${curPct}%</b></label><button class="btn ghost" id="sTsReset" style="min-width:0">Reset text size</button><div class="tsrow" role="group" aria-label="Text size presets">${[['Small', 85], ['Normal', 100], ['Large', 125]].map(([l, p]) => `<button class="btn ghost" data-tspreset="${p}" aria-pressed="${curPct === p}">${l} (${p}%)</button>`).join('')}</div>`;
   const muted = !!(window.SFX && SFX.muted);
   overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="sTitle" style="width:640px"><h1 id="sTitle" style="font-size:36px">SETTINGS</h1><div class="setp"><h3>VOLUME</h3>${rows}<button class="btn ghost" id="sMute" style="min-width:0">${muted ? 'Sound: off' : 'Sound: on'}</button><button class="btn ghost" id="sNarrMute" style="min-width:0" aria-pressed="${!!(window.SFX && SFX.narrMuted && SFX.narrMuted())}">${(window.SFX && SFX.narrMuted && SFX.narrMuted()) ? 'Narrator: muted' : 'Narrator: on'}</button><button class="btn ghost" id="sVolReset" style="min-width:0">Reset audio</button><h3>DISPLAY</h3><div class="tsrow"><button class="btn ghost" data-pref="cb" aria-pressed="false">Colorblind: off</button><button class="btn ghost" data-pref="hc" aria-pressed="false">High contrast: off</button><button class="btn ghost" id="sCap" aria-pressed="${window.narrCaptionsOn ? narrCaptionsOn() : true}">Captions: ${(window.narrCaptionsOn ? narrCaptionsOn() : true) ? 'on' : 'off'}</button></div><h3>FLASH &amp; SHAKE</h3><label class="srow"><span>Effects intensity</span><input type="range" min="0" max="100" step="5" value="${Math.round(prefs.fx * 100)}" id="sFx" aria-label="Screen shake and flash intensity"><b>${Math.round(prefs.fx * 100)}%</b></label><div class="tsrow"><button class="btn ghost" id="sPs" aria-pressed="${prefs.ps}">Photosensitive-safe: ${prefs.ps ? 'on' : 'off'}</button><button class="btn ghost" id="sTips" aria-pressed="${!tutDone()}">Tutorial hints: ${tutDone() ? 'off' : 'on'}</button></div><h3>SCREEN READER</h3><div class="tsrow"><button class="btn ghost" id="sSrAlert" aria-pressed="${srAlertsOn()}">Critical alerts: ${srAlertsOn() ? 'on' : 'off'}</button></div><h3>HELP</h3><div class="tsrow"><button class="btn ghost" id="sReplay">Replay tips</button></div><label class=\"srow\" style=\"cursor:pointer\"><input type=\"checkbox\" id=\"sRm\" ${prefs.rm ? 'checked' : ''}><span>Reduced motion (no screen shake, still ash and bobbing)</span></label><h3>TEXT SIZE</h3>${tsBtns}<h3>TOUCH CONTROLS</h3>${tmBtns}<h3>MOVEMENT &amp; ACTION KEYS</h3><div class="binds">${bindRows}</div><div id="bindNote" role="status" aria-live="polite" style="min-height:1.4em;margin-top:6px;color:#e8b84a">${bindNote}</div><h3>OTHER KEYS</h3><dl class="keys">${keys}</dl></div><button class="btn" id="sBack">Back</button></div>`);
   document.querySelectorAll('#overlay input[data-vol]').forEach(inp => {
     const out = inp.parentNode.querySelector('b');
-    inp.oninput = () => { if (window.SFX && SFX.setVol) SFX.setVol(inp.dataset.vol, inp.value / 100); out.textContent = inp.value + '%'; };
-    inp.onchange = () => { if (inp.dataset.vol === 'fx' && window.SFX && SFX.preview) SFX.preview(); };
+    inp.oninput = () => { if (window.SFX && SFX.setVol) SFX.setVol(inp.dataset.vol, inp.value / 100); out.textContent = inp.value + '%'; volPreview(inp.dataset.vol); };
+    inp.onchange = () => { if (inp.dataset.vol === 'fx' && window.SFX && SFX.preview) SFX.preview('fx'); };
   });
   addChMutes();
   $('#sMute').onclick = e => { if (window.SFX) SFX.toggleMute(); e.currentTarget.textContent = (window.SFX && SFX.muted) ? 'Sound: off' : 'Sound: on'; };
@@ -6874,6 +6934,9 @@ function showSettings(from) {
     ts.oninput = () => { out.textContent = ts.value + '%'; ts.setAttribute('aria-valuetext', ts.value + ' percent'); setTextScale(ts.value / 100); };
     ts.onchange = () => { setTextScale(ts.value / 100); try { srSay('Text size ' + ts.value + ' percent', '', true); } catch (err) {} };
   } }
+  document.querySelectorAll('#overlay button[data-tspreset]').forEach(b => {
+    b.onclick = () => { const p = +b.dataset.tspreset; setTextScale(p / 100); try { srSay('Text size ' + p + ' percent', '', true); } catch (err) {} showSettings(from); };
+  });
   { const r = $('#sTsReset'); if (r) r.onclick = () => { setTextScale(1); try { srSay('Text size reset to 100 percent', '', true); } catch (err) {} showSettings(from); }; }
   const fxIn = $('#sFx');
   if (fxIn) {
@@ -6908,6 +6971,7 @@ function showSettings(from) {
     const on = !(window.narrCaptionsOn ? narrCaptionsOn() : true);
     if (window.narrSetCaptions) narrSetCaptions(on);
     capBtn.textContent = 'Captions: ' + (on ? 'on' : 'off');
+    if (on && window.narrShowText) narrShowText('Captions on. This is how my lines will look.');
     capBtn.setAttribute('aria-pressed', String(on));
   };
   const tipsBtn = $('#sTips');
@@ -6934,6 +6998,12 @@ function showSettings(from) {
   if (rmBox) rmBox.onchange = () => { prefs.rm = rmBox.checked; savePrefs(); try { lamp('Reduced motion mode ' + (prefs.rm ? 'on' : 'off')); } catch (err) {} };
   $('#sBack').focus();
 }
+let volPrevT = 0;
+function volPreview(k) {
+  if (k === 'fx' || !(window.SFX && SFX.preview)) return;
+  clearTimeout(volPrevT);
+  volPrevT = setTimeout(() => { try { SFX.preview(k); } catch (e) {} }, 150);
+}
 function pauseVolHtml() {
   const rows = [['master', 'Master'], ['music', 'Music'], ['amb', 'Ambience'], ['narr', 'Narrator'], ['fx', 'Effects'], ['ui', 'Interface']].map(([k, label]) => { const v = Math.round(((window.SFX && SFX.getVol) ? SFX.getVol(k) : 1) * 100); return `<label class="srow"><span>${label}</span><input type="range" min="0" max="100" step="1" value="${v}" data-vol="${k}" aria-label="${label} volume"><b>${v}%</b></label>`; }).join('');
   const nm = (window.SFX && SFX.narrMuted && SFX.narrMuted());
@@ -6944,6 +7014,7 @@ function addChMutes() {
   document.querySelectorAll('#overlay input[data-vol]').forEach(inp => {
     if (inp.parentNode.querySelector('.chm')) return;
     const k = inp.dataset.vol, nm = inp.getAttribute('aria-label').replace(' volume', '');
+    if (k === 'narr' && document.getElementById('sNarrMute')) return;
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'btn ghost chm';
     b.style.cssText = 'min-width:0;padding:2px 8px;font-size:12px;margin-left:6px';
@@ -6959,7 +7030,7 @@ function bindPauseVol() {
   addChMutes();
   document.querySelectorAll('#overlay input[data-vol]').forEach(inp => {
     const out = inp.parentNode.querySelector('b');
-    inp.oninput = () => { if (window.SFX && SFX.setVol) SFX.setVol(inp.dataset.vol, inp.value / 100); out.textContent = inp.value + '%'; };
+    inp.oninput = () => { if (window.SFX && SFX.setVol) SFX.setVol(inp.dataset.vol, inp.value / 100); out.textContent = inp.value + '%'; volPreview(inp.dataset.vol); };
     inp.onchange = () => { if (inp.dataset.vol === 'fx' && window.SFX && SFX.preview) SFX.preview(); };
   });
 }
