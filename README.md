@@ -25,7 +25,7 @@ Then open http://localhost:3000. No packages to install (Node 18+).
   - Enemy types: mutant hounds, ash ghouls, raiders (ranged) and brutes.
   - Cinder and his raiders attack on night 3.
 - **The Workshop** repairs the hatch, wall and turrets with scrap, and turns spare scrap into parts.
-- **Scavenging:** walk off the right edge of the surface to play a side-scrolling trip. Search wrecks, crates and lockers, fight mutants, and invite wanderers back home. The bunker keeps running while you're gone.
+- **Scavenging:** walk off either edge of the surface into the connected topside: west and east wastes, generated once per run, getting more dangerous the further out you go. Search wrecks, crates and lockers, fight mutants, and invite wanderers back home. The bunker keeps running while you're gone.
 - **Wanderers and revolts:** newcomers join from trips or knock at the hatch. If their morale drops, they may leave in the night with your supplies.
 - **XP and levels** for the crew and Mara.
 - **Goal:** build the 4-stage signal tower to win. You lose if everyone dies.

@@ -7,7 +7,8 @@
 */
 
 // ====================================================================== WEAR AND MAINTENANCE
-const COND_NAMES = { gen: 'Generator', stove: 'Stove', planter: 'Planters', t0: 'Turret 1', t1: 'Turret 2', door: 'Hatch', wall: 'Outer wall' };
+const COND_NAMES = { gen: 'Generator', stove: 'Stove', planter: 'Planters', door: 'Hatch', wall: 'Outer wall' };
+const condName = k => (/^t\d$/.test(k) ? tName(+k[1]) : COND_NAMES[k] || k);   // turret wear keys are t0..t4
 const cond = k => (S && S.cond && S.cond[k] != null) ? S.cond[k] : 100;
 // 100% = full speed, 0% = half speed (or 2x damage taken for the hatch and wall)
 const wearF = k => 0.5 + 0.5 * cond(k) / 100;
@@ -16,7 +17,7 @@ function wearBy(k, amt) {
   if (!S.cond || typeof S.cond !== 'object') S.cond = {};
   S.cond[k] = Math.max(0, cond(k) - amt * (tech('svc1') ? 0.75 : 1));
   const w = S.wearWarn || (S.wearWarn = {});
-  if (S.cond[k] < 25 && !w[k]) { w[k] = 1; lamp((COND_NAMES[k] || k) + ' is badly worn. Put someone on the Workshop job to service it.', 'warn'); }
+  if (S.cond[k] < 25 && !w[k]) { w[k] = 1; lamp(condName(k) + ' is badly worn. Put someone on the Workshop job to service it.', 'warn'); }
   else if (S.cond[k] > 60) w[k] = 0;
 }
 function condKeys() {
@@ -49,7 +50,7 @@ function structDmgMul(what) {
 function maintHTML() {
   const rows = condKeys().map(k => {
     const v = Math.round(cond(k));
-    return `<div class="card"><div class="ch"><b>${COND_NAMES[k]}</b><span class="lvl">${v}%</span></div>${bar(v, v < 30 ? '#ff5a4e' : v < 60 ? '#ffb347' : '#7ddc6f', v < 30 ? 'low' : v < 60 ? 'rest' : 'hp', COND_NAMES[k])}${v < 30 ? '<div class="note" style="margin:2px 0 0"><span aria-hidden="true">\u26A0\uFE0E</span> Low</div>' : ''}</div>`;
+    return `<div class="card"><div class="ch"><b>${condName(k)}</b><span class="lvl">${v}%</span></div>${bar(v, v < 30 ? '#ff5a4e' : v < 60 ? '#ffb347' : '#7ddc6f', v < 30 ? 'low' : v < 60 ? 'rest' : 'hp', condName(k))}${v < 30 ? '<div class="note" style="margin:2px 0 0"><span aria-hidden="true">\u26A0\uFE0E</span> Low</div>' : ''}</div>`;
   }).join('');
   const crew = living().filter(c => c.job === 'workshop').length;
   return `<div class="sec">MAINTENANCE</div><p class="note">Use wears things down. Worn machines work slower, worn turrets fire slower and jam, a worn hatch or wall takes more damage. Workshop crew service the worst one when nothing needs repairing, for a little scrap.${S.rooms.workshop && !crew ? ' <span style="color:var(--red)">Nobody is on the Workshop job.</span>' : ''}</p>${rows}`;
@@ -125,7 +126,7 @@ const expEligible = c => c.alive && !c.exp && !c.patient && c.hp >= c.maxHp * 0.
 function expRiskText(d, team) {
   const acc = team.length ? team.reduce((a, c) => a + c.stats.acc, 0) / team.length : 0.5;
   const armed = team.length ? team.filter(c => c.held).length / team.length : 0;
-  const r = Math.min(0.9, Math.max(0.05, d.risk * (1.25 - 0.5 * acc) * (1 - 0.2 * armed) * (tech('exp1') ? 0.75 : 1)));
+  const r = Math.min(0.9, Math.max(0.05, d.risk * (1.25 - 0.5 * acc) * (1 - 0.2 * armed) * (tech('exp1') ? 0.75 : 1) * (team.length && team.every(c => invCount(crewInv(c), 'mask') > 0) ? 0.85 : 1)));
   return { r, label: r < 0.2 ? 'Low' : r < 0.35 ? 'Moderate' : r < 0.5 ? 'High' : 'Deadly' };
 }
 function expAction(a) {
@@ -251,7 +252,7 @@ function pickTarget(e, b) {
   }
   return L.find(t => t.x < e.x + 4);
 }
-const coverMul = c => (c && c.floor === 0 && (c.job === 'door' || c.job === 'turretA' || c.job === 'turretB') && S.door.hp > 0) ? 0.8 : 1;
+const coverMul = c => (c && c.floor === 0 && (c.job === 'door' || isTJob(c.job)) && S.door.hp > 0) ? 0.8 : 1;
 // weapons now change guard and melee combat
 const GW = {
   none:    { kind: 'gun',   dmg: 11, range: 140, cd: 0.8,  pellets: 1, type: 'pierce', base: 0.4,  accK: 0.5 },
@@ -311,12 +312,12 @@ function turretTick(dt) {
     if (t.ammo == null) t.ammo = ex.mag;
     t.heat = Math.max(0, (t.heat || 0) - 14 * dt);
     if (t.over) { if (t.heat < 35) t.over = false; else return; }
-    const gunner = living().find(c => c.state === 'work' && targetJob(c) === (i ? 'turretB' : 'turretA'));
+    const gunner = living().find(c => c.state === 'work' && targetJob(c) === TJOBS[i]);
     t.manned = !!gunner;
     if (!gunner) return;
     if (t.ammo <= 0 && !(t.reload > 0)) {
       if (S.res.scrap >= 1) { S.res.scrap -= 1; t.reload = ex.reload; }
-      else { if (!t.dry) { t.dry = true; lamp('Turret ' + (i + 1) + ' is out of ammo and there is no scrap to reload it.', 'warn'); } return; }
+      else { if (!t.dry) { t.dry = true; lamp(tName(i) + ' is out of ammo and there is no scrap to reload it.', 'warn'); } return; }
     }
     if (t.reload > 0) {
       t.reload -= dt * (0.6 + gunner.stats.acc) * (tech('gun3') ? 1.3 : 1);
@@ -348,7 +349,7 @@ function turretTick(dt) {
       }
     }
     t.ammo--; t.heat += ex.heat; wearBy(k, 0.1);
-    if (t.heat >= 100) { t.over = true; lamp('Turret ' + (i + 1) + ' overheated and is cooling down.', 'warn'); }
+    if (t.heat >= 100) { t.over = true; lamp(tName(i) + ' overheated and is cooling down.', 'warn'); }
   });
 }
 function cyclePrio(i) {
@@ -360,5 +361,5 @@ function turretStatusHTML(i) {
   const t = S.turrets[i]; if (!t || t.type === 'coil') return '';
   const ex = TURRET_EXTRA[t.type], pr = PRIOS.find(p => p[0] === (t.prio || 'near'));
   const ammo = t.ammo == null ? ex.mag : t.ammo, state = t.over ? ' · <span style="color:var(--red)">OVERHEATED</span>' : t.reload > 0 ? ' · reloading' : t.dry ? ' · <span style="color:var(--red)">NO AMMO</span>' : '';
-  return `<div class="card"><div class="ch"><b>Turret ${i + 1} controls</b><span class="lvl">${ammo}/${ex.mag} ammo</span></div>${bar(Math.min(100, t.heat || 0), '#ff8c2a')}<p class="note" style="margin:4px 0">Heat ${Math.round(t.heat || 0)}% · condition ${Math.round(cond('t' + i))}%${state}. Each reload costs 1 scrap.</p><div class="row"><button class="chip on" data-build="prio_${i}">Target: ${pr[1]}</button></div></div>`;
+  return `<div class="card"><div class="ch"><b>${tName(i)} controls</b><span class="lvl">${ammo}/${ex.mag} ammo</span></div>${bar(Math.min(100, t.heat || 0), '#ff8c2a')}<p class="note" style="margin:4px 0">Heat ${Math.round(t.heat || 0)}% · condition ${Math.round(cond('t' + i))}%${state}. Each reload costs 1 scrap.</p><div class="row"><button class="chip on" data-build="prio_${i}">Target: ${pr[1]}</button></div></div>`;
 }

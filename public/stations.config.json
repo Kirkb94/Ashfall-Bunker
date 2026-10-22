@@ -4,6 +4,9 @@
   "stations": {
     "turretA": { "capacity": 1 },
     "turretB": { "capacity": 1 },
+    "turretC": { "capacity": 1 },
+    "turretD": { "capacity": 1 },
+    "turretE": { "capacity": 1 },
     "door": { "capacity": 6 },
     "workshop": { "capacity": 4 },
     "signal": { "capacity": 3 },
