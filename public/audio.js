@@ -381,6 +381,20 @@
       if (kind === 'mask') { note(392, 0, 0.18, 0.16); }
       else { note(660, 0, 0.12, 0.14); note(990, 0.07, 0.2, 0.12); }
     },
+    // gas pocket hiss; filtered=true when the mask is working (softer, muffled)
+    hiss(filtered) {
+      if (!ready()) return;
+      const now = ctx.currentTime; if (now - (this._lastHiss || 0) < 0.25) return; this._lastHiss = now;
+      if (filtered) { noise(0.5, 'lowpass', 1800, 700, 0.05, 3); }
+      else { noise(0.6, 'highpass', 3500, 1800, 0.11, 6); noise(0.5, 'bandpass', 5200, 3000, 0.06, 8); }
+    },
+    // gas pocket hiss; filtered=true when the mask is working (softer, muffled)
+    hiss(filtered) {
+      if (!ready()) return;
+      const now = ctx.currentTime; if (now - (this._lastHiss || 0) < 0.25) return; this._lastHiss = now;
+      if (filtered) { noise(0.5, 'lowpass', 1800, 700, 0.05, 3); }
+      else { noise(0.6, 'highpass', 3500, 1800, 0.11, 6); noise(0.5, 'bandpass', 5200, 3000, 0.06, 8); }
+    },
     // hatch open/close: metal clang + air hiss; entering=true going topside
     hatch(entering) {
       if (!ready()) return;

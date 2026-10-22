@@ -125,7 +125,8 @@
       void el.offsetWidth; // reflow: leave display:none (:empty) before .on so the fade runs
       el.classList.add('on');
       clearTimeout(capTimer);
-      capTimer = setTimeout(hideCap, Math.max(3500, 2000 + t.length * 60));
+      // voiced line: stay up until the clip ends (the 'ended'/'error' handlers and the watchdog call hideCap)
+      if (!playingUntilEnd) capTimer = setTimeout(hideCap, Math.max(3500, 2000 + t.length * 60));
     } catch (e) {}
   }
   window.narrShowText = showText; // caption any Lamp line, with or without a voice clip

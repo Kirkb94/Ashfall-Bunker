@@ -267,6 +267,46 @@ function storePut(id, n) { let done = 0; for (const b of storageBoxes()) for (co
 function storeCount(id) { return storageBoxes().reduce((a, b) => a + invCount(b.inv, id), 0); }
 function storeTake(id, n) { let done = 0; for (const b of storageBoxes()) { if (done >= n) break; done += invTake(b.inv, id, n - done); } return done; }
 function noStoreNote() { lamp(storageSlots() ? 'Storage is full. Build or upgrade a storage shelf, locker or supply crate (Build > Furniture).' : 'No storage yet: build a storage shelf, locker or supply crate (Build > Furniture).', 'warn'); }
+// ---- the base stockpile IS the storage furniture: S.res stays the ledger every system reads and spends from,
+// and resSync() keeps the 99-stacks in the shelves, lockers and crates matching it (fractions stay in the ledger).
+// Gains with no free slot are lost; spending takes stacks out of the boxes.
+let resFullAt = 0;
+function resSync() {
+  if (!S || !S.res) return;
+  if (window.STASH && STASH.dragging()) return;   // a stack is in Mara's hands mid-drag: settle when it lands
+  const lost = {};
+  for (const k of RES_IDS) {
+    if (!(S.res[k] > 0)) S.res[k] = Math.max(0, S.res[k] || 0);
+    const whole = Math.floor(S.res[k]), frac = S.res[k] - whole, have = storeCount(k);
+    if (whole > have) { const want = whole - have, put = storePut(k, want); if (put < want) { lost[k] = want - put; S.res[k] = have + put + frac; } }
+    else if (whole < have) storeTake(k, have - whole);
+  }
+  const ls = Object.entries(lost);
+  if (ls.length && performance.now() - resFullAt > 20000) { resFullAt = performance.now(); lamp('Storage is full: ' + ls.map(([k, v]) => Math.round(v) + ' ' + itemName(k).toLowerCase()).join(', ') + ' had nowhere to go and was lost. Build or upgrade a shelf, locker or crate.', 'warn'); }
+}
+// after stacks were moved by hand (storage window): the boxes are right, the ledger follows them
+function resFromBoxes() { if (!S || !S.res) return; for (const k of RES_IDS) { const v = S.res[k] || 0; S.res[k] = storeCount(k) + (v - Math.floor(v)); } }
+// one-time move to box storage: older saves and new runs get a free supply crate (more if the stockpile needs it)
+function placeFreeItem(type) {
+  const T = ITEM_TYPES[type], r = ROOMS[T.room]; if (!T || !r) return false;
+  const lo = Math.ceil((r.x0 + 4 - ITX0) / ITILE), hi = Math.floor((r.x1 - 4 - ITX0) / ITILE);
+  let col = -1;
+  for (const gap of [1, 0]) { for (let c = lo; c <= hi - T.w && col < 0; c++) if (itemSpotOk(T.room, r, c, T.w + gap)) col = c; if (col >= 0) break; }
+  if (col < 0) return false;
+  S.itemSeq = (S.itemSeq || 0) + 1; itemList().push({ id: S.itemSeq, type, room: T.room, col, lvl: 1 }); return true;
+}
+function resStart() {
+  if (!S || S.resBoxes) return;
+  S.resBoxes = 1;
+  // units still to be shelved vs. what the empty slots can take (a rough check, 99 per slot)
+  const need = () => RES_IDS.reduce((a, k) => a + Math.max(0, Math.floor(S.res[k] || 0) - storeCount(k)), 0), room = () => storageBoxes().reduce((a, b) => a + b.inv.filter(s => !s).length * 99, 0);
+  let added = 0;
+  if (!storageBoxes().length || need() > room()) { while (added < 3 && (added === 0 || need() > room()) && placeFreeItem('crateS')) added++; }
+  resSync();
+  if (added) lamp('Everything we own is in crates now: ' + (added > 1 ? added + ' supply crates' : 'a supply crate') + ' in the common room hold the stockpile. Food, scrap and the rest take storage slots (99 a stack), so build shelves and lockers before they fill up.', 'info');
+}
+const resInBox = b => RES_IDS.map(k => [k, invCount(b.inv, k)]).filter(([, n]) => n > 0);
+const resBoxText = b => resInBox(b).map(([k, n]) => n + ' ' + itemName(k).toLowerCase()).join(', ');
 function unloadRes(k, n) { if (S.rooms.storage) n = Math.ceil(n * ROOM_FX.storageLoot); if (hasB('maps')) n = Math.ceil(n * 1.1); S.res[k] += n; return n; }
 // Mara slot -> base: resources to the stockpile, items into storage
 function invStoreSlot(i) {
@@ -295,10 +335,12 @@ function slotCell(s, act, ref, tip, crewId, extra) {
   return `<button type="button" class="islot${s ? '' : ' empty'}${extra || ''}" ${on ? `data-gear="${act}" data-g="${esc(String(ref))}"${crewId ? ` data-id="${esc(crewId)}"` : ''}` : 'disabled'} title="${esc(tip || (s ? itemName(s.id) + ' x' + s.n : 'Empty slot'))}" aria-label="${esc(s ? itemName(s.id) + ', ' + s.n + (tip ? '. ' + tip : '') : 'Empty slot')}">${s ? `<i style="color:${it.color || '#e8d9b8'}">${it.icon || '⚔︎'}</i><b>${s.n > 1 ? s.n : ''}</b><em>${esc(itemName(s.id))}</em>` : ''}</button>`;
 }
 function invHTML() {
+  resSync();
   const inv = maraInv(), boxes = storageBoxes(), atBase = scene === 'bunker';
-  const mara = inv.map((s, i) => slotCell(s, atBase ? 'invstore' : '', i, s ? (atBase ? 'Unload ' + itemName(s.id).toLowerCase() + ' x' + s.n + (ITEMS[s.id] && ITEMS[s.id].res ? ' to the stockpile' : ' into storage') : itemName(s.id) + ' x' + s.n + ' (unload at the bunker)') : '')).join('');
-  const store = boxes.length ? boxes.map((b, bi) => `<div class="ibox"><span class="note" style="margin:0">${esc(ITEM_TYPES[b.type].name)} in the ${esc((ROOMS[b.room] || {}).name || b.room)} · ${invUsed(b.inv)}/${b.inv.length}</span><div class="igrid">${b.inv.map((s, si) => slotCell(s, atBase ? 'invtake' : '', bi + ':' + si, s ? 'Give ' + itemName(s.id).toLowerCase() + ' x' + s.n + ' to Mara' : '')).join('')}</div></div>`).join('') : '<p class="note">No storage yet. Build a Storage shelf, Locker or Supply crate (Build &gt; Furniture), then unload items at the hatch.</p>';
-  return `<div class="sec">MARA'S PACK · ${invUsed(inv)}/${inv.length} SLOTS</div><p class="note" style="margin:0">Resources stack to 99, gas masks to 5, anything else takes a slot. ${atBase ? 'Click a slot to unload it: resources go to the stockpile, items into storage. Click a stored item to give it to Mara.' : 'Unload at the bunker.'} Backpack upgrades at the hatch add 3 slots.</p><div class="igrid">${mara}</div><div class="sec">STORAGE · ${storageUsed()}/${storageSlots()} SLOTS</div>${store}`;
+  // clicking a slot here only explains the item; moving stacks happens at the box itself (walk up, press E)
+  const mara = inv.map((s, i) => slotCell(s, 'invinfo', 'p:' + i, s ? itemName(s.id) + ' x' + s.n + ' (click for details)' : '')).join('');
+  const store = boxes.length ? boxes.map((b, bi) => `<div class="ibox"><span class="note" style="margin:0">${esc(ITEM_TYPES[b.type].name)} in the ${esc((ROOMS[b.room] || {}).name || b.room)} · ${invUsed(b.inv)}/${b.inv.length}${resInBox(b).length ? ' · ' + esc(resBoxText(b)) : ''}</span><div class="igrid">${b.inv.map((s, si) => slotCell(s, 'invinfo', 'b:' + bi + ':' + si, s ? itemName(s.id) + ' x' + s.n + ' (click for details)' : '')).join('')}</div></div>`).join('') : '<p class="note">No storage yet. Build a Storage shelf, Locker or Supply crate (Build &gt; Furniture), then unload items at the hatch.</p>';
+  return `<div class="sec">MARA'S PACK · ${invUsed(inv)}/${inv.length} SLOTS</div><p class="note" style="margin:0">Resources stack to 99, gas masks to 5, ammo to 99. Click a slot to see what it is. Unload at the hatch (E): everything goes into the storage boxes, and the base totals at the top count what's in them, so a full storage means nothing more comes in. To move items by hand, walk Mara up to a shelf, locker or crate and press E, then drag stacks between it and her pack. Backpack upgrades at the hatch add 3 slots.</p><div class="igrid">${mara}</div><div class="sec">STORAGE · ${storageUsed()}/${storageSlots()} SLOTS</div>${store}`;
 }
 // food a worker is carrying goes back where it came from
 function dropCarry(c) {
@@ -324,6 +366,7 @@ function gearAct(act, id, crewId) {
   else if (act === 'mammo') maraPackAmmo();
   else if (act === 'mequip') maraEquip(id);
   else if (act === 'munequip') maraUnequip();
+  else if (act === 'invinfo') { if (window.STASH) STASH.tipRef(id); }
   else if (act === 'invstore') invStoreSlot(+id);
   else if (act === 'invtake') takeStoredSlot(id);
   else if (act === 'cgive') crewGive(c, id);
@@ -1553,6 +1596,7 @@ function tilePulse(c, r, w, h, kind) {
   const now = performance.now();
   for (const p of tilePulses) if (p.c === c && p.r === r && p.w === w && p.h === h && now - p.t < 80) return;
   pulseTile(c, r, w, h, kind === 'dig' ? 'rgba(255,230,170,' : 'rgba(120,255,160,');
+  if (!prefs.rm) fxDust(DIG.x0 + (c + w / 2) * DIG.cell, DIG.y0 + (r + h) * DIG.cell - 4, Math.min(8, 2 + w * h));
 }
 function pulseTile(c, r, w, h, col) {
   tilePulses.push({ c, r, w, h, col, t: performance.now() });
@@ -2313,6 +2357,7 @@ function simTick(dt) {
   const mins = dt * GAME_MIN_PER_SEC;
   const before = S.t; S.t += mins;
   resRateSample();
+  resStart(); resSync();
   // whole-hour events
   const h0 = Math.floor(before / 60), h1 = Math.floor(S.t / 60);
   for (let hh = h0 + 1; hh <= h1; hh++) hourEvents(hh % 24);
@@ -2515,13 +2560,22 @@ function packCost() { const l = S.player.packLvl || 0; return l >= 4 ? null : { 
 // Unload Mara's pack at the hatch: resources to the stockpile, items (gas masks and so on) into storage furniture
 function dropOff() {
   const inv = maraInv(), got = {}, stored = {};
-  for (let i = 0; i < inv.length; i++) { const s = inv[i]; if (s && ITEMS[s.id] && ITEMS[s.id].res) { got[s.id] = (got[s.id] || 0) + s.n; inv[i] = null; } }
+  resStart(); resSync();
+  // resources go into the storage boxes (with the loot bonuses), only as much as there is room for
+  const mult = (S.rooms.storage ? ROOM_FX.storageLoot : 1) * (hasB('maps') ? 1.1 : 1);
   let left = 0;
-  for (let i = 0; i < inv.length; i++) { const s = inv[i]; if (!s || (ITEMS[s.id] && ITEMS[s.id].ammo)) continue; /* ammo stays in her pack */ const t = storePut(s.id, s.n); if (t) stored[s.id] = (stored[s.id] || 0) + t; s.n -= t; if (s.n <= 0) inv[i] = null; else left += s.n; }
+  const resDone = {};   // what reached storage (after bonuses); got = what left her pack
+  for (let i = 0; i < inv.length; i++) {
+    const s = inv[i]; if (!(s && ITEMS[s.id] && ITEMS[s.id].res)) continue;
+    const fit = Math.max(0, Math.floor(storeRoomFor(s.id) / mult) - (mult > 1 ? 1 : 0)), t = Math.min(s.n, fit);
+    if (t > 0) { got[s.id] = (got[s.id] || 0) + t; s.n -= t; resDone[s.id] = (resDone[s.id] || 0) + unloadRes(s.id, t); resSync(); }
+    if (s.n <= 0) inv[i] = null; else left += s.n;
+  }
+  for (let i = 0; i < inv.length; i++) { const s = inv[i]; if (!s || (ITEMS[s.id] && (ITEMS[s.id].ammo || ITEMS[s.id].res))) continue; /* ammo stays in her pack; resources were handled above */ const t = storePut(s.id, s.n); if (t) stored[s.id] = (stored[s.id] || 0) + t; s.n -= t; if (s.n <= 0) inv[i] = null; else left += s.n; }
   const res = Object.entries(got), its = Object.entries(stored);
   if (res.length) {
     { const sc = S.stats.scav || (S.stats.scav = {}); for (const [k, v] of res) sc[k] = (sc[k] || 0) + v; }
-    const done = res.map(([k, v]) => [k, unloadRes(k, v)]);
+    const done = res.map(([k]) => [k, resDone[k]]);
     moment('Scavenging trip: ' + done.map(([k, v]) => v + ' ' + k).join(', '));
     lamp('Unloaded: ' + done.map(([k, v]) => v + ' ' + RES.find(r => r.k === k).name.toLowerCase()).join(', ') + (its.length ? '. Stored: ' + its.map(([k, v]) => v + ' ' + itemName(k).toLowerCase()).join(', ') : '') + '.', 'good');
   } else if (its.length) lamp('Stored: ' + its.map(([k, v]) => v + ' ' + itemName(k).toLowerCase()).join(', ') + '.', 'good');
@@ -2531,6 +2585,8 @@ function upgradePack() {
   const cost = packCost(); if (!cost) return;
   if (S.res.scrap < cost.scrap || S.res.parts < cost.parts) { lamp('Not enough for a bigger pack: need ' + cost.scrap + ' scrap and ' + cost.parts + ' parts.', 'warn'); return; }
   S.res.scrap -= cost.scrap; S.res.parts -= cost.parts; S.player.packLvl = (S.player.packLvl || 0) + 1;
+  maraInv(); CARRY_LIMIT = packCap();                       // grow the slot list now, not on the next pack read
+  if (!$('#drawer').hidden) { try { renderDrawer(); } catch (e) {} }   // an open Inventory showed the old slot count
   lamp('Backpack upgraded: it now has ' + packCap() + ' slots.', 'good');
 }
 function packCount() { return S ? invUsed(maraInv()) : 0; }
@@ -3004,6 +3060,8 @@ function hazardTick(dt) {
   hz.inGas = low && hz.gas.some(q => P.x > q.x && P.x < q.x + q.w);
   if (!hz.told.gas && hz.gas.some(q => Math.abs(q.x + q.w / 2 - P.x) < 300)) { hz.told.gas = 1; lampEv('topside_gas_warn', 'Toxic gas ahead. Jump it, go around, or find a gas mask first.', 'warn'); }
   if (hz.inGas) {
+    hz.hissT = (hz.hissT || 0) - dt;
+    if (hz.hissT <= 0) { hz.hissT = 0.7; if (window.SFX && SFX.hiss) SFX.hiss(hz.mask > 0); }
     if (!(hz.mask > 0) && invTake(maraInv(), 'mask', 1)) { hz.mask = MASK_SECS; lampEv('topside_mask_on', 'Gas mask on: ' + MASK_SECS + ' seconds of filter, only used while you are in gas.', 'good'); }
     if (hz.mask > 0) { hz.mask = Math.max(0, hz.mask - dt); if (hz.mask === 0) lampEv('topside_mask_off', invCount(maraInv(), 'mask') ? 'Filter spent. A fresh mask goes on.' : 'Your mask filter is spent. Get out of the gas.', 'warn'); }
     else {
@@ -3841,6 +3899,7 @@ function drawBunkerDust() {
   if (prefs.le) return;
   drawBunkerDripsSparks();
   drawCeilMotes();
+  if (window.AMB) AMB.bunker();          // cobwebs, lamp moths, the odd rat
   if (prefs.rm) return;
   for (const [k, r] of Object.entries(ROOMS)) {
     if (r.build) continue;
@@ -4566,7 +4625,7 @@ function lootPop(x, y, items) {
   }
 }
 // Dust puff and sparks (fewer in Reduced motion; particle list capped)
-function fxDust(x, y, n) { if (prefs.rm) n = Math.ceil(n / 2); n = partRoom(n); for (let i = 0; i < n; i++) fx.parts.push({ x: x + rnd(-6, 6), y: y + rnd(-4, 4), vx: rnd(-45, 45), vy: rnd(-90, -20), t: rnd(0.4, 0.9), c: i % 2 ? '#a8957a' : '#7d6c58', sc: false }); }
+function fxDust(x, y, n) { if (prefs.rm) return; n = partRoom(n); for (let i = 0; i < n; i++) fx.parts.push({ x: x + rnd(-6, 6), y: y + rnd(-4, 4), vx: rnd(-45, 45), vy: rnd(-90, -20), t: rnd(0.4, 0.9), c: i % 2 ? '#a8957a' : '#7d6c58', sc: false }); }
 function fxSparks(x, y, n, dir) { if (prefs.rm || prefs.ps || prefs.fx <= 0) return; n = Math.max(1, Math.round(n * Math.min(1, prefs.fx))); n = partRoom(n); for (let i = 0; i < n; i++) fx.parts.push({ x, y, vx: (dir || 0) * rnd(60, 200) + rnd(-80, 80), vy: rnd(-170, -30), t: rnd(0.15, 0.4), c: i % 2 ? '#ffd27a' : '#ff8a3a', sc: false }); }
 // Shell casing: capped at 40 (oldest dropped); skipped in Reduced motion
 function fxCasing(x, y) {
@@ -4752,16 +4811,19 @@ function drawTopBackdrop(ox, sky, ruins, ty) {
   if (sky.dayAmt < 0.6) { g.fillStyle = 'rgba(255,240,220,' + (0.6 - sky.dayAmt) + ')'; for (const s of stars) { g.beginPath(); g.arc(s.x, s.y + ty, s.r, 0, 7); g.fill(); } }
   const dusk = duskGlow();
   drawScavDuskGlow(dusk);
+  if (window.AMB) AMB.horizon(sky);
   if (!prefs.hc) { drawScavRidge(ox, 0.12, 470, 70, 24, 'rgba(58,44,40,.55)'); drawScavRidge(ox, 0.25, 520, 55, 20, 'rgba(46,35,31,.65)'); }
   if (!prefs.hc) { drawScavSkyline(ox); drawScavHaze(ox, false); }
   // far ruins (parallax), the broken highway, near ruins
   for (const r of ruins) { const x = r.x - ox * 0.4; if (x < -200 || x > W + 200) continue; g.fillStyle = r.c > 0.5 ? 'rgba(52,38,30,.8)' : 'rgba(44,32,26,.7)'; g.fillRect(x, SC_GROUND - r.h - 40, r.w, r.h + 40); g.fillStyle = 'rgba(255,190,110,.08)'; for (let wy = SC_GROUND - r.h; wy < SC_GROUND - 30; wy += 26) g.fillRect(x + 8, wy, 8, 10); }
   g.fillStyle = '#3e3026'; for (let x = -((ox * 0.7) % 220); x < W; x += 220) { g.fillRect(x, 420, 160, 14); g.fillRect(x + 60, 434, 16, 186); }
   if (!prefs.hc) drawScavHaze(ox, true);
+  if (window.AMB) AMB.sky(sky);          // the odd crow or bat, cosmetic only
   // dusk wash over the parallax layers only (drawn before ground and gameplay objects)
   if (dusk > 0 && !prefs.hc) { g.fillStyle = 'rgba(190,70,40,' + (0.14 * dusk) + ')'; g.fillRect(0, -TOP_DY, W, SC_GROUND + TOP_DY); }
   // ground
   g.fillStyle = '#5a4532'; g.fillRect(0, SC_GROUND, W, 8); g.fillStyle = '#2c2118'; g.fillRect(0, SC_GROUND + 8, W, H);
+  if (window.AMB) AMB.litter();
 }
 function drawScav() {
   if (scav.interior) { drawInterior(); return; }
@@ -5216,7 +5278,13 @@ function resRateText(k) {
 function resTip(r, low) {
   const d = { food: 'Raw rations the crew eat. Cooked into meals at the serving station.', scrap: 'Spent on building and repairs.', parts: 'Spent on turrets and machinery.', mat: 'Structural material for building.' };
   if (r.k === 'elec') return elecHint() + ' ' + resRateText('elec');
-  return (d[r.k] || r.name) + (low ? ' Running low.' : '') + ' ' + resRateText(r.k);
+  return (d[r.k] || r.name) + (low ? ' Running low.' : '') + ' ' + resRateText(r.k) + ' ' + resWhereText(r.k);
+}
+// where a resource is kept: each storage box's share, plus how many more would fit
+function resWhereText(k) {
+  const bs = storageBoxes().filter(b => invCount(b.inv, k) > 0);
+  const where = bs.map(b => invCount(b.inv, k) + ' in the ' + ITEM_TYPES[b.type].name.toLowerCase() + ' (' + ((ROOMS[b.room] || {}).name || b.room) + ')').join(' · ');
+  return (where ? 'Stored: ' + where + '.' : 'None in storage.') + ' Room for ' + storeRoomFor(k) + ' more.';
 }
 let lastHud = '', hudTipKey = null;
 function hudTipEl() {
@@ -6006,20 +6074,20 @@ function placeItem(w, shift) {
   const c = itemCellAt(w); if (!c) return;
   const hit = itemHit(c.k, c.col);
   if (hit) {
-    if (shift) { if (Array.isArray(hit.inv) && hit.inv.some(Boolean)) { lamp('Empty the ' + ITEM_TYPES[hit.type].name.toLowerCase() + ' first (Gear tab, Storage).', 'warn'); return; } S.items = itemList().filter(x => x !== hit); lamp(ITEM_TYPES[hit.type].name + ' removed.', 'warn'); return; }
-    if ((hit.lvl || 1) >= ITEM_MAX_LVL) { lamp(ITEM_TYPES[hit.type].name + ' is fully upgraded.'); return; }
+    if (shift) { if (Array.isArray(hit.inv) && hit.inv.some(Boolean)) { lamp('Empty the ' + ITEM_TYPES[hit.type].name.toLowerCase() + ' first (Gear tab, Storage).', 'warn'); uiSfx('Error'); return; } S.items = itemList().filter(x => x !== hit); uiSfx('Demolish'); lamp(ITEM_TYPES[hit.type].name + ' removed.', 'warn'); return; }
+    if ((hit.lvl || 1) >= ITEM_MAX_LVL) { lamp(ITEM_TYPES[hit.type].name + ' is fully upgraded.'); uiSfx('Error'); return; }
     const cost = { scrap: 15 * (hit.lvl || 1) };
-    if (!canPay(cost)) { lamp('Upgrading needs ' + fmtCost(cost) + '.', 'warn'); return; }
-    pay(cost); hit.lvl = (hit.lvl || 1) + 1; lamp(ITEM_TYPES[hit.type].name + ' upgraded to level ' + hit.lvl + '.', 'good'); return;
+    if (!canPay(cost)) { lamp('Upgrading needs ' + fmtCost(cost) + '.', 'warn'); uiSfx('Error'); return; }
+    pay(cost); hit.lvl = (hit.lvl || 1) + 1; uiSfx('Place'); lamp(ITEM_TYPES[hit.type].name + ' upgraded to level ' + hit.lvl + '.', 'good'); return;
   }
   const T = ITEM_TYPES[itemSel];
-  if (!itemRoomOk(T, c.k)) { lamp('A ' + T.name.toLowerCase() + ' belongs in the ' + (T.rooms ? T.rooms.map(r => ROOMS[r].name).join(', ') : ROOMS[T.room].name) + '.', 'warn'); return; }
-  if (!itemSpotOk(c.k, c.r, c.col, T.w)) { lamp('No room for that there.', 'warn'); return; }
-  if (!canPay(T.cost)) { lamp('Building needs ' + fmtCost(T.cost) + '.', 'warn'); return; }
+  if (!itemRoomOk(T, c.k)) { lamp('A ' + T.name.toLowerCase() + ' belongs in the ' + (T.rooms ? T.rooms.map(r => ROOMS[r].name).join(', ') : ROOMS[T.room].name) + '.', 'warn'); uiSfx('Error'); return; }
+  if (!itemSpotOk(c.k, c.r, c.col, T.w)) { lamp('No room for that there.', 'warn'); uiSfx('Error'); return; }
+  if (!canPay(T.cost)) { lamp('Building needs ' + fmtCost(T.cost) + '.', 'warn'); uiSfx('Error'); return; }
   pay(T.cost);
   S.itemSeq = (S.itemSeq || 0) + 1;
   itemList().push({ id: S.itemSeq, type: itemSel, room: c.k, col: c.col, lvl: 1 });
-  uiSfx('Build'); renderDrawer();
+  uiSfx('Place'); renderDrawer();
 }
 function drawItemSprite(type, x, yb, w, T) {
   const c = T.color;
@@ -6294,10 +6362,11 @@ function toggleAlarm() {
 function interactable() {
   if (gunnery) return { text: gunneryText(), act: () => stopGunnery() };
   if (scene === 'bunker' && P.floor === 1 && Math.abs(P.x - LAMP_X) < 40 && !S.player.down && !P.onLadder) return S.cannon ? { text: 'E · Take the roof cannon controls', act: () => startGunnery() } : { text: 'Lamp can fire a roof cannon from here once one is built (Build > Defenses)' };
+  if (window.STASH && scene === 'bunker' && P.floor > 0) { const b = STASH.boxAt(); if (b) return { text: 'E · Open the ' + STASH.boxName(b).replace(/^./, c => c.toLowerCase()) + ' (' + invUsed(b.inv) + '/' + b.inv.length + ' slots)', act: () => STASH.open(b) }; }
   if (scene === 'bunker' && P.floor === 0 && Math.abs(P.x - DOOR_X) < 70 && !S.player.down) {
     // only offer Unload when something can actually leave the pack (resources, or items with free storage room);
     // items stuck because storage is full no longer hide the backpack upgrade
-    const notAmmo = s => s && !(ITEMS[s.id] || {}).ammo && ((ITEMS[s.id] || {}).res || storeRoomFor(s.id) > 0);
+    const notAmmo = s => s && !(ITEMS[s.id] || {}).ammo && storeRoomFor(s.id) > 0;
     const inv = maraInv(), has = inv.some(notAmmo), sum = {}; for (const s of inv) if (notAmmo(s)) sum[s.id] = (sum[s.id] || 0) + s.n;
     if (has) return { text: 'E · Unload: ' + Object.entries(sum).map(([k, v]) => v + ' ' + itemName(k).toLowerCase()).join(', ') + ' (' + invUsed(inv) + '/' + inv.length + ' slots)', act: () => dropOff() };
     const pc = packCost();
