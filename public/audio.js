@@ -20,6 +20,7 @@
   const chMute = { master: false, music: false, amb: false, narr: false, fx: false, ui: false };
   try { const m = JSON.parse(localStorage.getItem('ab_chmute') || '{}') || {}; for (const k in chMute) chMute[k] = m[k] === true; } catch (e) {}
   const ev = n => (chMute[n] ? 0 : vol[n]);
+  const uiG = () => ev('ui') * ev('fx'); // UI sounds also follow the SFX slider and SFX mute
   const masterG = () => (muted || chMute.master ? 0 : MASTER * vol.master);
   try { const p = JSON.parse(localStorage.getItem('ab_vol') || '{}') || {}; for (const k in vol) if (typeof p[k] === 'number' && isFinite(p[k])) vol[k] = Math.min(1, Math.max(0, p[k])); if (typeof p.amb !== 'number' && typeof p.music === 'number') vol.amb = vol.music; } catch (e) {}
   let chordT = 0, chordI = 0, sirenT = 0, wasAlarm = false, lastShot = 0, lastHit = 0, lastRumble = 0, lastBeat = 0, lastDoorWarn = 0, lastRepair = 0, lastClick = 0, lastDeath = 0, lastStep = 0, lastJump = 0, lastLand = 0, stepAlt = false, lastFoot = 0, lastRung = 0, lastDrop = 0;
@@ -32,7 +33,7 @@
     master = ctx.createGain(); master.gain.value = masterG(); master.connect(ctx.destination);
     musicBus = ctx.createGain(); musicBus.gain.value = MUSIC * ev('music');
     sfxBus = ctx.createGain(); sfxBus.gain.value = ev('fx'); sfxBus.connect(master);
-    uiBus = ctx.createGain(); uiBus.gain.value = ev('ui'); uiBus.connect(master);
+    uiBus = ctx.createGain(); uiBus.gain.value = uiG(); uiBus.connect(master);
     ambBus = ctx.createGain(); duckBus = ctx.createGain(); duckBus.gain.value = duckWant ? DUCK : 1; duckBus.connect(master);
     ambBus.gain.value = ev('amb'); ambBus.connect(duckBus);
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
@@ -714,7 +715,7 @@
         if (musicBus) musicBus.gain.setTargetAtTime(MUSIC * ev('music'), t, 0.03);
         if (ambBus) ambBus.gain.setTargetAtTime(ev('amb'), t, 0.03);
         if (sfxBus) sfxBus.gain.setTargetAtTime(ev('fx'), t, 0.03);
-        if (uiBus) uiBus.gain.setTargetAtTime(ev('ui'), t, 0.03);
+        if (uiBus) uiBus.gain.setTargetAtTime(uiG(), t, 0.03);
         if (master) master.gain.setTargetAtTime(masterG(), t, 0.03);
       }
       if (window.narrApplyVolume) window.narrApplyVolume();
@@ -728,7 +729,7 @@
         if (ambBus) ambBus.gain.setTargetAtTime(ev('amb'), ctx.currentTime, 0.03);
         if (master) master.gain.setTargetAtTime(masterG(), ctx.currentTime, 0.03);
         if (sfxBus) sfxBus.gain.setTargetAtTime(ev('fx'), ctx.currentTime, 0.03);
-        if (uiBus) uiBus.gain.setTargetAtTime(ev('ui'), ctx.currentTime, 0.03);
+        if (uiBus) uiBus.gain.setTargetAtTime(uiG(), ctx.currentTime, 0.03);
       }
       if (name === 'ui') { clearTimeout(uiPrevT); uiPrevT = setTimeout(() => { if (window.SFX) window.SFX.uiHover(true); }, 120); }
       if (window.narrApplyVolume) window.narrApplyVolume();

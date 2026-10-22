@@ -163,6 +163,7 @@ const TURRETS = {
   shotgun: { name: 'Shotgun turret', range: 240, cd: 1.35, dmg: 8, pellets: 4, base: 0.42, accK: 0.40, hp: 160, cost: { scrap: 15, parts: 8 } },
   // Slow-field coil: no gunner needed, but only works while the generator runs. slow = enemy speed multiplier, fuel = scrap per game hour.
   coil:    { name: 'Slow-field coil', range: 300, cd: 0, dmg: 0, pellets: 0, base: 0, accK: 0, hp: 110, cost: { scrap: 25, parts: 10, elec: 4 }, slow: 0.45, fuel: 0.15, desc: 'Needs the generator running (burns extra scrap). Slows every enemy in range to under half speed. No crew needed, deals no damage.' },
+  hmg:     { name: 'Heavy MG turret', range: 520, cd: 0.09, dmg: 6, pellets: 1, base: 0, accK: 0, hp: 180, cost: { scrap: 35, parts: 16, elec: 3 }, desc: 'Twin heavy machine gun: a storm of tracers with wild recoil spray. Overheats after a few seconds of fire and has to cool. Needs a gunner.' },
 };
 
 // ---------------------------------------------------------------- held items
@@ -177,13 +178,19 @@ const GEAR = {
   smg:     { name: 'SMG',       kind: 'gun',   cost: { scrap: 18, parts: 8 }, back: { scrap: 9, parts: 4 },  work: 70 },
   shotgun: { name: 'Shotgun',   kind: 'gun',   cost: { scrap: 16, parts: 6 }, back: { scrap: 8, parts: 3 },  work: 55 },
   rifle:   { name: 'Rifle',     kind: 'gun',   cost: { scrap: 20, parts: 8 }, back: { scrap: 10, parts: 4 }, work: 80 },
+  revolver: { name: 'Revolver', kind: 'gun',   cost: { scrap: 14, parts: 5 }, back: { scrap: 7, parts: 2 },  work: 45 },
+  bolt:     { name: 'Bolt-action rifle', kind: 'gun', cost: { scrap: 22, parts: 10 }, back: { scrap: 11, parts: 5 }, work: 90 },
+  nailgun:  { name: 'Nail gun', kind: 'gun',   cost: { scrap: 10, parts: 4, elec: 1 }, back: { scrap: 5, parts: 2 }, work: 35 },
+  crossbow: { name: 'Crossbow', kind: 'gun',   cost: { scrap: 12, parts: 2, mat: 6 }, back: { scrap: 6, mat: 3 }, work: 40 },
+  lmg:      { name: 'LMG',      kind: 'gun',   cost: { scrap: 30, parts: 14 }, back: { scrap: 15, parts: 7 }, work: 120 },
+  flamer:   { name: 'Flamethrower', kind: 'gun', cost: { scrap: 20, parts: 10, elec: 2, mat: 4 }, back: { scrap: 10, parts: 5 }, work: 100 },
 };
 const GEAR_IDS = Object.keys(GEAR);
-const GEAR_PREF = ['rifle', 'shotgun', 'smg', 'pistol', 'machete', 'pipe'];   // who gets what first when arming the crew
+const GEAR_PREF = ['lmg', 'bolt', 'rifle', 'shotgun', 'revolver', 'smg', 'crossbow', 'pistol', 'nailgun', 'flamer', 'machete', 'pipe'];   // who gets what first when arming the crew
 const CRAFT_MAX = 6;
 // what each enemy type may be carrying: [gear id or null, weight]
 const ENEMY_GEAR = {
-  raider: [['pistol', 3], ['shotgun', 2], ['rifle', 1], ['machete', 1]],
+  raider: [['pistol', 3], ['shotgun', 2], ['rifle', 1], ['machete', 1], ['revolver', 2], ['crossbow', 1]],
   brute:  [['pipe', 1]],
   ghoul:  [['pipe', 1], [null, 3]],
   cinder: [['smg', 1]],
@@ -227,6 +234,7 @@ const ITEMS = {
   mat:   { name: 'Materials',   stack: 99, res: true, color: '#a8a8a0', icon: '▦' },
   mask:  { name: 'Gas mask',    stack: 5, color: '#9d6', icon: '☣︎', desc: 'Goes on by itself in toxic gas: 40 seconds of filter. On an expedition team it lowers the risk.' }
 };
+Object.assign(ITEMS, AMMO);   // ammo items (combat.js): stack to 99, one kind per weapon
 const RES_IDS = ['food', 'scrap', 'parts', 'elec', 'mat'];
 const itemName = id => (ITEMS[id] ? ITEMS[id].name : GEAR[id] ? GEAR[id].name : String(id));
 const itemStack = id => (ITEMS[id] ? ITEMS[id].stack : 1);
@@ -312,6 +320,10 @@ function gearAct(act, id, crewId) {
   else if (act === 'equip') equipGear(c, id);
   else if (act === 'unequip') unequipGear(c);
   else if (act === 'disheld') dismantleHeld(c);
+  else if (act === 'craftammo') craftAmmo(id);
+  else if (act === 'mammo') maraPackAmmo();
+  else if (act === 'mequip') maraEquip(id);
+  else if (act === 'munequip') maraUnequip();
   else if (act === 'invstore') invStoreSlot(+id);
   else if (act === 'invtake') takeStoredSlot(id);
   else if (act === 'cgive') crewGive(c, id);
@@ -734,7 +746,7 @@ function migrateSave(sv) {
   for (const c of s.crew) { if (c && c.sched !== undefined && typeof c.sched !== 'string') delete c.sched; }
   if (!s.stock || typeof s.stock !== 'object') s.stock = {};
   if (!Array.isArray(s.craft)) s.craft = [];
-  s.craft = s.craft.filter(j => j && GEAR[j.id] && typeof j.left === 'number' && typeof j.max === 'number');
+  s.craft = s.craft.filter(j => j && (GEAR[j.id] || AMMO[j.id]) && typeof j.left === 'number' && typeof j.max === 'number');
   for (const c of s.crew) { if (!c) continue; if (c.held && !GEAR[c.held]) c.held = null; if (c.carry && !(c.carry.n > 0 && (c.carry.id === 'crate' || c.carry.id === 'meal'))) c.carry = null; }
   if (s.kit && typeof s.kit.raw !== 'number') s.kit.raw = 0;
   ensurePair(s);
@@ -2054,18 +2066,22 @@ function workshopTick(c, e, h) {
     const j = S.craft[0], use = Math.min(work, j.left);
     j.left -= use; work -= use;
     if (j.left > 0.001) break;
+    if (AMMO[j.id]) { if (!ammoCrafted(j)) break; S.craft.shift(); continue; }   // an ammo batch goes into storage (waits if it is full)
     S.craft.shift(); addStock(j.id, 1); lampEv('workshop_done', 'The workshop finished a ' + gearName(j.id) + '. It is in the Gear tab.', 'good');
   }
   if (work > 0 && S.makeParts && S.res.scrap >= 2) { const n = Math.min(work / 30, S.res.scrap / 2); S.res.parts += n; S.res.scrap -= n * 2; }
 }
 function guardShoot(c, e) {
   if (c.cd > 0) return;
+  const w = wpn(c); if (w.kind !== 'gun') return;   // no gun or no ammo: guards only fight what reaches them
   const t = S.enemies.filter(en => !en.inside && !en.hidden && en.hp > 0 && en.x > c.x && en.x - c.x < 260).sort((a, b) => a.x - b.x)[0];
   if (!t) return;
-  c.cd = 0.9; c.facing = 1;
-  tracer(c.x + 8, c.y - 20, t.x, t.y - 14, '#ffd27a');
+  if (!gunHeatOk(c, w)) { c.cd = 0.5; return; }
+  if (!spendAmmo(c, c.held, () => crewTakeAmmo(c))) { c.cd = 0.5; return; }
+  c.cd = Math.max(0.9, w.cd); c.facing = 1;
   if (window.SFX && SFX.turret) SFX.turret('rifle');
-  if (Math.random() < (0.3 + 0.5 * c.stats.acc) * e) hitEnemy(t, 10 * armoryMult(), c);
+  const mz = GEAR_MUZZLE[c.held] || [10, -2];
+  fireShot(c, w, { x: c.x + 9 + mz[0], y: c.y - 13 + mz[1], tx: t.x, ty: t.y - ENEMIES[t.type].h * 0.55, acc: c.stats.acc * e, world: 'bunker', by: c, dmgMul: e * armoryMult(), fl: FLOORS[0], critP: 0.03 + 0.08 * c.stats.acc, reachMul: 1.2 });
 }
 function levelUp(c) {
   c.lvl++; for (const k in c.stats) c.stats[k] = +(c.stats[k] * 1.06).toFixed(2); c.maxHp += 8; c.hp += 8;
@@ -2139,7 +2155,7 @@ function burrowerEmerge(e) {
   if (speed > 1) setSpeed(1);
 }
 function enemyTick(e, dt) {
-  const b = ENEMIES[e.type];
+  const b = enemySpecNow(e);   // gunmen who ran out of ammo fight hand to hand
   e.anim += dt * 8; if (e.cd > 0) e.cd -= dt;
   if (statusTick(e, dt) || tactics(e, b, dt)) return;
   if (b.tunnel && !e.inside) {
@@ -2189,7 +2205,7 @@ function attack(e, b, target, tx, what) {
   e.facing = Math.sign(tx - e.x) || -1;
   if (e.cd > 0) return;
   e.cd = b.rate;
-  if (b.ranged) { tracer(e.x - 6, e.y - b.h + 8, tx, (target.y || FLOORS[0]) - 16, '#ff7a5a'); if (Math.random() > 0.65) return; }
+  if (b.ranged) { useEnemyAmmo(e); tracer(e.x - 6, e.y - b.h + 8, tx, (target.y || FLOORS[0]) - 16, '#ff7a5a'); if (Math.random() > 0.65) return; }
   if (target === P) return hurtPlayer(b.dmg * mawDmgMul(e));
   if (target.stats) { const cd = b.dmg * mawDmgMul(e) * coverMul(target); dmgNum(target.x, (target.y || FLOORS[0]) - 40, cd); target.hp -= cd; burst(target.x, target.y - 16, '#c33', 4); if (target.hp <= 0) kill(target); return; }
   { const sd = b.dmg * structDmgMul(what); fxPop(tx, FLOORS[0] - 44, '-' + Math.round(sd), '#ffb347'); }
@@ -2213,8 +2229,8 @@ function attack(e, b, target, tx, what) {
     if (target.hp > 0 && target.hp < target.max * 0.25) { if (window.SFX && SFX.doorWarn) SFX.doorWarn(); if (!doorLowSaid) { doorLowSaid = true; lampEv('door_low', 'Door integrity critical.', 'warn'); } }
     else { if (target.hp > target.max * 0.5) doorLowSaid = false; narrPlay(narrPick('door_attack')); const nowSr = performance.now(); if (!(nowSr - (window._srDoorAt || 0) < 8000)) { window._srDoorAt = nowSr; srSay('The hatch is under attack. Door at ' + Math.max(0, Math.round(target.hp / target.max * 100)) + ' percent.', 'warn'); } }
   }
-  if (what === 'wall' && target.hp <= 0) lampEv('wall_down', 'The outer wall is down!', 'warn');
-  if (what === 'turret' && target.hp <= 0) { lampEv('turret_lost', 'A turret was destroyed.', 'warn'); const i = S.turrets.indexOf(target); S.turrets[i] = null; }
+  if (what === 'wall' && target.hp <= 0) lampEv('wall_down', 'The outer wall is down!', 'warn'); if (window.SFX && SFX.uiDemolish) SFX.uiDemolish(1);
+  if (what === 'turret' && target.hp <= 0) { lampEv('turret_lost', 'A turret was destroyed.', 'warn'); if (window.SFX && SFX.uiDemolish) SFX.uiDemolish(0.5); const i = S.turrets.indexOf(target); S.turrets[i] = null; }
 }
 function breach() {
   // Called each time something gets in. The alarm sounds once per night, so the player can still stand people down.
@@ -2251,6 +2267,7 @@ function hitEnemy(e, dmg, by, dtype, crit) {
       if (Math.random() < 0.75 || e.type === 'cinder') { addStock(e.gear, 1); lamp('Looted a ' + gearName(e.gear) + ' off the ' + ENEMIES[e.type].name.toLowerCase() + '.', 'good'); }
       else S.res.scrap += 2;
     }
+    ammoDrop(e);
     if (e.failed && !e.scarred) scarBoss(e);
     if (e.type === 'cinder') { lampEv('boss_down', 'Cinder is down. His raiders scatter into the ash. Rook will want to hear about this.', 'good'); S.res.parts += 8; S.res.elec += 3; }
     if (e.type === 'maw') { lampEv('maw_down', 'The Maw is dead. Its tunnel is full of salvage.', 'good'); S.res.parts += 12; S.res.elec += 5; S.res.mat += 10; }
@@ -2283,11 +2300,11 @@ function footFoley(o, isPlayer) {
   if (dx > 60 || dy > 200) m.acc = 0;          // teleport or respawn: stay silent
   else if (cl) {
     m.acc += dy;
-    if (m.acc >= 22) { m.acc = 0; SFX.rung(q); }
+    if (m.acc >= 22) { m.acc = 0; try { window.SFX && SFX.rung && SFX.rung(q); } catch (e) {} }
   } else {
-    if (m.cl) { SFX.drop(q); m.acc = 0; }
+    if (m.cl) { try { window.SFX && SFX.drop && SFX.drop(q); } catch (e) {} m.acc = 0; }
     m.acc += dx;
-    if (m.acc >= 34) { m.acc = 0; if (!isPlayer) SFX.foot(q); } // Mara's steps come from SFX.step
+    if (m.acc >= 34) { m.acc = 0; if (!isPlayer) { try { window.SFX && SFX.foot && SFX.foot(q); } catch (e) {} } } // Mara's steps come from SFX.step
   }
   m.x = o.x; m.y = o.y; m.cl = cl;
 }
@@ -2403,6 +2420,7 @@ function playerTick(dt) {
     if (pl.down <= 0) { pl.revives = Math.max(0, (pl.revives || 0) - 1); lampEv('survivor_revive', 'Mara is back on her feet. Revives left: ' + pl.revives + '.', 'good'); pl.down = 0; pl.hp = Math.round(pl.maxHp * 0.5); scene = 'bunker'; P.x = 900; P.y = FLOORS[2]; P.floor = 2; P.climbing = P.onLadder = false; P.vy = 0; }
     return;
   }
+  if (gunnery) { if (scene === 'bunker') { gunneryTick(dt); return; } stopGunnery(); }
   if (scene === 'scav') { P.auto = false; return scavPlayerTick(dt); }
   if (P.auto) { maraAuto(dt); if (P.cd > 0) P.cd -= dt; if (P.hurt > 0) P.hurt -= dt; return; }
   const L = kd('left'), R = kd('right'), U = kd('up'), D = kd('down');
@@ -2485,28 +2503,7 @@ function aimTarget() {
   if (!best && document.body.classList.contains('touch')) { bd = AIM_TOUCH; for (const e of list) { if (!ok(e)) continue; const dx = (e.x - P.x) * P.facing; if (dx > 0 && dx < bd) { bd = dx; best = e; } } }
   return best ? { e: best, x: best.x, y: aimY(best), sc } : null;
 }
-function shoot() {
-  const t = aimTarget(); if (!t) return;
-  P.cd = 0.34;
-  const sx = P.x, sy = P.y - 20, dir = Math.sign(t.x - sx) || P.facing; P.facing = dir;
-  const dx = t.x - (sx + dir * 12), dy = t.y - sy, d = Math.hypot(dx, dy) || 1;
-  muzzle(sx + dir * 14, sy, dir, scene === 'scav');
-  fx.bullets.push({ x: sx + dir * 12, y: sy, vx: dx / d * 900, vy: dy / d * 900, life: Math.min(1.2, d / 900 + 0.12), dmg: Math.round((13 + S.player.lvl * 2) * armoryMult()), world: scene });
-}
-function bulletsTick(dt) {
-  for (const b of fx.bullets) {
-    b.x += b.vx * dt; b.y += (b.vy || 0) * dt; b.life -= dt;
-    const list = b.world === 'scav' ? (scav ? (scav.connected ? scav.enemies.concat(topRaidProxies()) : scav.enemies) : []) : S.enemies;
-    for (const e of list) {
-      const spec = ENEMIES[e.type];
-      if (e.hp > 0 && !e.hidden && Math.abs(e.x - b.x) < spec.w / 2 + 4 && b.y > e.y - spec.h - 4 && b.y < e.y + 2) {
-        if (b.world === 'scav') { if (e.raid) hitEnemy(e.raid, b.dmg, P); else scavHit(e, b.dmg); } else hitEnemy(e, b.dmg, P);
-        b.life = 0; break;
-      }
-    }
-  }
-  fx.bullets = fx.bullets.filter(b => b.life > 0);
-}
+// shoot() and bulletsTick() moved to combat.js (real projectiles, recoil, heat)
 
 // Scavenging trips: a side-scrolling stretch of wasteland, rebuilt each trip.
 let CARRY_LIMIT = 30;
@@ -2520,7 +2517,7 @@ function dropOff() {
   const inv = maraInv(), got = {}, stored = {};
   for (let i = 0; i < inv.length; i++) { const s = inv[i]; if (s && ITEMS[s.id] && ITEMS[s.id].res) { got[s.id] = (got[s.id] || 0) + s.n; inv[i] = null; } }
   let left = 0;
-  for (let i = 0; i < inv.length; i++) { const s = inv[i]; if (!s) continue; const t = storePut(s.id, s.n); if (t) stored[s.id] = (stored[s.id] || 0) + t; s.n -= t; if (s.n <= 0) inv[i] = null; else left += s.n; }
+  for (let i = 0; i < inv.length; i++) { const s = inv[i]; if (!s || (ITEMS[s.id] && ITEMS[s.id].ammo)) continue; /* ammo stays in her pack */ const t = storePut(s.id, s.n); if (t) stored[s.id] = (stored[s.id] || 0) + t; s.n -= t; if (s.n <= 0) inv[i] = null; else left += s.n; }
   const res = Object.entries(got), its = Object.entries(stored);
   if (res.length) {
     { const sc = S.stats.scav || (S.stats.scav = {}); for (const [k, v] of res) sc[k] = (sc[k] || 0) + v; }
@@ -3136,7 +3133,7 @@ function scavPlayerTick(dt) {
   // enemies chase when close
   for (const e of scav.enemies) {
     if (e.hp <= 0) continue;
-    const b = ENEMIES[e.type]; e.anim += dt * 8; if (e.cd > 0) e.cd -= dt;
+    const b = enemySpecNow(e); e.anim += dt * 8; if (e.cd > 0) e.cd -= dt;
     if (e.type === 'ram') { ramTick(e, dt, b); if (!scav) return; continue; }
     const d = P.x - e.x, near = Math.abs(d) < 420 && (!scav.interior || Math.abs(P.y - e.y) < 90);
     const tx = near ? P.x - Math.sign(d) * (b.ranged ? 170 : 18) : e.home + Math.sin(performance.now() / 1500 + e.id) * 120;
@@ -3146,7 +3143,7 @@ function scavPlayerTick(dt) {
     const reach = b.ranged ? 230 : 26;
     if (near && Math.abs(d) < reach && Math.abs(P.y - e.y) < 60 && e.cd <= 0) {
       e.cd = b.rate;
-      if (b.ranged) { tracer(e.x, e.y - 22, P.x, P.y - 18, '#ff7a5a', true); if (Math.random() < 0.55) hurtPlayer(b.dmg); }
+      if (b.ranged) enemyShot(e, b);
       else hurtPlayer(b.dmg);
       if (!scav) return;   // Mara went down: endScav already sent her home
     }
@@ -3186,6 +3183,7 @@ function scavHit(e, dmg) {
   burst(e.x, e.y - 12, '#7a2', 3, true);
   if (e.hp > 0 && window.SFX && SFX.enemyHit) SFX.enemyHit(false, undefined);
   if (e.hp <= 0) { S.stats.kills++; S.player.xp += ENEMIES[e.type].xp; if (Math.random() < 0.5) { const got = packAdd('scrap', 2); if (got === 0) packFullNote(e.x, e.y - 20); else lootPop(e.x, e.y - 20, [['+' + got + ' scrap', 'scrap']]); } burst(e.x, e.y - 10, '#5a3', 10, true); if (window.SFX && SFX.death) SFX.death(e.type === 'cinder' || e.type === 'maw' || e.type === 'ram' ? 'big' : ''); }
+  if (e.hp <= 0 && !e.ammoLooted) { e.ammoLooted = true; ammoDropScav(e); }
   if (e.hp <= 0 && e.bkey && scav && scav.interior) markBldKill(e.bkey);
 }
 function openCrate(c) {
@@ -3210,6 +3208,7 @@ function openCrate(c) {
   if (txt.length && window.SFX && SFX.pickup) SFX.pickup();
   if (Object.keys(left).length) { c.open = false; c.loot = left; packFullNote(c.x, c.y); }
   if (c.open && c.id && scav.connected) topState().open[c.id] = 1;
+  if (c.open && !c.ammoDone) { c.ammoDone = true; ammoLoot(c); }   // ammo is a rare find
   if (c.open && c.bid) markBldLoot(c.bid, c.id);   // building containers refill BLD_RESTOCK days later   // stays emptied for the rest of the run
 }
 
@@ -4091,6 +4090,7 @@ function drawSurface(sky) {
   // tower mast topside
   const st = S.tower.done;
   if (st > 0) { g.strokeStyle = '#8a96a0'; g.lineWidth = 3; const mx = 1000, top = y - 40 - st * 28; g.beginPath(); g.moveTo(mx - 14, y); g.lineTo(mx, top); g.lineTo(mx + 14, y); g.stroke(); g.fillStyle = st > 2 ? '#7fc8ff' : '#ff5a4e'; g.beginPath(); g.arc(mx, top, 4, 0, 7); g.fill(); }
+  drawCannon(y);
   // turrets
   let tGhost = null;
   const tHover = tTool && scene === 'bunker' ? turretSnapAt(bcamToWorld({ x: mouse.x, y: mouse.y })) : -1;
@@ -4107,6 +4107,7 @@ function drawSurface(sky) {
     }
     if (tTool && i === tHover) tGhost = { i, x, t };
     if (_v) VEC.turret(g, x, y, t, { powered: !!S.powered, now: performance.now() }); else { box(x - 14, y - 18, 28, 18, '#4f4a40'); box(x - 8, y - 32, 16, 14, t.manned ? '#6a6a5a' : '#45433b'); }
+    if (t.type === 'hmg') drawHmgHead(x, y, t);
     if (_v) {} else if (t.type === 'coil') {
       g.fillStyle = '#2a2a26'; g.fillRect(x - 2, y - 44, 4, 12);
       const on = !!S.powered, pulse = on ? (prefs.rm ? 0.5 : 0.5 + 0.5 * Math.sin(performance.now() / 200)) : 0;
@@ -4115,7 +4116,7 @@ function drawSurface(sky) {
     } else { g.fillStyle = '#2a2a26'; g.fillRect(x + 4, y - 28, t.type === 'rifle' ? 30 : 20, t.type === 'rifle' ? 4 : 7); }
     if (t.flash > 0) {
       t.flash -= 1 / 60;
-      const fa = clamp(t.flash / 0.08, 0, 1), mx = x + (t.type === 'rifle' ? 36 : 26), my = y - 26, big = t.type === 'rifle' ? 1 : 0.8;
+      const fa = clamp(t.flash / 0.08, 0, 1), mx = x + (t.type === 'rifle' ? 36 : t.type === 'hmg' ? 22 : 26), my = y - 26, big = t.type === 'rifle' ? 1 : 0.8;
       if (prefs.rm || prefs.ps || prefs.fx <= 0) { /* muzzle flash skipped under reduced motion / photosensitive-safe / 0% intensity */ }
       else {
         g.globalAlpha = (0.35 + 0.65 * fa) * prefs.fx;
@@ -4260,6 +4261,7 @@ function drawPerson(x, y, color, accent, c, anim, facing, sleeping, climbing) {
 const GEAR_SHEETS = { g_pipe: 'pipe-club', g_club: 'pipe-club', g_pipeclub: 'pipe-club', g_machete: 'machete', g_pistol: 'pistol', g_smg: 'smg', g_shotgun: 'shotgun', g_rifle: 'rifle', g_crate: 'food-crate', g_meal: 'cooked-meal' };
 // grip point of each item sprite, in its frame pixels (all item art points right)
 const GEAR_GRIP = { 'pipe-club': [18, 24], machete: [16, 30], pistol: [40, 32], smg: [26, 32], shotgun: [38, 28], rifle: [50, 30], 'food-crate': [32, 34], 'cooked-meal': [32, 38] };
+for (const [id, slug] of NEW_GEAR_ART) { GEAR_SHEETS['g_' + id] = slug; GEAR_GRIP[slug] = [SF_DRAFT[slug].g[0] * 4, SF_DRAFT[slug].g[1] * 4]; }
 // ---- hand anchors: where the front hand is in each character frame, found from the sprite's own pixels (cached per frame)
 let SHEET_LAST = null;   // the last frame sheetDraw drew: { id, s, f }
 const HAND_CACHE = {};
@@ -4304,6 +4306,7 @@ function heldAt(id, f, hx, hy) {
     g.restore();
     if (ok) return;
   }
+  if (gsf && SF_DRAFT[gsf]) { drawDraft(gsf, f, hx, hy); return; }   // new weapons: Sprite Forge draft until the sheet is added
   if (typeof VEC === 'undefined' || !VEC.gear || !VEC.hasGear(id)) return;
   g.save(); g.translate(hx, hy + 12); VEC.gear(g, id, f < 0); g.restore();
 }
@@ -4455,7 +4458,7 @@ function drawMaraSheet() {
   MARA_SHEET.lastAnim = P.anim;
   let an, prog = null;
   if (P.hurt > 0 && A.hurt) { an = A.hurt; prog = (0.2 - P.hurt) / 0.2; }
-  else if (P.cd > 0 && A.attack) { an = A.attack; prog = (0.34 - P.cd) / 0.34; }
+  else if (P.cd > 0 && A.attack) { const pm = P.cdMax || 0.34; an = A.attack; prog = (pm - P.cd) / pm; }
   else if (moving && A.walk) an = A.walk;
   else an = A.idle || A.walk;
   if (!an) return false;
@@ -4466,6 +4469,7 @@ function drawMaraSheet() {
   const smooth = g.imageSmoothingEnabled;
   g.imageSmoothingEnabled = false;
   g.save();
+  SHEET_LAST = { id: 'mara', s: MARA_SHEET, f };
   if (P.facing < 0) g.scale(-1, 1);
   g.drawImage(MARA_SHEET.img, f.x, f.y, f.w, f.h, -px * k, -py * k, f.w * k, f.h * k);
   g.restore();
@@ -4482,8 +4486,12 @@ function drawMara() {
     (typeof VEC !== 'undefined' ? VEC : SPR).mara(g, Math.abs(step) < 0.8 ? 0 : (step > 0 ? 1 : 2), P.facing < 0);
     g.fillStyle = '#222'; g.fillRect(P.facing > 0 ? 5 : -15, typeof VEC !== 'undefined' ? -19 : -24, 10, 3);
   }
+  { const f = P.facing < 0 ? -1 : 1, hh = drewSheet ? lastHand(1, 9, -12.5) : [9, -13]; P._hxU = hh[0]; P._hy = hh[1];
+    const wid = S && maraWpnId(); if (wid) heldAt('g_' + wid, f, hh[0] * f, hh[1]); }
   g.restore();
   g.fillStyle = '#ffb347'; g.font = '700 10px "Chakra Petch"'; g.fillText('MARA', P.x - 13, P.y - 46);
+  { const w = S && maraWpn(); if (w && w.heat) { const hn = heatNow(P, w); if (hn > 1) { box(P.x - 14, P.y - 58, 28, 4, '#2d2215'); g.fillStyle = P.over && hn >= 35 ? '#ff5a4e' : '#ff8c2a'; g.fillRect(P.x - 14, P.y - 58, 28 * hn / 100, 4); } } }
+  { const aid = S && AMMO_OF[maraWpnId() || 'sidearm']; if (aid) { const n = maraAmmoCount(aid); if (scene === 'scav' || n < 10) { g.fillStyle = n ? (n < 6 ? '#ffb347' : '#ffe0a8') : '#ff5a4e'; g.font = '600 9px "Chakra Petch"'; g.fillText(n ? String(n) : 'NO AMMO', P.x + 14, P.y - 46); } } }
 }
 function drawEnemy(e, ox = 0) {
   const b = ENEMIES[e.type];
@@ -4518,11 +4526,11 @@ function drawEnemy(e, ox = 0) {
   if (b.boss) { g.fillStyle = '#ff5a4e'; g.font = '700 11px "Chakra Petch"'; g.fillText(b.name.toUpperCase(), e.x - ox - 20, e.y - b.h - 16); }
 }
 // Mara's muzzle flash: short-lived starburst in world space; skipped under reduced motion, photosensitive mode or 0% flash intensity; capped at 8
-function muzzle(x, y, dir, sc) {
+function muzzle(x, y, dir, sc, ang, size) {
   if (prefs.rm || prefs.ps || prefs.fx <= 0) return;
   fx.muz = fx.muz || [];
-  if (fx.muz.length >= 8) fx.muz.shift();
-  fx.muz.push({ x, y, dir: dir || 1, t: 0.07, sc: !!sc });
+  if (fx.muz.length >= 24) fx.muz.shift();
+  fx.muz.push({ x, y, dir: dir || 1, t: 0.07, sc: !!sc, ang: ang == null ? (dir < 0 ? Math.PI : 0) : ang, s: size || 1, rot: Math.random() * 6 });
 }
 function tracer(x1, y1, x2, y2, c, sc) { if (prefs.rm) return; if (fx.tracers.length >= 60) fx.tracers.shift(); fx.tracers.push({ x1, y1, x2, y2, c, t: 0.09, sc: !!sc }); }
 // Shared particle budget: 300 normally, 120 under Reduced motion / Low effects. Returns how many more may be spawned.
@@ -4587,19 +4595,26 @@ function fxHit(x, y, crit) {
 function drawFx(ox, scOnly) {
   const sc = !!scOnly;
   if (fx.muz && !prefs.rm && !prefs.ps && prefs.fx > 0) for (const m of fx.muz) if (m.sc === sc) {
-    const a = clamp(m.t / 0.07, 0, 1), mx = m.x - ox;
+    const a = clamp(m.t / 0.07, 0, 1), s = m.s || 1;
+    g.save(); g.translate(m.x - ox, m.y); g.rotate(m.ang != null ? m.ang : (m.dir < 0 ? Math.PI : 0));
     g.globalAlpha = (0.4 + 0.6 * a) * Math.min(1, prefs.fx);
-    g.fillStyle = '#ff9a3a'; g.beginPath(); g.moveTo(mx, m.y - 4); g.lineTo(mx + m.dir * 14, m.y); g.lineTo(mx, m.y + 4); g.closePath(); g.fill();
-    g.fillStyle = '#ffe08a'; g.beginPath(); g.arc(mx, m.y, 4, 0, 7); g.fill();
-    g.fillStyle = '#fff'; g.beginPath(); g.arc(mx, m.y, 1.8, 0, 7); g.fill();
-    g.globalAlpha = 1;
+    g.fillStyle = '#ff9a3a'; g.beginPath(); g.moveTo(0, -4 * s); g.lineTo(14 * s, 0); g.lineTo(0, 4 * s); g.closePath(); g.fill();
+    if (s > 1.1) { g.beginPath(); g.moveTo(2, 0); g.lineTo(6 * s, -6 * s); g.lineTo(5 * s, 0); g.lineTo(6 * s, 6 * s); g.closePath(); g.fill(); }
+    g.fillStyle = '#ffe08a'; g.beginPath(); g.arc(1, 0, 3.6 * s, 0, 7); g.fill();
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(1, 0, 1.6 * s, 0, 7); g.fill();
+    g.restore(); g.globalAlpha = 1;
   }
   for (const t of fx.tracers) if (t.sc === sc) { g.strokeStyle = t.c; g.globalAlpha = clamp(t.t / 0.09, 0, 1); g.lineWidth = 1.5; g.beginPath(); g.moveTo(t.x1 - ox, t.y1); g.lineTo(t.x2 - ox, t.y2); g.stroke(); }
   g.globalAlpha = 1;
   for (const p of fx.parts) if (p.sc === sc) { g.fillStyle = p.c; const ps = p.s || 3; if (p.a) g.globalAlpha = p.a * clamp(p.t / (p.t0 || 0.5), 0, 1); g.fillRect(p.x - ox, p.y, ps, ps); if (p.a) g.globalAlpha = 1; }
   if (!sc) for (const c of fx.casings) { g.save(); g.translate(c.x - ox, c.y); g.rotate(c.r); g.globalAlpha = clamp(c.t / 0.5, 0, 1); g.fillStyle = '#d9a441'; g.fillRect(-2, -1, 4, 2); g.restore(); }
   g.globalAlpha = 1;
-  for (const b of fx.bullets) if ((b.world === 'scav') === sc) { const sp = Math.hypot(b.vx, b.vy || 0) || 1, ux = b.vx / sp, uy = (b.vy || 0) / sp; g.strokeStyle = '#ffe08a'; g.lineWidth = 2; g.beginPath(); g.moveTo(b.x - ox - ux * 5, b.y - uy * 5); g.lineTo(b.x - ox + ux * 5, b.y + uy * 5); g.stroke(); }
+  for (const b of fx.bullets) if ((b.world === 'scav') === sc) {
+    const x = b.x - ox, ang = Math.atan2(b.vy || 0, b.vx), slug = PROJ_SLUG[b.proj] || 'round';
+    if (b.proj === 'flame') { const k = 1 - b.life / b.life0; g.save(); g.globalAlpha = Math.max(0, 0.9 - k * 0.8); g.translate(x, b.y); g.scale(1 + k * 2.2, 1 + k * 2.2); sfArt('flame-burst', 1, 0, 0, 0, SF_DRAFT['flame-burst'].o); g.restore(); continue; }
+    const tr = PROJ_TRAIL[b.proj]; if (tr && !prefs.rm) { const sp = Math.hypot(b.vx, b.vy || 0) || 1; g.strokeStyle = 'rgba(' + tr + ',.35)'; g.lineWidth = 1; g.beginPath(); g.moveTo(x - b.vx / sp * 12, b.y - (b.vy || 0) / sp * 12); g.lineTo(x, b.y); g.stroke(); }
+    sfArt(slug, 1, x, b.y, ang, (SF_DRAFT[slug] || {}).o);
+  }
   // lock-on reticle around the enemy Mara would shoot
   if ((scene === 'scav') === sc && !placing && !itemTool && !tTool && !digTool && !bcam.overview && !P.auto) { const t = aimTarget(); if (t) { const e = t.e, h = ENEMIES[e.type].h, w = ENEMIES[e.type].w, x = e.x - ox, y = e.y - h / 2, r = Math.max(w, h) / 2 + 6, q = r * 0.45; g.strokeStyle = '#ff5a4e'; g.lineWidth = 2; g.beginPath(); for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { g.moveTo(x + sx * r, y + sy * (r - q)); g.lineTo(x + sx * r, y + sy * r); g.lineTo(x + sx * (r - q), y + sy * r); } g.stroke(); g.fillStyle = '#ff5a4e'; g.fillRect(x - 1.5, y - 1.5, 3, 3); } }
   if (!prefs.rm && !prefs.le) for (const s of fx.sprk) if (s.sc === sc) {
@@ -5522,10 +5537,10 @@ function gearHTML() {
     const g = GEAR[id], n = st[id] || 0, can = canPay(g.cost) && q.length < CRAFT_MAX;
     return `<div class="card bitem"><div><b>${esc(g.name)}</b> <span class="tag">${g.kind}</span><p>In stock: ${n} · Craft: ${fmtCost(g.cost)} · ${g.work} work · Dismantling returns ${fmtCost(g.back)}</p></div><div><button class="btn" data-gear="craft" data-g="${id}" ${can ? '' : 'disabled'}>Craft</button> <button class="btn ghost" data-gear="dis" data-g="${id}" ${n ? '' : 'disabled'}>Dismantle</button></div></div>`;
   }).join('');
-  const queue = q.length ? q.map((j, i) => `<div class="note" style="margin:2px 0">${i === 0 ? 'Building' : 'Queued'}: ${esc(GEAR[j.id].name)}<div style="margin-top:3px">${bar((1 - j.left / j.max) * 100, '#7fc8ff')}</div></div>`).join('') : '<p class="note">Nothing queued.</p>';
+  const queue = q.length ? q.map((j, i) => `<div class="note" style="margin:2px 0">${i === 0 ? 'Building' : 'Queued'}: ${esc((GEAR[j.id] || AMMO[j.id]).name)}${AMMO[j.id] ? ' x' + AMMO[j.id].batch : ''}<div style="margin-top:3px">${bar((1 - j.left / j.max) * 100, '#7fc8ff')}</div></div>`).join('') : '<p class="note">Nothing queued.</p>';
   const workers = living().filter(c => c.job === 'workshop').length;
-  return invHTML() + `<p class="note" style="margin:0">Craft weapons here: the cost is paid now and workshop crew build them after repairs. Enemies that carried a weapon may drop it when they die. Crew hold one each, shown in their hand; unarmed guards are armed from stock every hour. Dismantling turns a weapon back into scrap and parts. Weapons are for show for now.</p>`
-    + `<div class="sec">WEAPONS</div>${rows}<div class="sec">WORKSHOP QUEUE</div>${queue}${workers ? '' : '<p class="note bad">Nobody is on the Workshop job, so nothing gets built.</p>'}`
+  return maraWpnHTML() + invHTML() + `<p class="note" style="margin:0">Craft weapons here: the cost is paid now and workshop crew build them after repairs. Enemies that carried a weapon may drop it when they die. Crew hold one each, shown in their hand; unarmed guards are armed from stock every hour. Dismantling turns a weapon back into scrap and parts. Every gun needs its own ammo (Ammo, below).</p>`
+    + `<div class="sec">WEAPONS</div>${rows}${ammoHTML()}<div class="sec">WORKSHOP QUEUE</div>${queue}${workers ? '' : '<p class="note bad">Nobody is on the Workshop job, so nothing gets built.</p>'}`
     + `<div class="sec">FOOD</div><p class="note">Pantry: ${Math.floor(S.res.food)} raw food<br>Kitchen: ${Math.floor(k.raw || 0)} raw, ${Math.floor(k.prog * 100)}% of the next meal<br>Serving station: ${k.cooked} / ${k.cap} meals<br>Cooks carry crates from the pantry to the kitchen and plates to the serving station.</p>`;
 }
 function crewHTML() {
@@ -5660,6 +5675,8 @@ function buildHTML() {
   out.push(item('Repair the hatch', `${Math.ceil(S.door.hp)} / ${S.door.max}. The workshop also repairs it slowly.`, S.door.hp < S.door.max ? repCost(S.door) : null, 'repDoor', S.door.hp < S.door.max && !S.enemies.some(e => e.inside), 'Repair'));
   out.push(item(S.wall.hp > 0 ? 'Repair the wall' : 'Rebuild the wall', `${Math.ceil(S.wall.hp)} / ${S.wall.max}. Enemies have to break it before they reach the turrets.`, S.wall.hp < S.wall.max ? repCost(S.wall) : null, 'repWall', S.wall.hp < S.wall.max, 'Repair'));
   if (S.wall.lvl < 2) out.push(item('Reinforce the wall', 'Double its strength and add spikes.', { scrap: 30, mat: 12 }, 'upWall'));
+  out.push(S.cannon ? item('Roof cannon <span class="tag">built</span>', 'Fire it from Lamp\'s terminal in the Signal Room: A/D turn the barrel (slowly), hold Space for power. Low and flat stops troops at the wall; high arcs are artillery. The blast hurts our own wall and turrets too. It loads cannon shells from storage (' + storeCount('am_cannon') + ' stored; the workshop makes them).', null, 'noop', false, 'Built')
+    : item('Roof cannon', 'A heavy, slow-turning cannon on the hatch house, aimed and fired by Mara from Lamp\'s terminal in the Signal Room. Flat shots stop troops at the wall; high arcs land as artillery further out. It loads cannon shells from storage, made at the workshop.', CANNON_COST, 'buildCannon'));
   // turrets: pick a type here, then click one of the snap points between the hatch and the wall
   const tBuilt = S.turrets.filter(Boolean).length, tFree = TSLOTS - tBuilt;
   for (const [k, sp] of Object.entries(TURRETS)) {
@@ -6225,6 +6242,7 @@ function doBuild(a) {
   else if (/^repT/.test(a)) rep(S.turrets[+a[4]]);
   else if (/^upT/.test(a)) { const c = T_UP_COST, i = +a[3]; if (!S.turrets[i]) return; if (!canPay(c)) { uiSfx('Error'); return; } pay(c); S.turrets[i].lvl = 2; lamp(tName(i) + ' upgraded.', 'good'); }
   else if (/^tplace_/.test(a)) startTurretPlace(a.slice(7));
+  else if (a === 'buildCannon') buildCannon();
   else if (a === 'upHydro' || a === 'upMed' || a === 'upBunks') { const k = a.slice(2).toLowerCase(); const c = { hydro: { elec: 3, mat: 8 }, med: { elec: 3, mat: 6 }, bunks: { scrap: 10, mat: 10 } }[k]; if (!canPay(c)) { uiSfx('Error'); return; } pay(c); S.rooms[k] = 2; lamp(ROOMS[k].name + ' upgraded.', 'good'); }
   else if (/^room_/.test(a)) { const k = a.slice(5), r = BUILD_ROOMS[k]; if (!r || S.rooms[k]) return; if (!canPay(r.cost)) { uiSfx('Error'); lamp('The ' + ROOMS[k].name + ' needs ' + fmtCost(r.cost) + '.', 'warn'); return; } startPlace({ kind: 'room', k }); }
   else if (/^rep_bed_/.test(a)) {
@@ -6267,14 +6285,20 @@ function toggleAlarm() {
       if (c) c.alarmSlot = i;
     }
     lampEv('alarm_on', 'Battle stations! Everyone up: turrets first, the rest on the door.', 'warn');
+    for (const c of living()) crewRestock(c);   // everyone grabs ammo for their gun on the way
   } else { for (const c of S.crew) c.alarmSlot = null; lamp('Stand down. Back to your shifts.'); }
   $('#tAlarm').classList.toggle('on', S.alarm);
 }
 
 // prompt text and E to interact
 function interactable() {
+  if (gunnery) return { text: gunneryText(), act: () => stopGunnery() };
+  if (scene === 'bunker' && P.floor === 1 && Math.abs(P.x - LAMP_X) < 40 && !S.player.down && !P.onLadder) return S.cannon ? { text: 'E · Take the roof cannon controls', act: () => startGunnery() } : { text: 'Lamp can fire a roof cannon from here once one is built (Build > Defenses)' };
   if (scene === 'bunker' && P.floor === 0 && Math.abs(P.x - DOOR_X) < 70 && !S.player.down) {
-    const inv = maraInv(), has = inv.some(Boolean), sum = {}; for (const s of inv) if (s) sum[s.id] = (sum[s.id] || 0) + s.n;
+    // only offer Unload when something can actually leave the pack (resources, or items with free storage room);
+    // items stuck because storage is full no longer hide the backpack upgrade
+    const notAmmo = s => s && !(ITEMS[s.id] || {}).ammo && ((ITEMS[s.id] || {}).res || storeRoomFor(s.id) > 0);
+    const inv = maraInv(), has = inv.some(notAmmo), sum = {}; for (const s of inv) if (notAmmo(s)) sum[s.id] = (sum[s.id] || 0) + s.n;
     if (has) return { text: 'E · Unload: ' + Object.entries(sum).map(([k, v]) => v + ' ' + itemName(k).toLowerCase()).join(', ') + ' (' + invUsed(inv) + '/' + inv.length + ' slots)', act: () => dropOff() };
     const pc = packCost();
     if (pc) { const ok = S.res.scrap >= pc.scrap && S.res.parts >= pc.parts; return { text: 'E · Upgrade backpack (Lv ' + (S.player.packLvl || 0) + '/4, ' + packCap() + ' slots) to ' + (packCap() + 3) + ' slots: ' + pc.scrap + ' scrap, ' + pc.parts + ' parts' + (ok ? '' : ' (not enough)'), act: () => upgradePack() }; }
@@ -7708,7 +7732,7 @@ function showSettings(from) {
   const curPct = Math.round(getTextScale() * 100);
   const tsBtns = `<label class="srow"><span>Text scale</span><input type="range" id="sTs" min="85" max="160" step="5" value="${curPct}" aria-label="UI text size" aria-valuetext="${curPct} percent"><b>${curPct}%</b></label><button class="btn ghost" id="sTsReset" style="min-width:0">Reset text size</button><div class="tsrow" role="group" aria-label="Text size presets">${[['Small', 85], ['Normal', 100], ['Large', 125], ['X-Large', 150]].map(([l, p]) => `<button class="btn ghost" data-tspreset="${p}" aria-pressed="${curPct === p}">${l} (${p}%)</button>`).join('')}</div>`;
   const muted = !!(window.SFX && SFX.muted);
-  overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="sTitle" style="width:640px"><h1 id="sTitle" style="font-size:36px">SETTINGS</h1><div class="setp"><h3>VOLUME</h3>${rows}<button class="btn ghost" id="sMute" style="min-width:0">${muted ? 'Sound: off' : 'Sound: on'}</button><button class="btn ghost" id="sNarrMute" style="min-width:0" aria-pressed="${!!(window.SFX && SFX.narrMuted && SFX.narrMuted())}">${(window.SFX && SFX.narrMuted && SFX.narrMuted()) ? 'Narrator: muted' : 'Narrator: on'}</button><button class="btn ghost" id="sVolReset" style="min-width:0">Reset audio</button><h3>DISPLAY</h3><div class="tsrow"><button class="btn ghost" data-pref="cb" aria-pressed="false">Colorblind: off</button><button class="btn ghost" data-pref="hc" aria-pressed="false">High contrast: off</button><button class="btn ghost" id="sCap" aria-pressed="${window.narrCaptionsOn ? narrCaptionsOn() : true}">Captions: ${(window.narrCaptionsOn ? narrCaptionsOn() : true) ? 'on' : 'off'}</button></div><h3>FLASH &amp; SHAKE</h3><div class="tsrow"><button class="btn ghost" id="sSk" aria-label="Screen shake intensity">Screen shake: ${prefs.sk === 'off' ? 'Off' : prefs.sk === 'low' ? 'Low' : 'Normal'}</button></div><label class="srow"><span>Effects intensity</span><input type="range" min="0" max="100" step="5" value="${Math.round(prefs.fx * 100)}" id="sFx" aria-label="Screen shake and flash intensity"><b>${Math.round(prefs.fx * 100)}%</b></label><div class="tsrow"><button class="btn ghost" id="sPs" aria-pressed="${prefs.ps}">Photosensitive-safe: ${prefs.ps ? 'on' : 'off'}</button><button class="btn ghost" id="sTips" aria-pressed="${!tutDone()}">Tutorial hints: ${tutDone() ? 'off' : 'on'}</button></div><h3>SCREEN READER</h3><div class="tsrow"><button class="btn ghost" id="sSrAlert" aria-pressed="${srAlertsOn()}">Critical alerts: ${srAlertsOn() ? 'on' : 'off'}</button></div><h3>HELP</h3><div class="tsrow"><button class="btn ghost" id="sReplay">Replay tips</button></div><label class=\"srow\" style=\"cursor:pointer\"><input type=\"checkbox\" id=\"sRm\" ${prefs.rm ? 'checked' : ''}><span>Reduced motion (no screen shake, still ash and bobbing)</span></label><h3>TEXT SIZE</h3>${tsBtns}<h3>TOUCH CONTROLS</h3>${tmBtns}<h3>MOVEMENT &amp; ACTION KEYS</h3><div class="binds">${bindRows}</div><div id="bindNote" role="status" aria-live="polite" style="min-height:1.4em;margin-top:6px;color:#e8b84a">${bindNote}</div><h3>OTHER KEYS</h3><dl class="keys">${keys}</dl></div><button class="btn" id="sBack">Back</button></div>`);
+  overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="sTitle" style="width:640px"><h1 id="sTitle" style="font-size:36px">SETTINGS</h1><div class="setp"><h3>VOLUME</h3>${rows}<button class="btn ghost" id="sMute" style="min-width:0">${muted ? 'Sound: off' : 'Sound: on'}</button><button class="btn ghost" id="sNarrMute" style="min-width:0" aria-pressed="${!!(window.SFX && SFX.narrMuted && SFX.narrMuted())}">${(window.SFX && SFX.narrMuted && SFX.narrMuted()) ? 'Narrator: muted' : 'Narrator: on'}</button><button class="btn ghost" id="sVolReset" style="min-width:0">Reset audio</button><h3>DISPLAY</h3><div class="tsrow"><button class="btn ghost" data-pref="cb" aria-pressed="false">Colorblind: off</button><button class="btn ghost" data-pref="hc" aria-pressed="false">High contrast: off</button><button class="btn ghost" id="sCap" aria-pressed="${window.narrCaptionsOn ? narrCaptionsOn() : true}">Captions: ${(window.narrCaptionsOn ? narrCaptionsOn() : true) ? 'on' : 'off'}</button><button class="btn ghost" id="sCapSize" aria-label="Caption text size">Caption size: ${({ s: 'small', m: 'normal', l: 'large' })[window.narrCapSize ? narrCapSize() : 'm']}</button></div><h3>FLASH &amp; SHAKE</h3><div class="tsrow"><button class="btn ghost" id="sSk" aria-label="Screen shake intensity">Screen shake: ${prefs.sk === 'off' ? 'Off' : prefs.sk === 'low' ? 'Low' : 'Normal'}</button></div><label class="srow"><span>Effects intensity</span><input type="range" min="0" max="100" step="5" value="${Math.round(prefs.fx * 100)}" id="sFx" aria-label="Screen shake and flash intensity"><b>${Math.round(prefs.fx * 100)}%</b></label><div class="tsrow"><button class="btn ghost" id="sPs" aria-pressed="${prefs.ps}">Photosensitive-safe: ${prefs.ps ? 'on' : 'off'}</button><button class="btn ghost" id="sTips" aria-pressed="${!tutDone()}">Tutorial hints: ${tutDone() ? 'off' : 'on'}</button></div><h3>SCREEN READER</h3><div class="tsrow"><button class="btn ghost" id="sSrAlert" aria-pressed="${srAlertsOn()}">Critical alerts: ${srAlertsOn() ? 'on' : 'off'}</button></div><h3>HELP</h3><div class="tsrow"><button class="btn ghost" id="sReplay">Replay tips</button></div><label class=\"srow\" style=\"cursor:pointer\"><input type=\"checkbox\" id=\"sRm\" ${prefs.rm ? 'checked' : ''}><span>Reduced motion (no screen shake, still ash and bobbing)</span></label><h3>TEXT SIZE</h3>${tsBtns}<h3>TOUCH CONTROLS</h3>${tmBtns}<h3>MOVEMENT &amp; ACTION KEYS</h3><div class="binds">${bindRows}</div><div id="bindNote" role="status" aria-live="polite" style="min-height:1.4em;margin-top:6px;color:#e8b84a">${bindNote}</div><h3>OTHER KEYS</h3><dl class="keys">${keys}</dl></div><button class="btn" id="sBack">Back</button></div>`);
   document.querySelectorAll('#overlay input[data-vol]').forEach(inp => {
     const out = inp.parentNode.querySelector('b');
     inp.oninput = () => { if (window.SFX && SFX.setVol) SFX.setVol(inp.dataset.vol, inp.value / 100); out.textContent = inp.value + '%'; volPreview(inp.dataset.vol); };
@@ -7775,6 +7799,15 @@ function showSettings(from) {
     capBtn.textContent = 'Captions: ' + (on ? 'on' : 'off');
     if (on && window.narrShowText) narrShowText('Captions on. This is how my lines will look.');
     capBtn.setAttribute('aria-pressed', String(on));
+  };
+  const capSzBtn = $('#sCapSize');
+  if (capSzBtn) capSzBtn.onclick = () => {
+    const order = ['s', 'm', 'l'], names = { s: 'small', m: 'normal', l: 'large' };
+    const cur = window.narrCapSize ? narrCapSize() : 'm';
+    const nx = order[(order.indexOf(cur) + 1) % 3];
+    if (window.narrSetCapSize) narrSetCapSize(nx);
+    capSzBtn.textContent = 'Caption size: ' + names[nx];
+    if (window.narrShowText) narrShowText('Lamp captions look like this.');
   };
   const tipsBtn = $('#sTips');
   if (tipsBtn) tipsBtn.onclick = () => {

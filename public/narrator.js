@@ -85,10 +85,15 @@
   function capsOn() {
     try { return localStorage.getItem(CAP_KEY) !== '0'; } catch (e) { return true; }
   }
+  const SIZE_KEY = 'ashfall.capsize';
+  function capSize() {
+    try { const v = localStorage.getItem(SIZE_KEY); return (v === 's' || v === 'l') ? v : 'm'; } catch (e) { return 'm'; }
+  }
   function ensureCap() {
     if (capEl || !document.body) return capEl;
     capEl = document.createElement('div');
     capEl.id = 'narrCaption';
+    capEl.dataset.size = capSize();
     capEl.setAttribute('role', 'status');
     capEl.setAttribute('aria-live', 'polite');
     document.body.appendChild(capEl);
@@ -125,6 +130,12 @@
   }
   window.narrShowText = showText; // caption any Lamp line, with or without a voice clip
   window.narrCaptionsOn = capsOn;
+  window.narrCapSize = capSize;
+  window.narrSetCapSize = function (v) {
+    v = (v === 's' || v === 'l') ? v : 'm';
+    try { localStorage.setItem(SIZE_KEY, v); } catch (e) {}
+    const el = ensureCap(); if (el) el.dataset.size = v;
+  };
   window.narrSetCaptions = function (on) {
     try { localStorage.setItem(CAP_KEY, on ? '1' : '0'); } catch (e) {}
     if (!on) hideCap();

@@ -255,6 +255,8 @@ const VEC = (function () {
       const on = !!o.powered, pulse = on ? 0.5 + 0.5 * Math.sin(o.now / 200) : 0;
       circ(g, x, y - 47, 5.4, on ? '#7fc8ff' : '#553'); if (on) circ(g, x, y - 47, 2.2, '#e6f6ff');
       if (on) { g.strokeStyle = 'rgba(127,200,255,' + (0.25 + 0.4 * pulse) + ')'; g.lineWidth = 2; g.beginPath(); g.arc(x, y - 47, 9 + pulse * 6, 0, 7); g.stroke(); }
+    } else if (t.type === 'hmg') {
+      circ(g, x, y - 26, 2.6, '#ffb347');
     } else {
       const rif = t.type === 'rifle';
       rr(g, x + 3, y - 29.5, rif ? 31 : 21, rif ? 4.4 : 8, 2.4, '#2a2f36');

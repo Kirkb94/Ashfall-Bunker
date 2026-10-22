@@ -208,13 +208,13 @@ function expHTML() {
 // ====================================================================== REFINED COMBAT
 // damage types: pierce (rifle, pistol, machete), blunt (shotgun, pipe), shock (slow-field coil), bleed (damage over time)
 const DMG_RES = {
-  hound:    { blunt: 1.15 },
-  ghoul:    { bleed: 0.6 },
-  brute:    { pierce: 0.55, blunt: 1.25 },
-  ram:      { pierce: 0.4, blunt: 0.85, shock: 1.3 },
-  cinder:   { pierce: 0.8, shock: 1.3, bleed: 0.5 },
-  burrower: { blunt: 1.2 },
-  maw:      { pierce: 0.7, bleed: 0.3 },
+  hound:    { blunt: 1.15, fire: 1.2 },
+  ghoul:    { bleed: 0.6, fire: 1.4 },
+  brute:    { pierce: 0.55, blunt: 1.25, fire: 0.9 },
+  ram:      { pierce: 0.4, blunt: 0.85, shock: 1.3, fire: 0.5 },
+  cinder:   { pierce: 0.8, shock: 1.3, bleed: 0.5, fire: 0.7 },
+  burrower: { blunt: 1.2, fire: 1.1 },
+  maw:      { pierce: 0.7, bleed: 0.3, fire: 0.6 },
 };
 function resMul(e, dtype) {
   let m = (DMG_RES[e.type] || {})[dtype]; if (m == null) m = 1;
@@ -227,6 +227,12 @@ function statusTick(e, dt) {
     e.bleed.t -= dt; e.bleedAcc = (e.bleedAcc || 0) + e.bleed.dps * dt;
     if (e.bleedAcc >= 1) { const n = Math.floor(e.bleedAcc); e.bleedAcc -= n; hitEnemy(e, n, null, 'bleed'); }
     if (e.bleed.t <= 0) e.bleed = null;
+    if (e.hp <= 0) return true;
+  }
+  if (e.burn) {   // flamethrower fire keeps burning for a few seconds
+    e.burn.t -= dt; e.burnAcc = (e.burnAcc || 0) + e.burn.dps * dt;
+    if (e.burnAcc >= 1) { const n = Math.floor(e.burnAcc); e.burnAcc -= n; hitEnemy(e, n, null, 'fire'); }
+    if (e.burn.t <= 0) e.burn = null;
     if (e.hp <= 0) return true;
   }
   if (e.stun > 0) { e.stun -= dt; return true; }
@@ -254,33 +260,52 @@ function pickTarget(e, b) {
 }
 const coverMul = c => (c && c.floor === 0 && (c.job === 'door' || isTJob(c.job)) && S.door.hp > 0) ? 0.8 : 1;
 // weapons now change guard and melee combat
+// ballistics (combat pass): spread = base cone in radians (shrinks with skill), recoil = bloom added per shot (it also climbs the
+// muzzle), recover = bloom lost per second, speed px/s, grav px/s^2, heat % per shot and cool %/s (only weapons that overheat)
 const GW = {
-  none:    { kind: 'gun',   dmg: 11, range: 140, cd: 0.8,  pellets: 1, type: 'pierce', base: 0.4,  accK: 0.5 },
-  pipe:    { kind: 'melee', dmg: 15, range: 28,  cd: 0.9,  type: 'blunt' },
-  machete: { kind: 'melee', dmg: 19, range: 28,  cd: 0.7,  type: 'pierce', bleed: 0.3 },
-  pistol:  { kind: 'gun',   dmg: 11, range: 140, cd: 0.8,  pellets: 1, type: 'pierce', base: 0.4,  accK: 0.5 },
-  smg:     { kind: 'gun',   dmg: 6,  range: 130, cd: 0.28, pellets: 1, type: 'pierce', base: 0.3,  accK: 0.45 },
-  shotgun: { kind: 'gun',   dmg: 9,  range: 90,  cd: 1.3,  pellets: 3, type: 'blunt',  base: 0.45, accK: 0.35 },
-  rifle:   { kind: 'gun',   dmg: 24, range: 240, cd: 1.5,  pellets: 1, type: 'pierce', base: 0.35, accK: 0.55 },
+  none:     { kind: 'gun',   dmg: 11, range: 140, cd: 0.8,  pellets: 1, type: 'pierce', spread: 0.04,  recoil: 0.05, recover: 0.5, speed: 900,  grav: 140, proj: 'round' },
+  fist:     { kind: 'melee', dmg: 8,  range: 28,  cd: 0.8,  type: 'blunt' },
+  pipe:     { kind: 'melee', dmg: 15, range: 28,  cd: 0.9,  type: 'blunt' },
+  machete:  { kind: 'melee', dmg: 19, range: 28,  cd: 0.7,  type: 'pierce', bleed: 0.3 },
+  pistol:   { kind: 'gun',   dmg: 11, range: 140, cd: 0.8,  pellets: 1, type: 'pierce', spread: 0.035, recoil: 0.05, recover: 0.5, speed: 900,  grav: 140, proj: 'round' },
+  revolver: { kind: 'gun',   dmg: 22, range: 170, cd: 1.05, pellets: 1, type: 'pierce', spread: 0.022, recoil: 0.13, recover: 0.45, speed: 1000, grav: 120, proj: 'slug', flash: 1.4 },
+  smg:      { kind: 'gun',   dmg: 6,  range: 130, cd: 0.28, pellets: 1, type: 'pierce', spread: 0.06,  recoil: 0.03, recover: 0.6, speed: 950,  grav: 140, proj: 'round' },
+  shotgun:  { kind: 'gun',   dmg: 9,  range: 90,  cd: 1.3,  pellets: 4, type: 'blunt',  spread: 0.04,  pelletSpread: 0.11, recoil: 0.1, recover: 0.6, speed: 800, grav: 200, proj: 'pellet', falloff: true, flash: 1.5 },
+  rifle:    { kind: 'gun',   dmg: 24, range: 240, cd: 1.5,  pellets: 1, type: 'pierce', spread: 0.012, recoil: 0.08, recover: 0.4, speed: 1300, grav: 80,  proj: 'round', flash: 1.2 },
+  bolt:     { kind: 'gun',   dmg: 40, range: 300, cd: 2.0,  pellets: 1, type: 'pierce', spread: 0.006, recoil: 0.12, recover: 0.3, speed: 1500, grav: 60,  proj: 'slug', pierce: 1, flash: 1.5 },
+  nailgun:  { kind: 'gun',   dmg: 5,  range: 110, cd: 0.18, pellets: 1, type: 'pierce', spread: 0.07,  recoil: 0.02, recover: 0.8, speed: 600,  grav: 260, proj: 'nail', bleedP: 0.2, flash: 0.6 },
+  crossbow: { kind: 'gun',   dmg: 30, range: 220, cd: 1.8,  pellets: 1, type: 'pierce', spread: 0.015, recoil: 0.02, recover: 0.6, speed: 650,  grav: 420, proj: 'bolt', bleedP: 0.45, flash: 0 },
+  lmg:      { kind: 'gun',   dmg: 9,  range: 260, cd: 0.12, pellets: 1, type: 'pierce', spread: 0.05,  recoil: 0.025, recover: 0.5, speed: 1100, grav: 100, proj: 'round', heat: 5, cool: 22, flash: 1.2, maxBloom: 0.16 },
+  flamer:   { kind: 'gun',   dmg: 3,  range: 90,  cd: 0.06, pellets: 2, type: 'fire',   spread: 0.16,  recoil: 0, recover: 1, speed: 300, grav: -60, reach: 160, proj: 'flame', pierce: 99, burn: 5, heat: 2.4, cool: 25, flash: 0 },
 };
-const wpn = c => GW[c && c.held] || GW.none;
+// out of ammo (or unarmed) means fists
+const wpn = c => { const w = GW[c && c.held] || GW.fist; return w.kind === 'gun' && !crewHasAmmo(c) ? GW.fist : w; };
 function crewShoot(c, foe) {
-  const w = wpn(c); c.cd = w.cd;
+  const w = wpn(c);
   if (w.kind === 'melee') {
+    c.cd = w.cd;
     hitEnemy(foe, w.dmg * eff(c) * armoryMult(), c, w.type);
     if (w.bleed && Math.random() < w.bleed) foe.bleed = { t: 4, dps: 2 };
     return;
   }
-  for (let k = 0; k < w.pellets; k++) {
-    tracer(c.x + c.facing * 8, c.y - 20, foe.x + rnd(-4, 4), foe.y - 14 + rnd(-5, 5), '#ffd27a');
-    if (Math.random() < w.base + w.accK * c.stats.acc) hitEnemy(foe, w.dmg * eff(c) * armoryMult(), c, w.type);
-  }
+  if (!gunHeatOk(c, w)) { c.cd = 0.5; return; }   // overheated: wait for it to cool
+  if (!spendAmmo(c, c.held, () => crewTakeAmmo(c))) { c.cd = 0.4; return; }   // dry: next time they reach for fists
+  c.cd = w.cd;
+  // a real round from the muzzle: their accuracy stat sets the spread, so poor shots miss more
+  const f = Math.sign(foe.x - c.x) || c.facing || 1, mz = GEAR_MUZZLE[c.held] || [10, -2];
+  fireShot(c, w, { x: c.x + f * (9 + mz[0]), y: c.y - 13 + mz[1], tx: foe.x, ty: foe.y - ENEMIES[foe.type].h * 0.55, acc: c.stats.acc, world: 'bunker', by: c, dmgMul: eff(c) * armoryMult(), fl: c.y, critP: 0.03 + 0.08 * c.stats.acc });
 }
 const meleeDmg = c => { const w = wpn(c); return w.kind === 'melee' ? w.dmg : 8 + c.stats.acc * 8; };
 const meleeType = c => { const w = wpn(c); return w.kind === 'melee' ? w.type : 'blunt'; };
 
 // ---- turrets: ammo, reloading, heat, target priority, wear ----
-const TURRET_EXTRA = { rifle: { mag: 10, reload: 2.4, heat: 16 }, shotgun: { mag: 6, reload: 2.8, heat: 24 } };
+const TURRET_EXTRA = { rifle: { mag: 10, reload: 2.4, heat: 16 }, shotgun: { mag: 6, reload: 2.8, heat: 24 }, hmg: { mag: 60, reload: 3.6, heat: 3.2 } };
+// turret rounds: real projectiles from the barrel tip (mz = px from the turret centre)
+const TURRET_BALL = {
+  rifle:   { spread: 0.014, recoil: 0.02, recover: 0.5, speed: 1250, grav: 70, proj: 'round', mz: 34, reach: 1500, flash: 1.2 },
+  shotgun: { spread: 0.03, pelletSpread: 0.09, recoil: 0.05, recover: 0.7, speed: 850, grav: 160, proj: 'pellet', mz: 24, falloff: true, reach: 560 },
+  hmg:     { spread: 0.03, recoil: 0.016, recover: 0.28, maxBloom: 0.2, speed: 1150, grav: 80, proj: 'tracer', mz: 21, reach: 1300 }
+};
 const PRIOS = [['near', 'Nearest'], ['strong', 'Strongest'], ['weak', 'Weakest'], ['ranged', 'Ranged first']];
 function pickFoe(t, i, spec) {
   const c = S.enemies.filter(e => !e.inside && !e.hidden && e.hp > 0 && e.x > SLOT_X[i] && e.x - SLOT_X[i] < spec.range && e.x < W + 10);
@@ -292,6 +317,9 @@ function pickFoe(t, i, spec) {
   return c.sort((a, z) => a.x - z.x)[0];
 }
 function turretTick(dt) {
+  ensureAmmoStart();   // older saves and new runs get a starter locker of ammo once
+  // measured enemy speed, so gunners can lead a moving target
+  for (const en of S.enemies) { const lx = en._lx; en._lx = en.x; if (lx != null && dt > 0) en.vxm = (en.vxm || 0) * 0.85 + ((en.x - lx) / dt) * 0.15; }
   S.turrets.forEach((t, i) => {
     if (!t) return;
     if (t.cd > 0) t.cd -= dt;
@@ -316,12 +344,13 @@ function turretTick(dt) {
     t.manned = !!gunner;
     if (!gunner) return;
     if (t.ammo <= 0 && !(t.reload > 0)) {
-      if (S.res.scrap >= 1) { S.res.scrap -= 1; t.reload = ex.reload; }
-      else { if (!t.dry) { t.dry = true; lamp(tName(i) + ' is out of ammo and there is no scrap to reload it.', 'warn'); } return; }
+      const aid = TURRET_AMMO[t.type], got = aid ? storeTake(aid, ex.mag) : 0;   // reloads come out of storage
+      if (got > 0) { t.loadN = got; t.reload = ex.reload; t.dry = false; }
+      else { if (!t.dry) { t.dry = true; lamp(tName(i) + ' is out of ' + (aid ? AMMO[aid].name.toLowerCase() : 'ammo') + ' and storage has none. The workshop can make more (Gear tab, Ammo).', 'warn'); } return; }
     }
     if (t.reload > 0) {
       t.reload -= dt * (0.6 + gunner.stats.acc) * (tech('gun3') ? 1.3 : 1);
-      if (t.reload <= 0) { t.reload = 0; t.ammo = ex.mag; t.dry = false; }
+      if (t.reload <= 0) { t.reload = 0; t.ammo = t.loadN || ex.mag; t.loadN = 0; t.dry = false; }
       return;
     }
     if (t.cd > 0) return;
@@ -337,17 +366,12 @@ function turretTick(dt) {
       fxDust(SLOT_X[i] + 14, FLOORS[0] - 24, 2);
     }
     if (scene === 'bunker') addShake(t.type === 'rifle' ? 0.05 : 0.09);
-    const e = eff(gunner), dtype = t.type === 'rifle' ? 'pierce' : 'blunt';
-    for (let p = 0; p < spec.pellets; p++) {
-      const ty = target.y - ENEMIES[target.type].h / 2 + rnd(-8, 8);
-      if (typeof prefs === 'undefined' || !prefs.rm) tracer(SLOT_X[i] + 16, FLOORS[0] - 30, target.x + rnd(-6, 6), ty, t.type === 'rifle' ? '#ffe08a' : '#ffb060');
-      if (Math.random() < (spec.base + spec.accK * gunner.stats.acc) * e) {
-        const crit = Math.random() < 0.06 + 0.12 * gunner.stats.acc;
-        hitEnemy(target, spec.dmg * (t.lvl > 1 ? 1.4 : 1) * armoryMult() * (crit ? 1.8 : 1), gunner, dtype, crit);
-        if (crit && dtype === 'pierce') target.bleed = { t: 4, dps: 2 + (t.lvl > 1 ? 1 : 0) };
-        if (dtype === 'blunt' && Math.random() < 0.25) target.stun = Math.max(target.stun || 0, 0.35);
-      }
-    }
+    const e = eff(gunner), dtype = t.type === 'shotgun' ? 'blunt' : 'pierce', tb = TURRET_BALL[t.type] || TURRET_BALL.rifle;
+    const acc = Math.max(0, Math.min(1, gunner.stats.acc * e)), mzx = SLOT_X[i] + tb.mz, mzy = FLOORS[0] - 27;
+    const flight = Math.abs(target.x - mzx) / tb.speed, lead = (target.vxm || 0) * flight * (0.4 + 0.6 * acc);   // good gunners lead better
+    fireShot(t, Object.assign({}, tb, { pellets: spec.pellets, heat: 0 }), { x: mzx, y: mzy, tx: target.x + lead, ty: target.y - ENEMIES[target.type].h * 0.5, acc, world: 'bunker', by: gunner,
+      dmg: spec.dmg * (t.lvl > 1 ? 1.4 : 1) * armoryMult(), type: dtype, fl: FLOORS[0], critP: 0.06 + 0.12 * gunner.stats.acc,
+      bleedOnCrit: dtype === 'pierce' ? 2 + (t.lvl > 1 ? 1 : 0) : 0, stunP: dtype === 'blunt' ? 0.25 : 0, noFlash: true });
     t.ammo--; t.heat += ex.heat; wearBy(k, 0.1);
     if (t.heat >= 100) { t.over = true; lamp(tName(i) + ' overheated and is cooling down.', 'warn'); }
   });
@@ -361,5 +385,5 @@ function turretStatusHTML(i) {
   const t = S.turrets[i]; if (!t || t.type === 'coil') return '';
   const ex = TURRET_EXTRA[t.type], pr = PRIOS.find(p => p[0] === (t.prio || 'near'));
   const ammo = t.ammo == null ? ex.mag : t.ammo, state = t.over ? ' · <span style="color:var(--red)">OVERHEATED</span>' : t.reload > 0 ? ' · reloading' : t.dry ? ' · <span style="color:var(--red)">NO AMMO</span>' : '';
-  return `<div class="card"><div class="ch"><b>${tName(i)} controls</b><span class="lvl">${ammo}/${ex.mag} ammo</span></div>${bar(Math.min(100, t.heat || 0), '#ff8c2a')}<p class="note" style="margin:4px 0">Heat ${Math.round(t.heat || 0)}% · condition ${Math.round(cond('t' + i))}%${state}. Each reload costs 1 scrap.</p><div class="row"><button class="chip on" data-build="prio_${i}">Target: ${pr[1]}</button></div></div>`;
+  return `<div class="card"><div class="ch"><b>${tName(i)} controls</b><span class="lvl">${ammo}/${ex.mag} ammo</span></div>${bar(Math.min(100, t.heat || 0), '#ff8c2a')}<p class="note" style="margin:4px 0">Heat ${Math.round(t.heat || 0)}% · condition ${Math.round(cond('t' + i))}%${state}. Reloads ${esc(AMMO[TURRET_AMMO[t.type]].name.toLowerCase())} from storage (${storeCount(TURRET_AMMO[t.type])} stored).</p><div class="row"><button class="chip on" data-build="prio_${i}">Target: ${pr[1]}</button></div></div>`;
 }
