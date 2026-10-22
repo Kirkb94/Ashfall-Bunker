@@ -425,7 +425,19 @@ function narrText(clip, ev, fallback) {
   }
   return fallback;
 }
+// True if the lamp popup log already shows this exact line (captions hide to avoid a duplicate).
+function narrPopupShowing(t) { return logs.some(l => l.text === t); }
 let doorLowSaid = false;
+let doorHitAt = -9999;   // performance.now() of the last enemy hit on the door (drives the flash)
+// Crack polylines in door-local coords (x from centre, y up from the ground), revealed as HP drops.
+const DOOR_CRACKS = [
+  [[-4, -38], [-1, -30], [-5, -24], [-2, -17]],
+  [[6, -38], [3, -31], [8, -25], [5, -19], [9, -12]],
+  [[-12, -20], [-6, -16], [-9, -9], [-3, -4]],
+  [[10, -8], [4, -11], [6, -3]],
+  [[-14, -34], [-9, -29], [-13, -23]],
+  [[1, -17], [-1, -10], [3, -5], [0, 0]]
+];
 const LAMP_CLIPS = { raidNow: 'wave_start', breach: 'door_breach', towerHalf: 'exit_half', towerLeft: 'exit_almost', towerWin: 'victory', raidWarn: 'raid_warn', probe: 'probe' };
 function lampSay(key, kind, vars) {
   let ev = LAMP_CLIPS[key];
@@ -1475,11 +1487,35 @@ function drawPlaceGhost() {
     if (chk.ok && !canPay(l.cost)) chk = { ok: false, why: 'Needs ' + fmtCost(l.cost) };
   }
   g.save(); g.font = '600 12px sans-serif';
-  g.fillStyle = chk.ok ? 'rgba(90,220,110,.32)' : 'rgba(230,70,70,.34)'; g.fillRect(x, y, bw, bh);
-  g.strokeStyle = chk.ok ? '#5adc6e' : '#ff5a4e'; g.lineWidth = 2; g.strokeRect(x + 1, y + 1, bw - 2, bh - 2);
-  const txt = label + (chk.ok ? '' : ': ' + chk.why), tw = g.measureText(txt).width + 12;
+  const hc = !!prefs.hc, cbm = !!prefs.cb;
+  const okCol = cbm ? '#4aa3ff' : '#5adc6e', badCol = cbm ? '#ffa02e' : '#ff5a4e';
+  const col = chk.ok ? okCol : badCol;
+  g.fillStyle = chk.ok ? (cbm ? 'rgba(74,163,255,.32)' : 'rgba(90,220,110,.32)') : (cbm ? 'rgba(255,160,46,.34)' : 'rgba(230,70,70,.34)');
+  if (hc) g.fillStyle = chk.ok ? (cbm ? 'rgba(74,163,255,.55)' : 'rgba(60,230,100,.55)') : (cbm ? 'rgba(255,160,46,.55)' : 'rgba(255,50,50,.55)');
+  g.fillRect(x, y, bw, bh);
+  if (hc) {
+    // shape cues so the state never depends on colour alone: invalid is hatched, valid is plain
+    if (!chk.ok) {
+      g.save(); g.beginPath(); g.rect(x, y, bw, bh); g.clip();
+      g.strokeStyle = '#fff'; g.lineWidth = 2; g.beginPath();
+      for (let o = -bh; o < bw; o += 12) { g.moveTo(x + o, y + bh); g.lineTo(x + o + bh, y); }
+      g.stroke(); g.restore();
+    }
+    g.strokeStyle = '#000'; g.lineWidth = 6; g.strokeRect(x + 3, y + 3, bw - 6, bh - 6);
+    g.strokeStyle = '#fff'; g.lineWidth = 3; if (!chk.ok) g.setLineDash([8, 5]); g.strokeRect(x + 3, y + 3, bw - 6, bh - 6); g.setLineDash([]);
+  } else {
+    g.strokeStyle = col; g.lineWidth = 2; g.strokeRect(x + 1, y + 1, bw - 2, bh - 2);
+  }
+  const txt = (hc ? (chk.ok ? 'OK  ' : 'NO  ') : '') + label + (chk.ok ? '' : ': ' + chk.why), tw = g.measureText(txt).width + 12;
   const tx = clamp(x, IN_L, IN_R - tw), ty = Math.max(FLOORS[0] + 20, y - 22);
-  g.fillStyle = 'rgba(20,10,8,.9)'; g.fillRect(tx, ty, tw, 18); g.fillStyle = chk.ok ? '#d6ffd9' : '#ffd0cc'; g.fillText(txt, tx + 6, ty + 13);
+  if (hc) {
+    g.fillStyle = '#000'; g.fillRect(tx, ty, tw, 18); g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.strokeRect(tx + 0.75, ty + 0.75, tw - 1.5, 16.5);
+    g.fillStyle = '#fff';
+  } else {
+    g.fillStyle = 'rgba(20,10,8,.9)'; g.fillRect(tx, ty, tw, 18);
+    g.fillStyle = chk.ok ? (cbm ? '#d6eaff' : '#d6ffd9') : (cbm ? '#ffe3c2' : '#ffd0cc');
+  }
+  g.fillText(txt, tx + 6, ty + 13);
   g.restore();
 }
 function drawPlaceHint() {
@@ -1647,6 +1683,7 @@ function attack(e, b, target, tx, what) {
   target.hp = Math.max(0, target.hp - b.dmg * structDmgMul(what)); burst(tx + 6, FLOORS[0] - 20, '#bbb', 3);
   if (window.SFX) SFX.hit(what);
   if (what === 'door') {
+    doorHitAt = performance.now();
     fxDust(tx + 6, FLOORS[0] - 14, 4 + Math.floor(Math.random() * 3));
     fxSparks(tx + 6, FLOORS[0] - 20, 3 + Math.floor(Math.random() * 3), 1);
     const dm = b.dmg || 1;
@@ -1654,7 +1691,7 @@ function attack(e, b, target, tx, what) {
     if (window.SFX && SFX.rumble) SFX.rumble(clamp(dm / 20, 0.15, 1));
   }
   if (what === 'door') {
-    if (target.hp > 0 && target.hp < target.max * 0.25) { if (!doorLowSaid) { doorLowSaid = true; lampEv('door_low', 'Door integrity critical.', 'warn'); } }
+    if (target.hp > 0 && target.hp < target.max * 0.25) { if (window.SFX && SFX.doorWarn) SFX.doorWarn(); if (!doorLowSaid) { doorLowSaid = true; lampEv('door_low', 'Door integrity critical.', 'warn'); } }
     else { if (target.hp > target.max * 0.5) doorLowSaid = false; narrPlay(narrPick('door_attack')); }
   }
   if (what === 'wall' && target.hp <= 0) lampEv('wall_down', 'The outer wall is down!', 'warn');
@@ -1811,7 +1848,7 @@ function placePlayer(where) {
 }
 function hurtPlayer(d, quiet) {
   const pl = S.player; if (pl.down) return;
-  pl.hp -= d; if (!quiet) { burst(P.x, P.y - 18, '#c33', 5); P.hurt = 0.2; if (d > 0) hurtVig = Math.max(hurtVig, Math.min(0.45, 0.25 + d * 0.01)); }
+  pl.hp -= d; if (!quiet) { burst(P.x, P.y - 18, '#c33', 5); P.hurt = 0.2; if (d > 0 && scene === 'scav') addShake(Math.min(0.3, 0.12 + d * 0.01)); if (d > 0) hurtVig = Math.max(hurtVig, Math.min(0.45, 0.25 + d * 0.01)); }
   if (scene === 'scav' && pl.hp > 0 && pl.hp < pl.maxHp * 0.3 && pl.hp + d >= pl.maxHp * 0.3) lampEv('topside_danger', 'Mara is in trouble on the surface. Run first, loot later.', 'warn');
   if (pl.hp <= 0) {
     pl.hp = 0; pl.down = 8;
@@ -2288,7 +2325,7 @@ const prefs = (() => {
   try { p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}; } catch (e) { p = {}; }
   let osRm = false; try { osRm = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) {}
   let osHc = false; try { osHc = !!(window.matchMedia && matchMedia('(prefers-contrast: more)').matches); } catch (e) {}
-  return { cb: !!p.cb, hc: typeof p.hc === 'boolean' ? p.hc : osHc, rm: typeof p.rm === 'boolean' ? p.rm : osRm, ta: !!p.ta };
+  return { cb: !!p.cb, hc: typeof p.hc === 'boolean' ? p.hc : osHc, rm: typeof p.rm === 'boolean' ? p.rm : osRm, ta: !!p.ta, nl: p.nl !== false };
 })();
 let shakeT = 0;
 let hurtVig = 0; // player-hit edge flash, seconds remaining (0..0.45)
@@ -2303,6 +2340,8 @@ function applyPrefs() {
   if (a) { a.firstChild.nodeValue = 'Colorblind: ' + (prefs.cb ? 'on' : 'off'); a.setAttribute('aria-pressed', prefs.cb ? 'true' : 'false'); }
   if (b) { b.firstChild.nodeValue = 'Reduced motion: ' + (prefs.rm ? 'on' : 'off'); b.setAttribute('aria-pressed', prefs.rm ? 'true' : 'false'); }
   if (prefs.rm) { shakeT = 0; hurtVig = Math.min(hurtVig, 0.25); }
+  const nlb = document.getElementById('tNl');
+  if (nlb) { nlb.firstChild.nodeValue = 'Night lighting: ' + (prefs.nl ? 'on' : 'off'); nlb.setAttribute('aria-pressed', prefs.nl ? 'true' : 'false'); }
   const t = document.getElementById('tTa');
   if (t) { t.firstChild.nodeValue = 'Touch aim: ' + (prefs.ta ? 'on' : 'off'); t.setAttribute('aria-pressed', prefs.ta ? 'true' : 'false'); }
   cv.style.touchAction = prefs.ta ? 'none' : '';
@@ -2312,13 +2351,15 @@ function applyPrefs() {
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
 }
-function savePrefs() { try { localStorage.setItem(PREF_KEY, JSON.stringify({ cb: prefs.cb, hc: prefs.hc, rm: prefs.rm, ta: prefs.ta })); } catch (e) {} applyPrefs(); if (typeof renderHud === 'function') { renderHud(); renderDrawer(); } }
+function savePrefs() { try { localStorage.setItem(PREF_KEY, JSON.stringify({ cb: prefs.cb, hc: prefs.hc, rm: prefs.rm, ta: prefs.ta, nl: prefs.nl })); } catch (e) {} applyPrefs(); if (typeof renderHud === 'function') { renderHud(); renderDrawer(); } }
 { const a = document.getElementById('tCb'), b = document.getElementById('tRm');
   const prefLamp = (name, on) => { try { lamp(name + ' mode ' + (on ? 'on' : 'off')); } catch (err) {} };
   if (a) a.onclick = e => { prefs.cb = !prefs.cb; savePrefs(); prefLamp('Colorblind', prefs.cb); e.currentTarget.blur(); };
   if (b) b.onclick = e => { prefs.rm = !prefs.rm; savePrefs(); prefLamp('Reduced motion', prefs.rm); e.currentTarget.blur(); };
   const tab = document.getElementById('tTa');
   if (tab) tab.onclick = e => { prefs.ta = !prefs.ta; savePrefs(); prefLamp('Touch aim', prefs.ta); e.currentTarget.blur(); };
+  const nlt = document.getElementById('tNl');
+  if (nlt) nlt.onclick = e => { prefs.nl = !prefs.nl; savePrefs(); prefLamp('Night lighting', prefs.nl); e.currentTarget.blur(); };
   const hcb = document.getElementById('tHc');
   if (hcb) hcb.onclick = e => { prefs.hc = !prefs.hc; savePrefs(); prefLamp('High contrast', prefs.hc); e.currentTarget.blur(); };
   applyPrefs(); }
@@ -2327,8 +2368,27 @@ function draw() {
   if (shakeT > 0 && !prefs.rm) { const amp = Math.min(1, shakeT / 0.4) * 6; g.translate((Math.random() - 0.5) * 2 * amp, (Math.random() - 0.5) * 2 * amp); }
   if (scene === 'scav' && scav) drawScav(); else drawBunker();
   g.restore();
+  drawNightLight();
   drawDoorVignette();
   drawHurtVignette();
+}
+// Subtle night tint over the whole view, driven by the clock (hourF via skyColors). Static, so safe for reduced motion.
+function drawNightLight() {
+  if (!prefs.nl || typeof S === 'undefined' || !S) return;
+  const night = 1 - skyColors().dayAmt;
+  if (night < 0.01) return;
+  const top = scene === 'scav' && scav;
+  const a = night * (top ? 0.30 : 0.14);
+  const w = cv.width, h = cv.height;
+  g.save();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.fillStyle = 'rgba(8,12,34,' + (a * 0.6).toFixed(3) + ')';
+  g.fillRect(0, 0, w, h);
+  const rg = g.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.3, w / 2, h / 2, Math.hypot(w, h) / 2);
+  rg.addColorStop(0, 'rgba(8,12,34,0)');
+  rg.addColorStop(1, 'rgba(8,12,34,' + (a * 0.8).toFixed(3) + ')');
+  g.fillStyle = rg; g.fillRect(0, 0, w, h);
+  g.restore();
 }
 // Red screen-edge flash when the player is hit. Reduced motion: dimmer and shorter, smooth fade, no sudden flash.
 function drawHurtVignette() {
@@ -2585,6 +2645,21 @@ function drawSurface(sky) {
   if (!_v) { box(DOOR_X - 30, y - 46, 60, 46, '#4a4740'); box(DOOR_X - 34, y - 52, 68, 8, '#3a3832'); }
   const dp = S.door.hp / S.door.max;
   if (_v) VEC.door(g, DOOR_X, y, dp); else box(DOOR_X - 16, y - 38, 32, 38, dp > 0 ? mix([90, 40, 30], [120, 118, 110], dp) : '#140c08');
+  // damage cue: cracks grow as HP drops, flash on hit, red pulse when critical
+  if (dp < 0.75) {
+    const nC = dp <= 0 ? DOOR_CRACKS.length : dp < 0.25 ? 5 : dp < 0.5 ? 3 : 2;
+    g.save(); g.strokeStyle = 'rgba(10,6,4,.85)'; g.lineWidth = 1.3; g.lineJoin = 'round';
+    for (let i = 0; i < nC; i++) { const pl = DOOR_CRACKS[i]; g.beginPath(); g.moveTo(DOOR_X + pl[0][0], y + pl[0][1]); for (let j = 1; j < pl.length; j++) g.lineTo(DOOR_X + pl[j][0], y + pl[j][1]); g.stroke(); }
+    g.restore();
+  }
+  if (dp > 0 && dp < 0.25) {
+    const pu = prefs.rm ? 0.6 : 0.5 + 0.5 * Math.sin(performance.now() / 1000 * (2 + (1 - dp / 0.25) * 2.4) * Math.PI * 2);
+    g.fillStyle = 'rgba(255,40,30,' + (0.12 + 0.28 * pu).toFixed(3) + ')'; g.fillRect(DOOR_X - 17, y - 39, 34, 39);
+  }
+  if (!prefs.rm) {
+    const age = performance.now() - doorHitAt;
+    if (age >= 0 && age < 180) { g.fillStyle = 'rgba(255,235,210,' + (0.5 * (1 - age / 180)).toFixed(3) + ')'; g.fillRect(DOOR_X - 17, y - 39, 34, 39); }
+  }
   if (dp <= 0) { g.strokeStyle = '#ff5a4e'; g.lineWidth = 2; g.strokeRect(DOOR_X - 16, y - 38, 32, 38); }
   hpBar(DOOR_X - 24, y - 62, 48, dp, '#ffb347');
   // tower mast topside
@@ -3077,8 +3152,9 @@ function crewCmp(a, b) {
   return b.named - a.named;
 }
 function crewControls() {
-  const sel2 = (key, opts) => `<select data-view="${key}" aria-label="${key}">${opts.map(([v, l]) => `<option value="${v}" ${crewView[key] === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
-  return `<div class="row" style="margin:6px 0;gap:4px;flex-wrap:wrap">
+  const lbl = { sort: 'Sort crew', need: 'Filter by need', job: 'Filter by job', state: 'Filter by state' };
+  const sel2 = (key, opts) => `<select data-view="${key}" aria-label="${lbl[key] || key}" style="min-height:44px;font-size:14px">${opts.map(([v, l]) => `<option value="${v}" ${crewView[key] === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+  return `<div class="row" role="group" aria-label="Crew sort and filter" style="margin:6px 0;gap:4px;flex-wrap:wrap">
     ${sel2('sort', [['default', 'Sort: default'], ['name', 'Sort: name'], ['hp', 'Sort: health'], ['food', 'Sort: food'], ['rest', 'Sort: rest'], ['lvl', 'Sort: level']])}
     ${sel2('need', [['all', 'Need: all'], ['any', 'Any need'], ['hp', 'Low health'], ['food', 'Hungry'], ['rest', 'Tired']])}
     ${sel2('job', [['all', 'Job: all'], ...Object.entries(JOBS).filter(([k, j]) => !j.hidden).map(([k, j]) => [k, j.label])])}
@@ -3146,7 +3222,7 @@ function crewHTML() {
   const total = S.crew.filter(c => c.alive).length, shown = list.filter(c => c.alive).length;
   const gunners = j => living().filter(c => c.job === j).length;
   return `<p class="note" style="margin:0">Jobs decide where people go when they are awake. Shifts decide when they sleep: after about 16 hours awake they slow down fast. Turrets only fire with someone on them. Click a person to find them in the bunker.</p>
-  ${crewControls()}<button class="chip ${compactOn() ? 'on' : ''}" data-act="compact" title="One-line rows for big crews">Compact</button> <button class="chip" data-act="resetcam" title="Zoom out and stop following">Reset view</button><p class="note" style="margin:0">Showing ${shown} of ${total}</p>${shown === 0 && total > 0 ? '<p class="note">Nobody matches these filters.</p>' : ''}
+  ${crewControls()}<button class="chip" data-act="clearview" style="min-height:44px" title="Default sort, no filters">Reset</button> <button class="chip ${compactOn() ? 'on' : ''}" style="min-height:44px" data-act="compact" title="One-line rows for big crews">Compact</button> <button class="chip" data-act="resetcam" title="Zoom out and stop following">Reset view</button><p class="note" style="margin:0">Showing ${shown} of ${total}</p>${shown === 0 && total > 0 ? '<p class="note">Nobody matches these filters.</p>' : ''}
   ${maraCard()}
   ${[0, 1].map(i => !S.turrets[i] || S.turrets[i].type === 'coil' ? '' : turretStatus(S.turrets[i]) === 'none' ? `<p class="note bad" style="margin:0">Turret ${i + 1}: NO GUNNER - press C.</p>` : turretStatus(S.turrets[i]) === 'walking' ? `<p class="note" style="margin:0">Turret ${i + 1}: Manning...</p>` : '').join('')}
   ${list.map(c => {
@@ -3199,6 +3275,10 @@ $('#dbody').addEventListener('change', e => {
   const v = e.target.closest ? e.target.closest('[data-view]') : null;
   if (!v) return;
   crewView[v.dataset.view] = v.value; renderDrawer();
+});
+$('#dbody').addEventListener('click', e => {
+  if (!e.target.closest || !e.target.closest('[data-act="clearview"]')) return;
+  crewView.sort = 'default'; crewView.need = 'all'; crewView.job = 'all'; crewView.state = 'all'; renderDrawer();
 });
 
 // Relationship screen: links come from design/brief.md. Add a person here and they show up automatically.
@@ -4164,7 +4244,7 @@ const KEYBINDS = [
   ['R', 'Relationships panel'], ['G', 'Battle stations'], ['M', 'Mute / unmute all sound'], ['H', 'How to play'],
   ['V', 'Crew debug overlay'], ['P', 'Pause'], ['1 / 2 / 3', 'Game speed'], ['[ / ]', 'Select previous / next survivor'], ['Esc', 'Close panel / pause menu']
 ];
-const TEXT_SIZES = [['normal', 'Normal', 1], ['large', 'Large', 1.2], ['xlarge', 'Extra large', 1.4]];
+const TEXT_SIZES = [['small', 'Small', 0.85], ['normal', 'Normal', 1], ['large', 'Large', 1.2], ['xlarge', 'Extra large', 1.4]];
 function getTextSize() { try { const v = localStorage.getItem('ashfall.textsize'); if (TEXT_SIZES.some(t => t[0] === v)) return v; } catch (_) {} return 'normal'; }
 function applyTextSize(k) {
   const t = TEXT_SIZES.find(x => x[0] === k) || TEXT_SIZES[0];
@@ -4182,7 +4262,7 @@ function showSettings(from) {
   const curTs = getTextSize();
   const tsBtns = '<div class="tsrow">' + TEXT_SIZES.map(([k, label]) => `<button class="btn ghost" data-ts="${k}" aria-pressed="${k === curTs}">${label}</button>`).join('') + '</div>';
   const muted = !!(window.SFX && SFX.muted);
-  overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="sTitle" style="width:640px"><h1 id="sTitle" style="font-size:36px">SETTINGS</h1><div class="setp"><h3>VOLUME</h3>${rows}<button class="btn ghost" id="sMute" style="min-width:0">${muted ? 'Sound: off' : 'Sound: on'}</button><h3>DISPLAY</h3><div class="tsrow"><button class="btn ghost" data-pref="cb" aria-pressed="false">Colorblind: off</button><button class="btn ghost" data-pref="hc" aria-pressed="false">High contrast: off</button></div><h3>TEXT SIZE</h3>${tsBtns}<h3>MOVEMENT &amp; ACTION KEYS</h3><div class="binds">${bindRows}</div><h3>OTHER KEYS</h3><dl class="keys">${keys}</dl></div><button class="btn" id="sBack">Back</button></div>`);
+  overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="sTitle" style="width:640px"><h1 id="sTitle" style="font-size:36px">SETTINGS</h1><div class="setp"><h3>VOLUME</h3>${rows}<button class="btn ghost" id="sMute" style="min-width:0">${muted ? 'Sound: off' : 'Sound: on'}</button><h3>DISPLAY</h3><div class="tsrow"><button class="btn ghost" data-pref="cb" aria-pressed="false">Colorblind: off</button><button class="btn ghost" data-pref="hc" aria-pressed="false">High contrast: off</button><button class="btn ghost" id="sCap" aria-pressed="${window.narrCaptionsOn ? narrCaptionsOn() : true}">Captions: ${(window.narrCaptionsOn ? narrCaptionsOn() : true) ? 'on' : 'off'}</button></div><h3>TEXT SIZE</h3>${tsBtns}<h3>MOVEMENT &amp; ACTION KEYS</h3><div class="binds">${bindRows}</div><h3>OTHER KEYS</h3><dl class="keys">${keys}</dl></div><button class="btn" id="sBack">Back</button></div>`);
   document.querySelectorAll('#overlay input[data-vol]').forEach(inp => {
     const out = inp.parentNode.querySelector('b');
     inp.oninput = () => { if (window.SFX && SFX.setVol) SFX.setVol(inp.dataset.vol, inp.value / 100); out.textContent = inp.value + '%'; };
@@ -4197,6 +4277,13 @@ function showSettings(from) {
   document.querySelectorAll('#overlay button[data-ts]').forEach(b => {
     b.onclick = () => { setTextSize(b.dataset.ts); showSettings(from); };
   });
+  const capBtn = $('#sCap');
+  if (capBtn) capBtn.onclick = () => {
+    const on = !(window.narrCaptionsOn ? narrCaptionsOn() : true);
+    if (window.narrSetCaptions) narrSetCaptions(on);
+    capBtn.textContent = 'Captions: ' + (on ? 'on' : 'off');
+    capBtn.setAttribute('aria-pressed', String(on));
+  };
   document.querySelectorAll('#overlay button[data-pref]').forEach(b => {
     b.onclick = () => {
       const k = b.dataset.pref;
@@ -4332,7 +4419,7 @@ function frame(now) {
 }
 function frameBody(now) {
   const dtReal = Math.min(0.05, (now - last) / 1000); last = now;
-  if (window.SFX) SFX.update(dtReal, S && !S.over && !paused && (scene === 'bunker' || scene === 'scav') ? { scene, alarm: !!S.alarm } : null);
+  if (window.SFX) SFX.update(dtReal, S && !S.over && !paused && (scene === 'bunker' || scene === 'scav') ? { scene, alarm: !!S.alarm, raid: !!S.raidActive, spawns: S.spawns ? S.spawns.length : 0 } : null);
   if (S && (scene === 'bunker' || scene === 'scav')) {
     if (!paused) {
       // fixed 60Hz timestep: real time * speed feeds an accumulator, sim advances in equal steps

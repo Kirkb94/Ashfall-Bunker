@@ -48,10 +48,49 @@
   const last = {}, lastTake = {};
   let audio = null, playingUntilEnd = false, pendingClip = null;
   let token = 0, wd = null, blocked = null, blockedAt = 0;
+  // ---- captions (polite aria-live strip, saved in localStorage, on by default)
+  const CAP_KEY = 'ashfall.captions';
+  let capEl = null, capTimer = null;
+  function capsOn() {
+    try { return localStorage.getItem(CAP_KEY) !== '0'; } catch (e) { return true; }
+  }
+  function ensureCap() {
+    if (capEl || !document.body) return capEl;
+    capEl = document.createElement('div');
+    capEl.id = 'narrCaption';
+    capEl.setAttribute('role', 'status');
+    capEl.setAttribute('aria-live', 'polite');
+    document.body.appendChild(capEl);
+    return capEl;
+  }
+  function hideCap() {
+    clearTimeout(capTimer); capTimer = null;
+    if (capEl) { capEl.classList.remove('on'); capEl.textContent = ''; }
+  }
+  function showCap(clip) {
+    try {
+      if (!capsOn() || typeof narrText !== 'function') return;
+      const t = narrText(clip, null, '');
+      if (!t) return;
+      if (typeof narrPopupShowing === 'function' && narrPopupShowing(t)) return; // popup already shows it
+      const el = ensureCap(); if (!el) return;
+      el.textContent = t;
+      el.classList.add('on');
+      clearTimeout(capTimer);
+      capTimer = setTimeout(hideCap, Math.max(3500, 2000 + t.length * 60));
+    } catch (e) {}
+  }
+  window.narrCaptionsOn = capsOn;
+  window.narrSetCaptions = function (on) {
+    try { localStorage.setItem(CAP_KEY, on ? '1' : '0'); } catch (e) {}
+    if (!on) hideCap();
+  };
+  ensureCap();
   function armWd(ms) {
     clearTimeout(wd);
     wd = setTimeout(() => {
       if (!playingUntilEnd) return;
+      hideCap();
       playingUntilEnd = false;
       try { if (audio) audio.pause(); } catch (e) {}
       playPending();
@@ -105,14 +144,15 @@
   };
 
   window.narrPlay = function (clip) {
-    if (!clip || isMuted() || narrVol() <= 0) return;
+    if (!clip) return;
+    if (isMuted() || narrVol() <= 0) { if (!/door_attack/.test(String(clip)) || true) showCap(clip); return; } // muted: still caption the line
     const m = String(clip).match(/vo_[a-z0-9_]+?_\d+/i);
     const urgent = m ? INTERRUPT.test(m[0]) : false;
     const ambient = m ? /door_attack/.test(m[0]) : false; // low priority: never queued, never displaces a pending line
     if (!audio) {
       audio = new Audio();
-      audio.addEventListener('ended', () => { clearTimeout(wd); playingUntilEnd = false; playPending(); });
-      audio.addEventListener('error', () => { clearTimeout(wd); playingUntilEnd = false; playPending(); });
+      audio.addEventListener('ended', () => { clearTimeout(wd); playingUntilEnd = false; hideCap(); playPending(); });
+      audio.addEventListener('error', () => { clearTimeout(wd); playingUntilEnd = false; hideCap(); playPending(); });
       audio.addEventListener('loadedmetadata', () => { if (playingUntilEnd) armWd((isFinite(audio.duration) ? audio.duration : 10) * 1000 + 3000); });
     }
     if (playingUntilEnd && !audio.paused && !audio.ended) {
@@ -127,10 +167,11 @@
       const my = ++token;
       playingUntilEnd = true;
       armWd(10000);
+      showCap(clip);
       const p = audio.play();
       if (p && p.catch) p.catch(err => {
         if (my !== token) return; // superseded by a newer clip: ignore the AbortError
-        playingUntilEnd = false; clearTimeout(wd);
+        playingUntilEnd = false; clearTimeout(wd); hideCap();
         if (err && err.name === 'NotAllowedError') { blocked = clip; blockedAt = performance.now(); }
         else playPending();
       });

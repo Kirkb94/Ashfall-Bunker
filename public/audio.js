@@ -3,11 +3,14 @@
 (function () {
   const MASTER = 0.6, MUSIC = 0.05, HUM = 0.035, SIREN = 0.07, SIREN_SECS = 9;
   let ctx = null, master, musicBus, sfxBus, uiBus, ambBus, humGain, sirenGain, sirenOsc, noiseBuf;
+  let windFade = null, subFade = null, windBuf = null, rumbleT = 12;
+  let droneGain, droneFilt, droneK = 0;
+  const DRONE = 0.05;
   let muted = false;
   try { muted = localStorage.getItem('ab_mute') === '1'; } catch (e) {}
   const vol = { music: 1, narr: 1, fx: 1, ui: 1 };
   try { const p = JSON.parse(localStorage.getItem('ab_vol') || '{}') || {}; for (const k in vol) if (typeof p[k] === 'number' && isFinite(p[k])) vol[k] = Math.min(1, Math.max(0, p[k])); } catch (e) {}
-  let chordT = 0, chordI = 0, sirenT = 0, wasAlarm = false, lastShot = 0, lastHit = 0, lastRumble = 0, lastRepair = 0, lastClick = 0, lastDeath = 0, lastStep = 0, lastJump = 0, lastLand = 0, stepAlt = false;
+  let chordT = 0, chordI = 0, sirenT = 0, wasAlarm = false, lastShot = 0, lastHit = 0, lastRumble = 0, lastDoorWarn = 0, lastRepair = 0, lastClick = 0, lastDeath = 0, lastStep = 0, lastJump = 0, lastLand = 0, stepAlt = false;
 
   function init() {
     if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return; }
@@ -34,12 +37,54 @@
     lfo.connect(lg); lg.connect(humGain.gain);
     o1.connect(hf); o2.connect(hf); hf.connect(humGain); humGain.connect(ambBus);
     o1.start(); o2.start(); lfo.start();
+    // threat drone: detuned low saws + sub sine, on the ambience bus (follows mute and music volume)
+    droneGain = ctx.createGain(); droneGain.gain.value = 0;
+    droneFilt = ctx.createBiquadFilter(); droneFilt.type = 'lowpass'; droneFilt.frequency.value = 110;
+    const d1 = ctx.createOscillator(); d1.type = 'sawtooth'; d1.frequency.value = 41;
+    const d2 = ctx.createOscillator(); d2.type = 'sawtooth'; d2.frequency.value = 41.7;
+    const d3 = ctx.createOscillator(); d3.type = 'sine'; d3.frequency.value = 82;
+    d1.connect(droneFilt); d2.connect(droneFilt); d3.connect(droneFilt);
+    droneFilt.connect(droneGain); droneGain.connect(ambBus);
+    d1.start(); d2.start(); d3.start();
     // siren
     sirenGain = ctx.createGain(); sirenGain.gain.value = 0;
     const sf = ctx.createBiquadFilter(); sf.type = 'lowpass'; sf.frequency.value = 1100;
     sirenOsc = ctx.createOscillator(); sirenOsc.type = 'square'; sirenOsc.frequency.value = 500;
     sirenOsc.connect(sf); sf.connect(sirenGain); sirenGain.connect(sfxBus);
     sirenOsc.start();
+    // topside wind: looped noise -> bandpass (slow sweep) -> swell -> fade -> ambient bus (scav scene only)
+    windBuf = ctx.createBuffer(1, ctx.sampleRate * 6, ctx.sampleRate);
+    const wd = windBuf.getChannelData(0);
+    for (let i = 0; i < wd.length; i++) wd[i] = Math.random() * 2 - 1;
+    const ws = ctx.createBufferSource(); ws.buffer = windBuf; ws.loop = true;
+    const wbp = ctx.createBiquadFilter(); wbp.type = 'bandpass'; wbp.frequency.value = 420; wbp.Q.value = 0.8;
+    const wSwell = ctx.createGain(); wSwell.gain.value = 0.7;
+    windFade = ctx.createGain(); windFade.gain.value = 0;
+    const wl1 = ctx.createOscillator(); wl1.frequency.value = 0.07;
+    const wl1g = ctx.createGain(); wl1g.gain.value = 220;
+    wl1.connect(wl1g); wl1g.connect(wbp.frequency);
+    const wl2 = ctx.createOscillator(); wl2.frequency.value = 0.11;
+    const wl2g = ctx.createGain(); wl2g.gain.value = 0.3;
+    wl2.connect(wl2g); wl2g.connect(wSwell.gain);
+    ws.connect(wbp); wbp.connect(wSwell); wSwell.connect(windFade); windFade.connect(ambBus);
+    ws.start(); wl1.start(); wl2.start();
+    // constant sub-bass bed under the wind
+    const ss = ctx.createBufferSource(); ss.buffer = windBuf; ss.loop = true;
+    const slp = ctx.createBiquadFilter(); slp.type = 'lowpass'; slp.frequency.value = 70;
+    subFade = ctx.createGain(); subFade.gain.value = 0;
+    ss.connect(slp); slp.connect(subFade); subFade.connect(ambBus);
+    ss.start();
+  }
+  // one distant rumble: slow swell and long decay on the ambient bus
+  function distantRumble() {
+    const t = ctx.currentTime, dur = 4 + Math.random() * 2.5, peak = 0.35 + Math.random() * 0.3;
+    const s = ctx.createBufferSource(); s.buffer = windBuf;
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.Q.value = 1;
+    f.frequency.setValueAtTime(160, t); f.frequency.exponentialRampToValueAtTime(40, t + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(peak, t + 0.8); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    s.connect(f); f.connect(g); g.connect(ambBus);
+    s.start(t, Math.random() * 3); s.stop(t + dur + 0.05);
   }
   ['pointerdown', 'keydown', 'click', 'touchend'].forEach(ev => window.addEventListener(ev, init));
 
@@ -177,6 +222,14 @@
       tone(700 + Math.random() * 200, 420, 0.07, 0.1, 'square');
       noise(0.08, 'bandpass', 3000, 1500, 0.12, 6);
     },
+    // low-HP door warning: two-tone alarm pulse plus a metal creak (throttled)
+    doorWarn() {
+      if (!ready()) return;
+      const now = ctx.currentTime; if (now - lastDoorWarn < 1.4) return; lastDoorWarn = now;
+      tone(220, 200, 0.16, 0.3, 'square');
+      setTimeout(() => { if (ready()) tone(165, 150, 0.2, 0.3, 'square'); }, 170);
+      noise(0.25, 'bandpass', 700, 300, 0.12, 5);
+    },
     // low rumble for door impacts; intensity 0..1
     rumble(intensity) {
       if (!ready()) return;
@@ -219,6 +272,24 @@
       if (chordT <= 0) { chordT = 8; playChord(CHORDS[chordI++ % CHORDS.length]); }
       // hum
       humGain.gain.setTargetAtTime(st ? (st.scene === 'scav' ? HUM * 0.25 : HUM) : 0, t, 0.4);
+      // drone: threat 0..1 from alarm, active raid and live spawns
+      let threat = 0;
+      if (st) {
+        threat = (st.raid ? 0.8 : st.alarm ? 0.5 : 0) + Math.min(0.2, (st.spawns || 0) * 0.04);
+        threat = Math.min(1, threat);
+      }
+      droneK += (threat - droneK) * Math.min(1, dt * 0.8);
+      const dLevel = st ? DRONE * (0.35 + 0.65 * droneK) * (st.scene === 'scav' ? 0.25 : 1) : 0;
+      droneGain.gain.setTargetAtTime(dLevel, t, 0.5);
+      droneFilt.frequency.setTargetAtTime(110 + 210 * droneK, t, 0.5);
+      // topside ambience: wind + sub bed fade in only in the scav scene; rumbles on a random timer (skipped while muted)
+      const topside = !!(st && st.scene === 'scav');
+      if (windFade) windFade.gain.setTargetAtTime(topside ? 0.16 : 0, t, topside ? 1.2 : 0.5);
+      if (subFade) subFade.gain.setTargetAtTime(topside ? 0.05 : 0, t, topside ? 1.2 : 0.5);
+      if (topside) {
+        rumbleT -= dt;
+        if (rumbleT <= 0) { rumbleT = 14 + Math.random() * 20; if (!muted && windBuf) distantRumble(); }
+      } else rumbleT = Math.max(rumbleT, 8);
       // siren: sounds when the alarm goes on, fades after SIREN_SECS
       const alarm = !!(st && st.alarm);
       if (alarm && !wasAlarm) sirenT = SIREN_SECS;
