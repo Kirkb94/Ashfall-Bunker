@@ -108,6 +108,7 @@
     if (!clip || isMuted() || narrVol() <= 0) return;
     const m = String(clip).match(/vo_[a-z0-9_]+?_\d+/i);
     const urgent = m ? INTERRUPT.test(m[0]) : false;
+    const ambient = m ? /door_attack/.test(m[0]) : false; // low priority: never queued, never displaces a pending line
     if (!audio) {
       audio = new Audio();
       audio.addEventListener('ended', () => { clearTimeout(wd); playingUntilEnd = false; playPending(); });
@@ -115,6 +116,7 @@
       audio.addEventListener('loadedmetadata', () => { if (playingUntilEnd) armWd((isFinite(audio.duration) ? audio.duration : 10) * 1000 + 3000); });
     }
     if (playingUntilEnd && !audio.paused && !audio.ended) {
+      if (ambient) return;
       if (!urgent) { pendingClip = clip; return; } // never overlap: hold the latest and play it when this one ends
       pendingClip = null;
       audio.pause();

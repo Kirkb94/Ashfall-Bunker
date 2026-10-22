@@ -26,6 +26,12 @@
   .res i{width:10px;height:10px;border-radius:2px;display:inline-block}
   .res b{font-weight:600}
   .res .low{color:var(--red)}
+  .res .lowres{padding:0 5px;border-radius:4px;outline:1.5px dashed var(--red);outline-offset:0;background:repeating-linear-gradient(135deg,#ff5a4e33 0 4px,transparent 4px 8px);animation:lowflash 1.1s ease-in-out infinite}
+  .res .lowico{font-style:normal;color:var(--red);font-weight:700}
+  .res .lowtag{font-style:normal;font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--red)}
+  @keyframes lowflash{0%,100%{background-color:transparent}50%{background-color:#ff5a4e44}}
+  body.hc .res .lowres{outline:2px solid #fff;background:repeating-linear-gradient(135deg,#fff3 0 4px,#000 4px 8px)}
+  body.hc .res .low{color:#fff}
   .spd{display:flex;gap:2px;margin-left:auto}
   .spd button{background:#1d160e;border:1px solid var(--line);border-radius:5px;padding:2px 8px;font-size:12.5px}
   .spd button.on{background:var(--amber);color:#1a0f02;border-color:var(--amber);font-weight:700}
@@ -49,7 +55,8 @@
   .evlog em{color:var(--amber);font-style:normal}
   .log b{color:var(--amber);font-family:var(--disp);letter-spacing:.06em;font-size:11.5px;margin-right:6px}
   @keyframes fade{from{opacity:0;transform:translateY(4px)}}
-  .tools{position:absolute;left:12px;bottom:12px;display:flex;gap:6px}
+  .tools{position:absolute;left:12px;bottom:12px;display:flex;gap:6px;flex-wrap:wrap;max-width:calc(100% - 24px)}
+  .tools button[hidden]{display:none}
   .tools button{background:rgba(34,27,19,.98);border:1px solid #7a6238;border-radius:8px;padding:7px 12px;font-size:13px;color:var(--fg);transition:background .12s,border-color .12s,color .12s}
   .tools button:hover{border-color:var(--amber);background:rgba(58,44,26,.98);color:#fff}
   .tools button:active{background:rgba(26,19,10,.98);border-color:var(--amber2);transform:translateY(1px)}
@@ -123,6 +130,7 @@
   .dbody{touch-action:pan-y}
   #touch{display:none}
   body.touch #touch{display:block}
+  #touch[hidden]{display:none!important}
   #touch .pad{position:absolute;bottom:14px;display:grid;gap:8px}
   #touch .pl{left:14px;grid-template-columns:repeat(3,88px);grid-template-rows:repeat(2,88px)}
   #touch .pr{right:14px;grid-template-columns:repeat(3,92px);grid-template-rows:92px}
@@ -155,7 +163,7 @@
   body.touch .btn{padding:10px 16px;font-size:15px}
   body.touch .dbody{font-size:15px}
   body.touch .prompt{bottom:118px;font-size:15px}
-  .hint{position:absolute;left:50%;bottom:62px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--amber);border-radius:8px;padding:7px 8px 7px 14px;font-weight:600;display:flex;gap:10px;align-items:center;white-space:nowrap;animation:fade .3s ease}
+  .hint{position:absolute;left:50%;bottom:calc(12px + 2 * 36px + 14px);max-width:calc(100% - 24px);transform:translateX(-50%);background:var(--panel);border:1px solid var(--amber);border-radius:8px;padding:7px 8px 7px 14px;font-weight:600;display:flex;gap:10px;align-items:center;white-space:normal;animation:fade .3s ease}
   .hint[hidden]{display:none}
   .hint kbd{font:600 12px var(--disp);background:#2d2215;border-radius:4px;padding:1px 5px}
   .hint button{background:none;border:1px solid var(--line);border-radius:5px;padding:1px 7px}
@@ -244,6 +252,7 @@
   .keys dd{margin:0;color:var(--muted)}
   .setp kbd{font:600 12px var(--disp);background:#2d2215;border-radius:4px;padding:1px 5px;margin-right:3px}
 </style>
+<link rel="stylesheet" href="ui.css?v=5">
 </head>
 <body>
 <div id="stage"><div id="wrap">
@@ -255,19 +264,28 @@
   <div class="scavhud" id="scavhud" hidden></div>
   <div class="log" id="log" aria-live="polite"></div>
   <div class="tools" id="tools">
-    <button id="tCrew">Crew<kbd>C</kbd></button>
-    <button id="tBuild">Build<kbd>B</kbd></button>
-    <button id="tTower">Signal tower<kbd>T</kbd></button>
-    <button id="tDig" aria-pressed="false" title="Drag a box over the pit to mark cells for miners. Shift-drag cancels.">Dig<kbd>X</kbd></button>
-    <button id="tAlarm" title="Everyone drops what they're doing and defends: turrets first, then the door. Sleep waits.">Battle stations<kbd>G</kbd></button>
-    <button id="tHelp">Help<kbd>H</kbd></button>
-    <button id="tMute">Sound on<kbd>M</kbd></button>
+    <div class="grp">
+    <button id="tCrew" data-tip="Crew: assign jobs, shifts and gear to each survivor">Crew<kbd>C</kbd></button>
+    <button id="tBuild" data-tip="Build: add rooms, ladders and upgrades to the bunker">Build<kbd>B</kbd></button>
+    <button id="tTower" data-tip="Signal tower: call for survivors and trade">Signal<kbd>T</kbd></button>
+    <button id="tDig" aria-pressed="false" data-tip="Dig: drag a box over the pit to mark cells for miners. Shift-drag cancels.">Dig<kbd>X</kbd></button>
+    </div>
+    <div class="grp">
+    <button id="tAlarm" data-tip="Battle stations: everyone drops what they're doing and defends. Turrets first, then the door.">Battle stations<kbd>G</kbd></button>
+    </div>
+    <div class="grp">
+    <button id="tHelp" data-tip="Help: controls and tips">Help<kbd>H</kbd></button>
+    <button id="tMute" data-tip="Turn sound on or off">Sound on<kbd>M</kbd></button>
+    <button id="tMore" aria-pressed="false" data-tip="Settings: accessibility and debug options">Settings</button>
+    </div>
+    <div id="toolsMore">
     <button id="tCb" aria-pressed="false">Colorblind: off</button>
     <button id="tHc" aria-pressed="false">High contrast: off</button>
     <button id="tRm" aria-pressed="false">Reduced motion: off</button>
     <button id="tTa" aria-pressed="false" title="Scavenging: tap or drag on the screen to aim and shoot">Touch aim: off</button>
     <button id="tDbg" aria-pressed="false" title="Show each survivor's food, rest, health and state">Crew debug<kbd>V</kbd></button>
-    <button id="tPathStress" aria-pressed="false" title="Dev: re-path 100 crew every frame on a synthetic graph and show timings">Path stress</button>
+    <button id="tPathStress" hidden aria-pressed="false" title="Dev: re-path 100 crew every frame on a synthetic graph and show timings">Path stress</button>
+    </div>
   </div>
   <div class="prompt" id="prompt"></div>
   <div class="hint" id="hint" role="status" hidden></div>
@@ -281,7 +299,7 @@
   </div>
   <aside class="drawer" id="drawer" hidden>
     <div class="tabs" role="tablist">
-      <button data-tab="crew" role="tab">CREW</button><button data-tab="build" role="tab">BUILD</button><button data-tab="gear" role="tab">GEAR</button><button data-tab="tower" role="tab">TOWER</button><button data-tab="rel" role="tab">REL</button><button data-tab="log" role="tab">LOG</button><button class="x" id="dClose" aria-label="Close panel">✕</button>
+      <button data-tab="crew" role="tab" data-tip="Crew: jobs, needs and gear">CREW</button><button data-tab="build" role="tab" data-tip="Build rooms, ladders and upgrades">BUILD</button><button data-tab="gear" role="tab" data-tip="Craft and manage weapons">GEAR</button><button data-tab="tower" role="tab" data-tip="Signal tower">TOWER</button><button data-tab="rel" role="tab" data-tip="Relationships between survivors">REL</button><button data-tab="log" role="tab" data-tip="Event history">LOG</button><button class="x" id="dClose" aria-label="Close panel">✕</button>
     </div>
     <div class="dbody" id="dbody"></div>
   </aside>
@@ -332,6 +350,9 @@
 <script src="pathstress.js"></script>
 <script src="physics.js"></script>
 <script src="crewgen.js"></script>
+  <script src="tuning.js"></script>
+  <script src="systems.js"></script>
+<script src="helpart.js?v=3"></script>
   <script src="game.js"></script>
 </body>
 </html>

@@ -115,6 +115,9 @@
   api.start = start; api.stop = stop; api.toggle = toggle;
   root.PathStress = api;
   var btn = document.getElementById('tPathStress');
-  if (btn) btn.onclick = function (e) { toggle(); e.currentTarget.blur(); };
+  var devOn = false;
+  try { devOn = /(^|[?&])dev(=|&|$)/.test(root.location ? root.location.search : ''); } catch (e) {}
+  if (btn && devOn) btn.hidden = false;
+  if (btn && devOn) btn.onclick = function (e) { toggle(); e.currentTarget.blur(); };
   applyBtn();
 })(typeof window !== 'undefined' ? window : this);

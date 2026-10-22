@@ -88,10 +88,50 @@ const VEC = (function () {
     for (let i = 0; i < 6; i++) { g.fillStyle = 'rgba(20,10,5,' + (0.2 + r() * 0.25) + ')'; g.fillRect(x + r() * w, y + r() * h, 0.7, 0.7); }
   }
   function rrPath(g, x, y, w, h, r) { g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h); }
-  // call right after drawing a prop body
-  function weathered(g, x, y, w, h, r, seed, rust) {
+  // ---- procedural material textures: small seamless tiles built once, then used as canvas patterns ----
+  const TEX = { on: true, amt: 1.5 }, texCache = {};
+  function texTile(kind) {
+    if (typeof document === 'undefined') return null;
+    if (texCache[kind] !== undefined) return texCache[kind];
+    const N = 48, c = mk(N, N), t = c.getContext('2d'), r = rng(hashStr('tex:' + kind));
+    const dot = (a, col, n, sz) => { for (let i = 0; i < n; i++) { t.fillStyle = col.replace('A', (a * (0.4 + r() * 0.9)).toFixed(3)); t.fillRect(Math.floor(r() * N), Math.floor(r() * N), sz, sz); } };
+    if (kind === 'wood') {
+      for (let i = 0; i < 16; i++) {
+        const y = r() * N, L = 14 + r() * 34, x0 = r() * N, dark = r() < 0.6;
+        t.strokeStyle = dark ? 'rgba(20,10,4,' + (0.10 + r() * 0.14) + ')' : 'rgba(255,225,175,' + (0.05 + r() * 0.08) + ')'; t.lineWidth = 0.5 + r() * 0.7;
+        for (const ox of [0, -N]) { t.beginPath(); t.moveTo(x0 + ox, y); t.bezierCurveTo(x0 + ox + L * 0.3, y + (r() - 0.5) * 2, x0 + ox + L * 0.7, y + (r() - 0.5) * 2, x0 + ox + L, y + (r() - 0.5)); t.stroke(); }
+      }
+      const kx = 8 + r() * 30, ky = 8 + r() * 30; t.strokeStyle = 'rgba(20,10,4,.22)'; t.lineWidth = 0.6; t.beginPath(); t.ellipse(kx, ky, 3.2, 1.8, 0, 0, 7); t.stroke(); t.beginPath(); t.ellipse(kx, ky, 1.4, 0.8, 0, 0, 7); t.stroke();
+    } else if (kind === 'metal') {
+      for (let y = 0; y < N; y += 2) { t.fillStyle = (y / 2) % 3 ? 'rgba(255,255,255,.045)' : 'rgba(0,0,0,.08)'; t.fillRect(0, y, N, 1); }
+      dot(0.16, 'rgba(255,255,255,A)', 22, 1); dot(0.22, 'rgba(0,0,0,A)', 26, 1);
+      for (let i = 0; i < 4; i++) { const y = r() * N, x = r() * N, L = 5 + r() * 14; t.strokeStyle = 'rgba(255,240,210,' + (0.12 + r() * 0.1) + ')'; t.lineWidth = 0.5; t.beginPath(); t.moveTo(x, y); t.lineTo(x + L, y + (r() - 0.5) * 4); t.stroke(); }
+    } else if (kind === 'cloth') {
+      for (let y = 0; y < N; y += 2) for (let x = 0; x < N; x += 2) { t.fillStyle = ((x + y) / 2) % 2 ? 'rgba(0,0,0,.10)' : 'rgba(255,240,215,.07)'; t.fillRect(x, y, 2, 2); }
+      dot(0.12, 'rgba(0,0,0,A)', 14, 1);
+    } else if (kind === 'stone') {
+      dot(0.22, 'rgba(0,0,0,A)', 60, 1); dot(0.16, 'rgba(255,245,225,A)', 48, 1); dot(0.14, 'rgba(0,0,0,A)', 14, 2);
+      t.strokeStyle = 'rgba(0,0,0,.16)'; t.lineWidth = 0.6; t.beginPath(); const sx = r() * N; t.moveTo(sx, 0); t.lineTo(sx + 5, 12); t.lineTo(sx + 1, 24); t.lineTo(sx + 7, 36); t.stroke();
+    } else if (kind === 'tread') {
+      for (let y = 0; y < N; y += 6) for (let x = 0; x < N; x += 6) { const o = (y / 6) % 2 ? 3 : 0; t.fillStyle = 'rgba(255,255,255,.08)'; t.fillRect(x + o, y, 3, 1); t.fillStyle = 'rgba(0,0,0,.14)'; t.fillRect(x + o, y + 1, 3, 1); }
+    } else if (kind === 'soil') {
+      dot(0.26, 'rgba(0,0,0,A)', 90, 1); dot(0.2, 'rgba(255,215,160,A)', 50, 1); dot(0.2, 'rgba(0,0,0,A)', 16, 2);
+    }
+    return (texCache[kind] = c);
+  }
+  const patCache = new WeakMap();
+  function texFill(g, kind, x, y, w, h, a) {
+    if (!TEX.on || !g.createPattern) return;
+    const tile = texTile(kind); if (!tile) return;
+    let p = patCache.get(g); if (!p) { p = {}; patCache.set(g, p); }
+    if (!p[kind]) p[kind] = g.createPattern(tile, 'repeat');
+    g.save(); g.globalAlpha = Math.min(1, (a == null ? 1 : a) * TEX.amt); g.fillStyle = p[kind]; g.fillRect(x, y, w, h); g.restore();
+  }
+  // call right after drawing a prop body (mat: 'wood' | 'metal' | 'cloth' | 'stone' | 'tread' | 'soil')
+  function weathered(g, x, y, w, h, r, seed, rust, mat) {
     if (!WEAR.on) return;
     g.save(); rrPath(g, x, y, w, h, r); g.clip();
+    if (mat) texFill(g, mat, x, y, w, h, 1);
     marks(g, x, y, w, h, seed, rust * WEAR.rust, 1);
     g.fillStyle = 'rgba(255,235,200,.10)'; g.fillRect(x, y, w, 0.9); g.fillStyle = 'rgba(0,0,0,.18)'; g.fillRect(x, y + h - 0.9, w, 0.9);
     g.restore();
@@ -116,6 +156,7 @@ const VEC = (function () {
     rim(1.4 * S, 1.4 * S, 'rgba(255,236,205,.42)'); rim(-1.4 * S, -1.4 * S, 'rgba(0,0,0,.32)');
     wg.globalCompositeOperation = 'source-atop'; wg.setTransform(S, 0, 0, S, OX * S, OY * S);
     const enemy = m.kind !== 'crew' && m.kind !== 'player';
+    texFill(wg, enemy ? 'stone' : 'cloth', -42, -78, 84, 78, enemy ? 0.8 : 0.55);
     marks(wg, -42, -78, 84, 78, hashStr(id + '|' + (o.color || '')), (enemy ? 1 : 0) * WEAR.rust, 3);
     wg.setTransform(1, 0, 0, 1, 0, 0); wg.globalCompositeOperation = 'source-over';
     og.drawImage(wk, 0, 0);
@@ -151,38 +192,41 @@ const VEC = (function () {
       rr(g, x + 1, yb - 26, w - 2, 8, 3, c); rr(g, x + 1, yb - 26, w - 2, 2.4, 1.2, hi);
       line(g, x + 10, yb - 27, x + 16, yb - 35, 3, '#a8a8b0'); rr(g, x + 20, yb - 31, 10, 5, 2, '#9a8a70');
       rr(g, x + w - 18, yb - 31, 7, 5, 2.5, '#ffb347');
-      weathered(g, x + 1, yb - 26, w - 2, 8, 3, 11 + w, 1);
+      weathered(g, x + 1, yb - 26, w - 2, 8, 3, 11 + w, 1, 'wood');
     } else if (type === 'stove') {
       rr(g, x + 1, yb - 26, w - 2, 26, 5, c); half(g, x + 1, yb - 26, w - 2, 26, 5);
       rr(g, x + 1, yb - 28, w - 2, 4, 2, '#a58458');
       circ(g, x + 14, yb - 12, 4, '#2a2018'); circ(g, x + 14, yb - 12, 2.4, '#ff9a3a');
       for (let i = 0, n = Math.min(8, Math.floor(o.cooked || 0)); i < n; i++) rr(g, x + 4 + i * 6, yb - 35, 4.4, 6, 2, '#e8b86a');
-      weathered(g, x + 1, yb - 26, w - 2, 26, 5, 23 + w, 1);
+      weathered(g, x + 1, yb - 26, w - 2, 26, 5, 23 + w, 1, 'metal');
     } else if (type === 'planter') {
       rr(g, x + 1, yb - 11, w - 2, 11, 3.5, c); rr(g, x + 1, yb - 11, w - 2, 2.4, 1.2, hi);
+      weathered(g, x + 1, yb - 11, w - 2, 11, 3.5, 47 + w, 0.5, 'soil');
       for (let j = 0; j < 4; j++) { const px = x + 10 + j * 12, ph = 12 + (j % 2) * 4; ell(g, px, yb - 11 - ph / 2, 3.6, ph / 2, '#7ddc6f'); ell(g, px + 1.4, yb - 11 - ph / 2, 1.8, ph / 2, '#5fb454'); }
     } else if (type === 'cot') {
       rr(g, x + 3, yb - 9, 4, 9, 1.6, '#777'); rr(g, x + w - 7, yb - 9, 4, 9, 1.6, '#777');
       rr(g, x + 1, yb - 17, w - 2, 9, 4, c); half(g, x + 1, yb - 17, w - 2, 9, 4);
       rr(g, x + 4, yb - 23, 17, 7, 3.5, '#eee8dc');
       rr(g, x + w - 16, yb - 15, 10, 2, 1, '#e04848');
-      weathered(g, x + 1, yb - 17, w - 2, 9, 4, 31 + w, 0.4);
+      weathered(g, x + 1, yb - 17, w - 2, 9, 4, 31 + w, 0.4, 'cloth'); weathered(g, x + 4, yb - 23, 17, 7, 3.5, 32 + w, 0.1, 'cloth');
     } else if (type === 'bunk') {
       rr(g, x + 1, yb - 36, 4, 36, 1.6, '#4a3d2e'); rr(g, x + w - 5, yb - 36, 4, 36, 1.6, '#4a3d2e');
       rr(g, x + 2, yb - 14, w - 4, 8, 3, c); rr(g, x + 2, yb - 36, w - 4, 8, 3, c);
       rr(g, x + 5, yb - 18, 14, 5, 2.5, '#b8a78a'); rr(g, x + 5, yb - 40, 14, 5, 2.5, '#b8a78a');
+      weathered(g, x + 2, yb - 14, w - 4, 8, 3, 59 + w, 0.3, 'cloth'); weathered(g, x + 2, yb - 36, w - 4, 8, 3, 61 + w, 0.3, 'cloth');
+      weathered(g, x + 1, yb - 36, 4, 36, 1.6, 63 + w, 0.4, 'wood'); weathered(g, x + w - 5, yb - 36, 4, 36, 1.6, 65 + w, 0.4, 'wood');
     } else if (type === 'table') {
       rr(g, x + 7, yb - 18, 6, 18, 2, '#5a3d28'); rr(g, x + w - 13, yb - 18, 6, 18, 2, '#5a3d28');
       rr(g, x + 1, yb - 26, w - 2, 8, 3, c); rr(g, x + 1, yb - 26, w - 2, 2.4, 1.2, hi);
       ell(g, x + 14, yb - 28, 5, 1.6, '#d8cfbf'); ell(g, x + w - 16, yb - 28, 5, 1.6, '#d8cfbf');
-      weathered(g, x + 1, yb - 26, w - 2, 8, 3, 41 + w, 0.5);
+      weathered(g, x + 1, yb - 26, w - 2, 8, 3, 41 + w, 0.5, 'wood'); weathered(g, x + 7, yb - 18, 6, 18, 2, 42 + w, 0.2, 'wood'); weathered(g, x + w - 13, yb - 18, 6, 18, 2, 43 + w, 0.2, 'wood');
     } else if (type === 'console') {
       rr(g, x + 1, yb - 30, w - 2, 30, 5, c); half(g, x + 1, yb - 30, w - 2, 30, 5);
       rr(g, x + 5, yb - 26, w - 10, 13, 3, o.powered ? '#2f7fa8' : '#222');
       if (o.powered) { g.globalAlpha = 0.35; rr(g, x + 5, yb - 26, w - 10, 13, 3, '#7fc8ff'); g.globalAlpha = 1; }
       circ(g, x + 10, yb - 7, 2, '#ffb347'); circ(g, x + 18, yb - 7, 2, '#ffb347');
-      weathered(g, x + 1, yb - 30, w - 2, 30, 5, 53 + w, 0.7);
-    } else { rr(g, x + 1, yb - 28, w - 2, 28, 5, c); half(g, x + 1, yb - 28, w - 2, 28, 5); }
+      weathered(g, x + 1, yb - 30, w - 2, 30, 5, 53 + w, 0.7, 'metal');
+    } else { rr(g, x + 1, yb - 28, w - 2, 28, 5, c); half(g, x + 1, yb - 28, w - 2, 28, 5); weathered(g, x + 1, yb - 28, w - 2, 28, 5, 71 + w, 0.7, 'metal'); }
   }
 
   // ---- surface pieces ----
@@ -192,20 +236,20 @@ const VEC = (function () {
     const open = dp > 0;
     rr(g, X - 17, y - 39, 34, 39, 5, open ? '#' + [90 + (120 - 90) * dp, 40 + (118 - 40) * dp, 30 + (110 - 30) * dp].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('') : '#140c08');
     if (open) { line(g, X - 12, y - 28, X + 12, y - 28, 2, 'rgba(0,0,0,.35)'); line(g, X - 12, y - 18, X + 12, y - 18, 2, 'rgba(0,0,0,.35)'); circ(g, X + 11, y - 20, 2.2, '#ffb347'); }
-    weathered(g, X - 31, y - 48, 62, 48, 7, 7, 1.2);
+    weathered(g, X - 31, y - 48, 62, 48, 7, 7, 1.2, 'tread');
   }
   function wall(g, X, y, h, lvl) {
     const n = 5;
     for (let i = 0; i < n; i++) rr(g, X - 11 + (i % 2) * 3, y - h + i * (h / n), 24, h / n - 1.2, 3, i % 2 ? '#6a5640' : '#7a6650');
     rr(g, X + 5, y - h, 8, h, [0, 3, 3, 0], 'rgba(0,0,0,.18)');
     if (lvl > 1) for (let i = 0; i < 4; i++) line(g, X - 12 + i * 8, y - h - 7, X - 8 + i * 8, y - h, 1.4, '#a8a8b0');
-    weathered(g, X - 11, y - h, 24, h, 3, 19 + Math.round(h), 1);
+    weathered(g, X - 11, y - h, 24, h, 3, 19 + Math.round(h), 1, 'stone');
   }
   function turret(g, x, y, t, o) {
     rr(g, x - 15, y - 19, 30, 19, 5, '#4f4a40'); half(g, x - 15, y - 19, 30, 19, 5);
-    weathered(g, x - 15, y - 19, 30, 19, 5, 61, 1);
+    weathered(g, x - 15, y - 19, 30, 19, 5, 61, 1, 'metal');
     rr(g, x - 9, y - 33, 18, 15, 6, t.manned ? '#6a6a5a' : '#45433b');
-    weathered(g, x - 9, y - 33, 18, 15, 6, 67, 0.6);
+    weathered(g, x - 9, y - 33, 18, 15, 6, 67, 0.6, 'metal');
     if (t.type === 'coil') {
       rr(g, x - 2, y - 45, 4, 13, 2, '#2a2a26');
       const on = !!o.powered, pulse = on ? 0.5 + 0.5 * Math.sin(o.now / 200) : 0;
@@ -225,15 +269,18 @@ const VEC = (function () {
       rr(g, 832, -58, 120, 6, 3, '#4a4a44'); rr(g, 832, -32, 120, 6, 3, '#4a4a44');
       for (let i = 0; i < 5; i++) { line(g, 842 + i * 22, -58, 842 + i * 22, -30, 4, '#8a8a92'); line(g, 842 + i * 22, -42, 842 + i * 22, -30, 4, '#4a3a22'); }
       rr(g, 850, -20, 80, 20, 5, '#5a4a32'); circ(g, 943, -67, 3, powered ? '#7fc8ff' : '#553');
+      weathered(g, 832, -58, 120, 6, 3, 81, 0.4, 'metal'); weathered(g, 832, -32, 120, 6, 3, 82, 0.4, 'metal'); weathered(g, 850, -20, 80, 20, 5, 83, 0.5, 'wood');
     } else if (k === 'storage') {
       rr(g, 975, -62, 110, 6, 3, '#5a4a38'); rr(g, 975, -32, 110, 6, 3, '#5a4a38');
-      for (let i = 0; i < 4; i++) { rr(g, 980 + i * 26, -50, 21, 18, 3, '#8a6a42'); rr(g, 980 + i * 26, -20, 21, 18, 3, '#7a5c38'); line(g, 982 + i * 26, -41, 999 + i * 26, -41, 1.2, 'rgba(0,0,0,.3)'); }
+      for (let i = 0; i < 4; i++) { rr(g, 980 + i * 26, -50, 21, 18, 3, '#8a6a42'); rr(g, 980 + i * 26, -20, 21, 18, 3, '#7a5c38'); line(g, 982 + i * 26, -41, 999 + i * 26, -41, 1.2, 'rgba(0,0,0,.3)'); weathered(g, 980 + i * 26, -50, 21, 18, 3, 91 + i, 0.3, 'wood'); weathered(g, 980 + i * 26, -20, 21, 18, 3, 95 + i, 0.3, 'wood'); }
+      weathered(g, 975, -62, 110, 6, 3, 99, 0.3, 'wood'); weathered(g, 975, -32, 110, 6, 3, 100, 0.3, 'wood');
     } else if (k === 'generator') {
       rr(g, 1130, -46, 92, 46, 8, '#3d4650'); rr(g, 1130, -46, 92, 6, 3, 'rgba(255,255,255,.12)');
       rr(g, 1140, -60, 16, 15, 4, '#2a2a26');
       circ(g, 1166, -22, 12, '#2a3038'); circ(g, 1166, -22, 6, '#4d5560'); circ(g, 1166, -22, 2.4, '#ffb347');
       rr(g, 1190, -38, 22, 16, 3, '#2a3038');
       circ(g, 1200, -30, 3.4, powered ? ((Math.floor(now / 250) % 2) ? '#7fc8ff' : '#3a6a8a') : '#553');
+      weathered(g, 1130, -46, 92, 46, 8, 111, 1, 'metal'); weathered(g, 1190, -38, 22, 16, 3, 112, 0.3, 'metal');
     }
   }
 
@@ -241,11 +288,12 @@ const VEC = (function () {
     person, mara, drawModel, shade,
     hasEnemy(type) { return hasModel(type); },
     enemy(g, type, color, frame, flip, t) { drawModel(g, type, { color, frame, flip, t }); },
-    item, door, wall, turret, roomProp, WEAR,
+    item, door, wall, turret, roomProp, WEAR, TEX, texFill,
     // a held item model (g_pipe, g_rifle, g_meal ...), grip at x 0 / y -12, pointing right; flip mirrors it
     gear(g, id, flip) { drawModel(g, id, { flip }); },
     hasGear: (id) => typeof VEC_MODELS !== 'undefined' && !!VEC_MODELS[id],
     // on/off and rust strength (0 to 1.5); rebakes everything
+    setTex(on, amt) { TEX.on = !!on; TEX.amt = amt == null ? 1 : amt; bakeCache.clear(); },
     setWear(on, rust) { WEAR.on = !!on; WEAR.rust = rust == null ? 1 : rust; bakeCache.clear(); }
   };
 })();

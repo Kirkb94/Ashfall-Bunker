@@ -7,7 +7,7 @@
   try { muted = localStorage.getItem('ab_mute') === '1'; } catch (e) {}
   const vol = { music: 1, narr: 1, fx: 1 };
   try { const p = JSON.parse(localStorage.getItem('ab_vol') || '{}') || {}; for (const k in vol) if (typeof p[k] === 'number' && isFinite(p[k])) vol[k] = Math.min(1, Math.max(0, p[k])); } catch (e) {}
-  let chordT = 0, chordI = 0, sirenT = 0, wasAlarm = false, lastShot = 0, lastHit = 0, lastRumble = 0;
+  let chordT = 0, chordI = 0, sirenT = 0, wasAlarm = false, lastShot = 0, lastHit = 0, lastRumble = 0, lastRepair = 0, lastClick = 0;
 
   function init() {
     if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return; }
@@ -79,13 +79,38 @@
       if (!ready()) return;
       const now = ctx.currentTime; if (now - lastShot < 0.05) return; lastShot = now;
       if (type === 'rifle') { noise(0.12, 'bandpass', 2600, 500, 0.35, 0.8); tone(180, 60, 0.1, 0.3, 'triangle'); }
+      else if (type === 'coil') { noise(0.18, 'bandpass', 3200, 900, 0.3, 3); tone(900, 140, 0.16, 0.2, 'sawtooth'); tone(60, 40, 0.2, 0.3, 'sine'); }
       else { noise(0.22, 'lowpass', 1800, 200, 0.5); tone(120, 40, 0.18, 0.45, 'sine'); }
     },
     hit(what) {
       if (!ready()) return;
       const now = ctx.currentTime; if (now - lastHit < 0.07) return; lastHit = now;
-      if (what === 'door') { tone(95, 38, 0.3, 0.7, 'sine'); noise(0.18, 'lowpass', 500, 120, 0.4); }
+      if (what === 'door') { tone(95, 38, 0.3, 0.7, 'sine'); noise(0.18, 'lowpass', 500, 120, 0.4); tone(420 + Math.random() * 80, 230, 0.22, 0.14, 'square'); noise(0.14, 'bandpass', 2200, 900, 0.18, 5); }
       else { noise(0.2, 'bandpass', 1400, 600, 0.25, 6); tone(320, 200, 0.12, 0.15, 'square'); }
+    },
+    // short UI click (throttled)
+    click() {
+      if (!ready()) return;
+      const now = ctx.currentTime; if (now - lastClick < 0.04) return; lastClick = now;
+      tone(1400, 900, 0.04, 0.12, 'square');
+      setTimeout(() => { if (ready()) tone(900, 700, 0.05, 0.08, 'triangle'); }, 35);
+    },
+    // door torn open: deep boom, metal tear, descending groan
+    breach() {
+      if (!ready()) return;
+      tone(70, 24, 0.9, 0.9, 'sine');
+      noise(0.7, 'lowpass', 900, 80, 0.6);
+      noise(0.5, 'bandpass', 2400, 300, 0.3, 4);
+      tone(260, 70, 0.7, 0.2, 'sawtooth');
+    },
+    // workshop repair clank (throttled); 'seal' = hatch sealed again chime
+    repair(kind) {
+      if (!ready()) return;
+      const now = ctx.currentTime;
+      if (kind === 'seal') { tone(520, 520, 0.14, 0.18, 'triangle'); setTimeout(() => { if (ready()) tone(780, 780, 0.22, 0.18, 'triangle'); }, 120); noise(0.12, 'bandpass', 1800, 900, 0.15, 4); return; }
+      if (now - lastRepair < 0.3) return; lastRepair = now;
+      tone(700 + Math.random() * 200, 420, 0.07, 0.1, 'square');
+      noise(0.08, 'bandpass', 3000, 1500, 0.12, 6);
     },
     // low rumble for door impacts; intensity 0..1
     rumble(intensity) {

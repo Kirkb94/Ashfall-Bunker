@@ -36,31 +36,65 @@ const ROOMS = {
   generator: { name: 'Generator', floor: 3, x0: 1106, x1: IN_R, build: true },
 };
 // Buildable annex rooms and their effects. All tuning for them lives here.
-const ROOM_FX = { powerBoost: 1.25, fuelPerHour: 0.25, armoryDmg: 1.2, storageTheft: 0.1, storageLoot: 1.1 };
-const POWERED_JOBS = ['kitchen', 'hydro', 'workshop', 'signal'];
+const ROOM_FX = Object.assign({ powerBoost: 1.25, fuelPerHour: 0.25, armoryDmg: 1.2, storageTheft: 0.1, storageLoot: 1.1 }, (window.TUNING && TUNING.roomFx) || {});
+const POWERED_JOBS = ['kitchen', 'hydro', 'workshop', 'signal', 'research'];
 const BUILD_ROOMS = {
   workshop:  { cost: { scrap: 25, parts: 6, mat: 8 }, desc: 'Crew here repair the hatch, wall and turrets, turn scrap into parts and build weapons. Nothing gets repaired or crafted without one.', done: 'Old Bram can get to work.' },
   generator: { cost: { scrap: 30, parts: 12, elec: 4 }, desc: 'Burns a little scrap each hour to power the bunker: kitchen, workshop, signal and med bay work 25% faster. Armory needs it.', done: 'It will burn about 6 scrap a day to keep the lights on.' },
   armory:    { cost: { scrap: 25, parts: 10, mat: 8 }, desc: 'Turrets, door guards and Mara hit 20% harder. Needs the generator running.', done: 'It needs power from the generator to charge the racks.' },
   storage:   { cost: { scrap: 20, mat: 15 }, desc: 'Locked shelving: night thieves take far less, and loot from scavenging trips is sorted for 10% more.', done: 'Everything is counted and locked now.' },
 };
+// Simple installable buildings (flags in S.builds), grouped by build-menu category.
+const BUILD_CATS = [['expedition', 'Expeditions'], ['structure', 'Structure'], ['energy', 'Energy'], ['crafting', 'Crafting'], ['research', 'Research'], ['food', 'Food'], ['water', 'Water'], ['defenses', 'Defenses'], ['medical', 'Medical'], ['furniture', 'Furniture'], ['decor', 'Decor']];
+const BUILDS = {
+  solar:    { cat: 'energy',   name: 'Solar panels',    cost: { scrap: 20, parts: 8, elec: 6 }, req: 'generator', desc: 'Cuts the generator\'s scrap burn by 40%.', done: 'Panels on the hatch roof are feeding the generator.' },
+  battery:  { cat: 'energy',   name: 'Battery bank',    cost: { parts: 10, elec: 5, mat: 6 },   req: 'generator', desc: 'Stores 12 hours of power: the lights stay on after the generator runs out of scrap.', done: 'The batteries will charge while the generator runs.' },
+  toolrack: { cat: 'crafting', name: 'Tool rack',       cost: { scrap: 15, mat: 6 },            req: 'workshop',  desc: 'Repairs and weapon crafting go 25% faster.', done: 'Everything is within reach now.' },
+  lab:      { cat: 'research', name: 'Research bench',  cost: { scrap: 25, parts: 8, elec: 4 }, desc: 'Signal tower work goes 15% faster.', done: 'The tower crew have a proper bench now.' },
+  maps:     { cat: 'research', name: 'Survey maps',     cost: { scrap: 10, parts: 4, mat: 4 },  desc: 'Scavenging trips bring back 10% more loot.', done: 'Scavengers know where to look.' },
+  rain:     { cat: 'water',    name: 'Rain collector',  cost: { scrap: 12, mat: 6 },            desc: 'Hydroponics grows 25% more food.', done: 'Ash-water filters into the hydroponics tanks.' },
+  medkit:   { cat: 'medical',  name: 'First-aid cabinet', cost: { scrap: 10, parts: 4, elec: 2 }, req: 'med', desc: 'Patients in the med bay heal 25% faster.', done: 'Bandages and splints are on the wall.' },
+  purifier: { cat: 'water',    name: 'Water purifier',  cost: { parts: 6, elec: 3, mat: 4 },    desc: 'Clean water keeps everyone fed: hunger drains 15% slower.', done: 'Clean water at last.' },
+};
+let buildCat = 'structure';
+function hasB(k) { return !!(S && S.builds && S.builds[k]); }
+const foodDrain = () => FOOD_DRAIN * (hasB('purifier') ? 0.85 : 1);
+function buyBuild(k) {
+  const b = BUILDS[k]; if (!b || hasB(k) || (b.req && !S.rooms[b.req]) || !canPay(b.cost)) return;
+  pay(b.cost); S.builds = S.builds || {}; S.builds[k] = 1; lamp(b.name + ' built. ' + b.done, 'good');
+}
+function buyItem(type) {
+  const T = ITEM_TYPES[type]; if (!T || !canPay(T.cost)) return;
+  const r = ROOMS[T.room]; if (!r || typeof r.x0 !== 'number') return;
+  const lo = Math.ceil((r.x0 + 4 - ITX0) / ITILE), hi = Math.floor((r.x1 - 4 - ITX0) / ITILE);
+  let col = -1;
+  for (const gap of [1, 0]) { for (let c = lo; c <= hi - T.w && col < 0; c++) if (itemSpotOk(T.room, r, c, T.w + gap)) col = c; if (col >= 0) break; }
+  if (col < 0) { lamp('No free space left in the ' + r.name + '.', 'warn'); return; }
+  pay(T.cost); S.itemSeq = (S.itemSeq || 0) + 1; itemList().push({ id: S.itemSeq, type, room: T.room, col, lvl: 1 });
+  lamp(T.name + ' built in the ' + r.name + '.', 'good');
+}
 const armoryMult = () => (S.rooms.armory && S.powered ? ROOM_FX.armoryDmg : 1);
 function powerTick(h) {
   if (!S.rooms.generator) { S.powered = false; return; }
-  const need = (ROOM_FX.fuelPerHour + S.turrets.reduce((a, t) => a + (t && t.type === 'coil' && t.hp > 0 ? TURRETS.coil.fuel : 0), 0)) * h, was = !!S.powered;
-  if (S.res.scrap >= need) { S.res.scrap -= need; S.powered = true; } else S.powered = false;
+  const need = (ROOM_FX.fuelPerHour + S.turrets.reduce((a, t) => a + (t && t.type === 'coil' && t.hp > 0 ? TURRETS.coil.fuel : 0), 0)) * h * (hasB('solar') ? 0.6 : 1) * (2 - wearF('gen')) * (tech('pow1') ? 0.8 : 1), was = !!S.powered;
+  wearBy('gen', 0.3 * h);
+  const bcap = hasB('battery') ? 12 : 0; S.batt = Math.min(S.batt || 0, bcap);
+  if (S.res.scrap >= need) { S.res.scrap -= need; S.powered = true; S.batt = Math.min(bcap, S.batt + 2 * h); }
+  else if (S.batt > 0) { S.batt = Math.max(0, S.batt - h); S.powered = true; }
+  else S.powered = false;
   if (was && !S.powered) { S.powerOut = true; lampEv('power_out', 'The generator has run out of scrap and gone dark. Rooms are back to manual.', 'warn'); }
   if (S.powered && S.powerOut) { S.powerOut = false; lampEv('power_back', 'Generator is running again. Power is back.', 'good'); }
 }
 const JOBS = {
-  turretA:  { label: 'Turret 1', short: 'T1' },
-  turretB:  { label: 'Turret 2', short: 'T2' },
+  turretA:  { label: 'Turret', short: 'Turret' },   // one Turret job: the game picks the slot (turretA / turretB are the slots behind it)
+  turretB:  { label: 'Turret', short: 'Turret', hidden: true },
   door:     { label: 'Guard door', short: 'Door' },
   workshop: { label: 'Workshop', short: 'Shop' },
   signal:   { label: 'Signal tower', short: 'Tower' },
   kitchen:  { label: 'Kitchen', short: 'Food' },
   hydro:    { label: 'Hydroponics', short: 'Hydro' },
   med:      { label: 'Med bay', short: 'Med' },
+  research: { label: 'Research', short: 'Lab' },
   mine:     { label: 'Miner', short: 'Mine' },
   idle:     { label: 'Rest', short: 'Rest' },
 };
@@ -68,7 +102,7 @@ const JOBS = {
 const STATIONS_FALLBACK = { capacity: null, ttlMin: 30, blockTicks: 120 };
 const STATIONS = {};
 for (const k of Object.keys(JOBS)) STATIONS[k] = Object.assign({}, STATIONS_FALLBACK);
-for (const [k, cap] of Object.entries({ turretA: 1, turretB: 1, door: 6, workshop: 4, signal: 3, kitchen: 4, hydro: 3, med: 3, sleep: 20 })) if (STATIONS[k]) STATIONS[k].capacity = cap; // 'sleep' is not a job, so it has no entry
+for (const [k, cap] of Object.entries({ turretA: 1, turretB: 1, door: 6, workshop: 4, research: 2, signal: 3, kitchen: 4, hydro: 3, med: 3, sleep: 20 })) if (STATIONS[k]) STATIONS[k].capacity = cap; // 'sleep' is not a job, so it has no entry
 function loadStationsConfig() {
   const okVal = (key, v) => key === 'capacity' ? (v === null || (Number.isInteger(v) && v >= 0)) : (Number.isInteger(v) && v >= 0);
   const apply = (target, src, where) => {
@@ -106,6 +140,7 @@ const ENEMIES = {
   ram:    { name: "Pike's ram rig", hp: 420, spd: 55, dmg: 24, rate: 1, w: 72, h: 40, color: '#6a4a3a', xp: 60 },
   brute:  { name: 'Brute', hp: 240, spd: 26, dmg: 32, rate: 1.6, w: 26, h: 40, color: '#6d5a7a', xp: 22 },
   cinder: { name: 'Cinder', hp: 520, spd: 34, dmg: 16, rate: 0.9, w: 20, h: 36, color: '#e0e0d6', xp: 120, ranged: 240, boss: true },
+  burrower: { name: 'Burrower', hp: 70, spd: 44, dmg: 10, rate: 1.1, w: 22, h: 20, color: '#7a6048', xp: 12, tunnel: true },
   maw:    { name: 'The Maw', hp: 900, spd: 30, dmg: 26, rate: 1.4, w: 44, h: 34, color: '#5b4a3a', xp: 150, boss: true, burrow: true },
 };
 
@@ -285,7 +320,7 @@ const rnd = (a, b) => a + Math.random() * (b - a);
 const pick = a => a[Math.floor(Math.random() * a.length)];
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const fmtCost = c => Object.entries(c).map(([k, v]) => v + ' ' + RES.find(r => r.k === k).name.toLowerCase()).join(', ');
+const fmtCost = c => Object.entries(c).map(([k, v]) => v + ' ' + (k === 'parts' && v === 1 ? 'part' : RES.find(r => r.k === k).name.toLowerCase())).join(', ');
 let uid = 1;
 
 // Lamp's voice: several variants per event so repeated raids do not read the same. lampSay(key, kind) picks one.
@@ -435,13 +470,14 @@ function randomSurvivor() {
   return { name: pick(FIRST) + ' ' + pick(LAST), role, color: pick(SURV_COLORS), accent: '#d8cfbf', stats, hp: Math.round(rnd(80, 105)), loyalty: +rnd(0.25, 0.9).toFixed(2), job: 'idle', shift: Math.random() < 0.5 ? 'day' : 'night' };
 }
 function newRun(goal) {
+  doorLowSaid = false;
   setGoal(goal === 'vehicle' ? 'vehicle' : 'tower');
   scav = null;
   S = {
     v: 1, rid: Math.random(), t: 8 * 60, lastHour: 8, res: { food: 40, scrap: 40, parts: 6, elec: 2, mat: 10 },
     door: { hp: 400, max: 400 }, wall: { hp: 300, max: 300, lvl: 1 }, breached: false,
     turrets: [{ type: 'rifle', hp: 130, max: 130, lvl: 1, cd: 0 }, null],
-    rooms: { kitchen: 1, hydro: 1, med: 1, bunks: 1 }, makeParts: true, ladders: [],
+    rooms: { kitchen: 1, hydro: 1, med: 1, bunks: 1 }, makeParts: true, ladders: [], builds: {}, batt: 0, cond: {}, rsch: { done: {}, cur: null, prog: {} }, exp: { teams: [], log: [], seq: 0 },
     goalKind: GOAL_KIND, tower: { done: 0, paid: false, work: 0 }, kit: { cooked: 8, cap: 16, prog: 0, raw: 6 }, stock: { pipe: 1, pistol: 1 }, craft: [],
     crew: [], enemies: [], spawns: [], alarm: false, stats: { kills: 0, trips: 0, raids: 0, lost: [], repelled: 0, scav: {}, moments: [] }, won: false, hint: 0,
     player: { hp: 100, maxHp: 100, food: 80, xp: 0, lvl: 1, down: 0 },
@@ -487,6 +523,13 @@ function migrateSave(sv) {
   if (s.dig !== undefined && (!s.dig || typeof s.dig !== 'object')) delete s.dig;
   if (s.dig && (!s.dig.lad || typeof s.dig.lad !== 'object')) s.dig.lad = {};
   if (!Array.isArray(s.ladders)) s.ladders = [];
+  if (!s.builds || typeof s.builds !== 'object') s.builds = {};
+  if (!s.cond || typeof s.cond !== 'object') s.cond = {};
+  if (!s.rsch || typeof s.rsch !== 'object' || !s.rsch.done || typeof s.rsch.prog !== 'object') s.rsch = { done: {}, cur: null, prog: {} };
+  if (!s.exp || !Array.isArray(s.exp.teams)) s.exp = { teams: [], log: [], seq: 0 };
+  if (!Array.isArray(s.exp.log)) s.exp.log = [];
+  s.exp.teams = s.exp.teams.filter(t => t && DESTS[t.dest] && Array.isArray(t.ids) && typeof t.back === 'number');
+  for (const c of s.crew) if (c && c.exp && !s.exp.teams.some(t => t.id === c.exp)) c.exp = null;
   if (!Array.isArray(s.drops)) s.drops = [];
   s.ladders = s.ladders.filter(l => l && (l.g === 1 || l.g === 2) && typeof l.x === 'number');
   for (const c of s.crew) { if (c && c.sched !== undefined && typeof c.sched !== 'string') delete c.sched; }
@@ -523,7 +566,7 @@ function moment(text) {
 const hourF = () => (S.t % 1440) / 60;
 const clockText = () => { const h = Math.floor(hourF()), m = Math.floor(S.t % 60); return 'DAY ' + day() + ' · ' + String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); };
 const isNight = () => { const h = hourF(); return h >= 20 || h < 6; };
-const living = () => S.crew.filter(c => c.alive);
+const living = () => S.crew.filter(c => c.alive && !c.exp);   // crew out on an expedition are not in the bunker
 // Schedule: 24 chars, one per hour. S = sleep, W = work (assigned job), M = meal.
 let schedBrush = 'S';
 function defaultSched(shift) {
@@ -584,6 +627,7 @@ function moraleTick(c, h) {
   if (c.grief > 0) d -= 2;
   if (c.state === 'sleep') d += c.bed === false ? FLOOR_MORALE : 3;
   if (restActive(c)) d += 6;
+  d += Math.min(DECO_CAP, decoCount() * 0.25);
   if (d === 0 && c.food > 50 && restPct(c) > 50) d += 1;
   c.mor = clamp((c.mor ?? 70) + d * h, 0, 100);
 }
@@ -592,7 +636,7 @@ function moraleTick(c, h) {
 function jobSpot(c, job) {
   if (job === 'turretA' || job === 'turretB') { const i = job === 'turretA' ? 0 : 1; return { floor: 0, x: SLOT_X[i] - 4 }; }
   if (job === 'door') { const same = living().filter(o => o.job === 'door'); return { floor: 0, x: 278 + same.indexOf(c) * 14 }; }
-  const room = Object.values(ROOMS).find(r => r.job === job) || ROOMS.common;
+  const room = job === 'research' ? ROOMS.signal : (Object.values(ROOMS).find(r => r.job === job) || ROOMS.common);
   const same = living().filter(o => targetJob(o) === job);
   const i = Math.max(0, same.indexOf(c));
   const pk = pitRoomFor(job);
@@ -607,7 +651,7 @@ function jobSpot(c, job) {
 }
 // What someone should be doing right now.
 // Applies station capacity on top of baseJob. Door and turrets are never capped (battle stations).
-const CAPPED_JOBS = ['workshop', 'signal', 'kitchen', 'hydro', 'med', 'idle'];
+const CAPPED_JOBS = ['workshop', 'research', 'signal', 'kitchen', 'hydro', 'med', 'idle'];
 function targetJob(c) {
   const job = baseJob(c);
   if (c.patient || S.alarm || !CAPPED_JOBS.includes(job)) return job;
@@ -632,9 +676,29 @@ function baseJob(c) {
   if (c.plate || hungryNow(c)) return 'meal';   // hungry: fetch food, eat it at the table, then go back to work
   if ((c.job === 'turretA' || c.job === 'turretB') && !turretFor(c.job)) return 'door';
   if (c.job === 'workshop' && !S.rooms.workshop) return 'idle';   // no workshop built yet
+  if (c.job === 'research' && !(S.builds && S.builds.lab)) return 'idle';   // no research bench yet
   return c.job;
 }
 const turretFor = job => S.turrets[job === 'turretB' ? 1 : 0];
+// Gunners just take the Turret job: this picks the built gun with the fewest gunners (never a coil, which needs nobody).
+function autoTurret(c) {
+  const slots = [0, 1].filter(i => S.turrets[i] && S.turrets[i].type !== 'coil');
+  if (!slots.length) return 'turretA';
+  const load = i => S.crew.filter(o => o.alive && o !== c && o.job === (i ? 'turretB' : 'turretA')).length;
+  let best = slots[0]; for (const i of slots) if (load(i) < load(best)) best = i;
+  return best ? 'turretB' : 'turretA';
+}
+// Re-spread gunners: off a missing or coil slot, or off a crowded gun when another gun has fewer.
+function balanceTurrets() {
+  if (!S) return;
+  for (const c of S.crew) {
+    if (!c.alive || (c.job !== 'turretA' && c.job !== 'turretB')) continue;
+    const mine = S.turrets[c.job === 'turretB' ? 1 : 0], n = autoTurret(c);
+    if (n === c.job) continue;
+    const cnt = j => S.crew.filter(o => o.alive && o !== c && o.job === j).length;
+    if (!mine || mine.type === 'coil' || cnt(n) < cnt(c.job)) { c.job = n; c.alarmSlot = null; }
+  }
+}
 // hungry enough to stop work and eat, and there is something to eat
 function hungryNow(c) { return c.food < 30 && (kit().cooked >= 1 || S.res.food >= 1); }
 // a plate in hand is dropped where the person stands (battle stations, med bay, sleep) and left on the floor for a while
@@ -663,9 +727,10 @@ function taskKey(c) {
 function drawTaskIcon(c) {
   const k = taskKey(c), col = TASK_ICON[k], x = c.x, y = c.y - 56;
   g.save(); g.translate(x, y);
-  g.fillStyle = 'rgba(16,10,6,.82)'; g.beginPath(); g.arc(0, 0, 9, 0, 7); g.fill();
+  const sq = () => { g.beginPath(); g.moveTo(-6, -10); g.lineTo(6, -10); g.lineTo(10, -6); g.lineTo(10, 6); g.lineTo(6, 10); g.lineTo(-6, 10); g.lineTo(-10, 6); g.lineTo(-10, -6); g.closePath(); };
+  g.fillStyle = 'rgba(20,16,12,.92)'; sq(); g.fill();
   g.strokeStyle = col; g.fillStyle = col; g.lineWidth = 1.6; g.lineCap = 'round'; g.lineJoin = 'round';
-  g.beginPath(); g.arc(0, 0, 9, 0, 7); g.stroke();
+  sq(); g.stroke();
   g.beginPath();
   if (k === 'turret') { g.arc(0, 0, 4, 0, 7); g.moveTo(-6, 0); g.lineTo(-2, 0); g.moveTo(2, 0); g.lineTo(6, 0); g.moveTo(0, -6); g.lineTo(0, -2); g.moveTo(0, 2); g.lineTo(0, 6); g.stroke(); }
   else if (k === 'door') { g.rect(-4, -5, 8, 10); g.moveTo(-4, -1); g.lineTo(4, -1); g.stroke(); }
@@ -747,7 +812,9 @@ function hourEvents(h) {
   if (h === 15 && d === 5 && !S.maw) { S.maw = { at: S.t + 120, done: false }; lamp('The floor is trembling. Something big is moving under the bunker. Get everyone armed and away from the lower floor.', 'warn'); addShake(0.3); }
   if (h === 12 && d >= 3 && !(S.pair && S.pair.dorrowDone)) recruitDorrow();
   else if (h === 12 && d >= 2 && Math.random() < 0.55) wandererAtDoor();
+  expHour();
   autoArm();
+  balanceTurrets();
   lowResCheck();
   if (h % 1 === 0) save();
 }
@@ -764,7 +831,10 @@ function meal(h) {
   else lampEv('hungry', 'The serving station is empty. Mara went without a meal. Put a cook in the kitchen, or bring food back from topside.', 'warn');
 }
 // Raid tuning (balance pass for a ~1 hour run). Edit these to retune.
-const RAID_BASE = 3, RAID_PER_DAY = 1.25, RAID_CAP = 20, CINDER_ESCORT = 3, ENEMY_HP_PER_DAY = 0.08;
+// Burrower: stops BURROW_STOP px right of the hatch, digs for BURROW_DIG_TIME seconds, then surfaces inside.
+const _TB = (window.TUNING && TUNING.burrower) || {}, _TR = (window.TUNING && TUNING.raid) || {};
+const BURROW_DIG_TIME = _TB.digTime ?? 4, BURROW_STOP = _TB.stopPx ?? 140;
+const RAID_BASE = _TR.base ?? 3, RAID_PER_DAY = _TR.perDay ?? 1.25, RAID_CAP = _TR.cap ?? 20, CINDER_ESCORT = _TR.cinderEscort ?? 3, ENEMY_HP_PER_DAY = _TR.enemyHpPerDay ?? 0.08;
 function raidPlan(d) {
   if (S.plan && S.plan.d === d) return S.plan.list;
   const n = Math.min(RAID_CAP, RAID_BASE + Math.round(d * RAID_PER_DAY));
@@ -773,6 +843,7 @@ function raidPlan(d) {
   for (let i = 0; i < n; i++) list.push(pick(types));
   if (d >= 3 && d % 2 === 1) list.push('brute');
   if (d === 3) { for (let i = 0; i < CINDER_ESCORT; i++) list.push('raider'); list.push('cinder'); }
+  if (d >= 4) for (let i = 0; i < Math.min(3, Math.floor((d - 2) / 2)); i++) list.push('burrower');
   if (d >= 6) for (let i = 0; i < Math.floor((d - 4) / 2); i++) list.push(pick(['raider', 'brute', 'hound']));
   S.plan = { d, list };
   return list;
@@ -855,7 +926,7 @@ function crewTick(c, dt, mins) {
   if (c.grief > 0) c.grief -= h;
   moraleTick(c, h);
   // needs
-  c.food = Math.max(0, c.food - FOOD_DRAIN * h);
+  c.food = Math.max(0, c.food - foodDrain() * h);
   if (c.food <= 0) { c.hp -= 3 * h; if (c.hp <= 0) return kill(c, 'starved'); }
   if (c.state === 'sleep') c.awake = Math.max(0, c.awake - h * (16 / (S.rooms.bunks > 1 ? 5 : 7)) * (c.bed === false ? FLOOR_REST_MULT : 1));
   else c.awake += h;
@@ -866,8 +937,8 @@ function crewTick(c, dt, mins) {
   if (c.patient && !c.sick && c.hp >= c.maxHp * 0.85) c.patient = false;
 
   // fight anything that reaches them
-  const foe = c.pit ? null : S.enemies.find(e => e.floor === c.floor && !e.climbing && !c.climbing && Math.abs(e.x - c.x) < 26 && e.hp > 0);
-  if (foe) { leaveState(c, 'fight'); c.state = 'fight'; c.facing = Math.sign(foe.x - c.x) || 1; if (c.cd <= 0) { c.cd = 0.7; hitEnemy(foe, (8 + c.stats.acc * 8) * eff(c), c); } return; }
+  const foe = c.pit ? null : S.enemies.find(e => !e.hidden && e.floor === c.floor && !e.climbing && !c.climbing && Math.abs(e.x - c.x) < 26 && e.hp > 0);
+  if (foe) { leaveState(c, 'fight'); c.state = 'fight'; c.facing = Math.sign(foe.x - c.x) || 1; if (c.cd <= 0) { c.cd = 0.7; hitEnemy(foe, meleeDmg(c) * eff(c), c, meleeType(c)); } return; }
   // guards hunt enemies that got inside
   let job = targetJob(c);
   if (c.plate && job !== 'meal') dropPlate(c);
@@ -890,9 +961,9 @@ function crewTick(c, dt, mins) {
     const inside = S.enemies.filter(e => e.inside && e.hp > 0).sort((a, b) => (Math.abs(a.floor - c.floor) * 500 + Math.abs(a.x - c.x)) - (Math.abs(b.floor - c.floor) * 500 + Math.abs(b.x - c.x)))[0];
     if (inside) {
       // guards carry pistols: shoot when on the same floor and close enough, otherwise close in
-      if (inside.floor === c.floor && !c.climbing && !inside.climbing && Math.abs(inside.x - c.x) < 140) {
+      if (inside.floor === c.floor && !c.climbing && !inside.climbing && Math.abs(inside.x - c.x) < wpn(c).range) {
         c.state = 'fight'; c.facing = Math.sign(inside.x - c.x) || 1;
-        if (c.cd <= 0) { c.cd = 0.8; tracer(c.x + c.facing * 8, c.y - 20, inside.x, inside.y - 14, '#ffd27a'); if (Math.random() < 0.4 + 0.5 * c.stats.acc) hitEnemy(inside, 11 * eff(c) * armoryMult(), c); }
+        if (c.cd <= 0) crewShoot(c, inside);
         return;
       }
       c.state = 'walk'; moveTo(c, inside.floor, inside.x, dt, 80); return;
@@ -910,13 +981,13 @@ function crewTick(c, dt, mins) {
   const e = eff(c) * (S.powered && POWERED_JOBS.includes(job) ? ROOM_FX.powerBoost : 1);
   const gain = x => { c.xp += x * h; const need = 60 * c.lvl; if (c.xp >= need) { c.xp -= need; levelUp(c); } };
   switch (job) {
-    case 'hydro': S.res.food += 1.3 * c.stats.cook * e * h * (S.rooms.hydro > 1 ? 1.5 : 1); gain(3); break;   // hydroponics: raw food into the pantry
+    case 'hydro': S.res.food += 1.3 * c.stats.cook * e * h * (S.rooms.hydro > 1 ? 1.5 : 1) * (hasB('rain') ? 1.25 : 1) * wearF('planter') * hydroMul(); wearBy('planter', 0.4 * h); gain(3); break;   // hydroponics: raw food into the pantry
     case 'kitchen': {
       const k = kit(); if (k.raw == null) k.raw = 0;
       // cook from the raw food the kitchen already has (hauled in by kitchenHaul); finished meals go into the cook's hands
       const held = () => (c.carry && c.carry.id === 'meal' ? c.carry.n : 0);
       if (k.cooked + held() < k.cap && k.raw >= 1) {
-        k.prog += 4 * c.stats.cook * e * h;
+        k.prog += 4 * c.stats.cook * e * h * wearF('stove') * (tech('cook1') ? 1.15 : 1); wearBy('stove', 0.5 * h);
         while (k.prog >= 1 && k.raw >= 1 && k.cooked + held() < k.cap) {
           k.prog -= 1; k.raw -= 1;
           if (!c.carry) c.carry = { id: 'meal', n: 0 };
@@ -927,7 +998,8 @@ function crewTick(c, dt, mins) {
       gain(4); break;
     }
     case 'workshop': workshopTick(c, e, h); gain(4); break;
-    case 'signal': if (S.tower.paid) { S.tower.work += 2 * c.stats.tech * e * h; gain(5); } break;
+    case 'research': researchWork(3 * c.stats.tech * e * h); gain(4); break;
+    case 'signal': if (S.tower.paid) { S.tower.work += 2 * c.stats.tech * e * h * (hasB('lab') ? 1.15 : 1); gain(5); } break;
     case 'med': gain(2); break;
     case 'door': guardShoot(c, e); break;
     case 'idle': c.awake = Math.max(0, c.awake - h * 0.3); break;
@@ -983,7 +1055,7 @@ function mealTick(c, dt, mins) {
 }
 // ---- beds: limited; people without one sleep on the floor (slower rest, morale loss) ----
 const FLOOR_REST_MULT = 0.6, FLOOR_MORALE = -1;
-function bedCount() { const cap = (STATIONS.sleep && STATIONS.sleep.capacity) || 20; return S.rooms.bunks > 1 ? cap : Math.ceil(cap / 2); }
+function bedCount() { return itemList().filter(it => it.type === 'bunk').length * 2; }   // each bunk is two beds, bought one at a time
 function claimBed(c) {
   if (c.bed === true || c.bed === false) return;
   const used = living().filter(o => o !== c && o.bed === true).length;
@@ -1312,7 +1384,7 @@ function drawDig() {
   for (let r = 0; r < DIG.rows; r++) for (let c = 0; c < DIG.cols; c++) {
     const i = dIdx(c, r), v = d.m[i], x = DIG.x0 + c * cs, y = DIG.y0 + r * cs;
     if (v === 0) { if (r === 0) { g.fillStyle = '#0e0a07'; g.fillRect(x, FLOORS[3], cs, 10); } continue; }
-    g.fillStyle = DIG.mats[v].color; g.fillRect(x, y, cs, cs);
+    g.fillStyle = DIG.mats[v].color; g.fillRect(x, y, cs, cs); tex(v >= 3 ? 'stone' : 'soil', x, y, cs, cs, 1);
     g.strokeStyle = 'rgba(0,0,0,.35)'; g.lineWidth = 1; g.strokeRect(x + 0.5, y + 0.5, cs - 1, cs - 1);
     g.fillStyle = 'rgba(0,0,0,.28)'; g.strokeStyle = 'rgba(0,0,0,.3)';
     if (v === 1) { g.fillRect(x + 6, y + 7, 3, 3); g.fillRect(x + 15, y + 15, 3, 3); }
@@ -1331,7 +1403,7 @@ function drawDig() {
   for (const [k, rm] of Object.entries(d.rooms)) {
     const rx = DIG.x0 + rm.c * cs, ry = DIG.y0 + rm.r * cs, rw = rm.w * cs, rh = rm.h * cs;
     const gr = g.createLinearGradient(0, ry, 0, ry + rh); gr.addColorStop(0, '#2a1d12'); gr.addColorStop(1, '#4a3018');
-    g.fillStyle = gr; g.fillRect(rx, ry, rw, rh);
+    g.fillStyle = gr; g.fillRect(rx, ry, rw, rh); tex('stone', rx, ry, rw, rh, 0.9);
     g.strokeStyle = '#5a4428'; g.lineWidth = 2; g.strokeRect(rx + 1, ry + 1, rw - 2, rh - 2);
     g.fillStyle = '#ffcf7a'; g.fillRect(rx + rw / 2 - 6, ry + 2, 12, 4);
     g.fillStyle = 'rgba(255,214,150,.85)'; g.font = '600 12px sans-serif'; g.fillText(ROOMS[k].name.toUpperCase(), rx + 8, ry + 18);
@@ -1428,15 +1500,17 @@ function drawDigHint() {
 }
 function workshopTick(c, e, h) {
   // Repairs first (1 scrap per 10 hp), then parts from scrap.
-  let work = 10 * c.stats.build * e * h;
+  let work = 10 * c.stats.build * e * h * (hasB('toolrack') ? 1.25 : 1);
   for (const s of [S.door, S.wall, ...S.turrets.filter(Boolean)]) {
     if (work <= 0) break;
     if (s === S.door && S.enemies.some(en => en.inside)) continue;
     const miss = s.max - s.hp; if (miss <= 0) continue;
     const amt = Math.min(miss, work, S.res.scrap * 10); if (amt <= 0) break;
     s.hp += amt; S.res.scrap -= amt / 10; work -= amt;
-    if (s === S.door && S.breached && S.door.hp > 40) { S.breached = false; lampEv('door_repair', 'The hatch is sealed again.', 'good'); }
+    if (window.SFX && SFX.repair) SFX.repair();
+    if (s === S.door && S.breached && S.door.hp > 40) { S.breached = false; if (window.SFX && SFX.repair) SFX.repair('seal'); lampEv('door_repair', 'The hatch is sealed again.', 'good'); }
   }
+  work = maintTick(work);   // leftover work services worn machines
   // then the craft queue (weapons paid for up front in the Gear tab)
   while (work > 0 && S.craft && S.craft.length) {
     const j = S.craft[0], use = Math.min(work, j.left);
@@ -1448,7 +1522,7 @@ function workshopTick(c, e, h) {
 }
 function guardShoot(c, e) {
   if (c.cd > 0) return;
-  const t = S.enemies.filter(en => !en.inside && en.hp > 0 && en.x > c.x && en.x - c.x < 260).sort((a, b) => a.x - b.x)[0];
+  const t = S.enemies.filter(en => !en.inside && !en.hidden && en.hp > 0 && en.x > c.x && en.x - c.x < 260).sort((a, b) => a.x - b.x)[0];
   if (!t) return;
   c.cd = 0.9; c.facing = 1;
   tracer(c.x + 8, c.y - 20, t.x, t.y - 14, '#ffd27a');
@@ -1485,7 +1559,7 @@ function sicken(c, why) {
 function medTick(h) {
   const medics = living().filter(c => c.job === 'med' && c.state === 'work');
   const rate = medics.length ? medics.reduce((a, c) => a + 10 * c.stats.med * eff(c), 0) : 2;
-  const mult = (S.rooms.med > 1 ? 1.5 : 1) * (S.powered ? ROOM_FX.powerBoost : 1);
+  const mult = (S.rooms.med > 1 ? 1.5 : 1) * (hasB('medkit') ? 1.25 : 1) * (S.powered ? ROOM_FX.powerBoost : 1);
   for (const c of living()) if (c.state === 'patient' || (c.floor === 2 && c.x > ROOMS.med.x0 && c.state !== 'walk')) c.hp = Math.min(c.maxHp, c.hp + rate * mult * h);
   // cure illness: patients in the med bay recover, much faster with a medic on duty
   const cureRate = (medics.length ? medics.reduce((a, c) => a + 0.5 * c.stats.med * eff(c), 0) : 0.1) * mult;
@@ -1510,14 +1584,38 @@ function coilSlow(e) {
   for (let i = 0; i < 2; i++) { const t = S.turrets[i]; if (t && t.type === 'coil' && t.hp > 0 && e.x > SLOT_X[i] - 20 && e.x - SLOT_X[i] < TURRETS.coil.range) return TURRETS.coil.slow; }
   return 1;
 }
+function burrowerEmerge(e) {
+  const fl = 1 + Math.floor(Math.random() * (FLOORS.length - 1));
+  e.hidden = false; e.dig = null; e.inside = true; e.burrow = true;
+  e.floor = fl; e.y = FLOORS[fl]; e.x = clamp(LADDER_X + rnd(-120, 120), 40, W - 40); e.climbing = false;
+  if (!S.alarm && !S.alarmAuto) { S.alarmAuto = true; toggleAlarm(); }
+  addShake(0.35); if (window.SFX && SFX.rumble) SFX.rumble(0.6);
+  burst(e.x, e.y - 8, '#8a7a66', 16);
+  lamp('A Burrower tunnelled past the door and surfaced inside the bunker!', 'warn');
+  if (speed > 1) setSpeed(1);
+}
 function enemyTick(e, dt) {
   const b = ENEMIES[e.type];
   e.anim += dt * 8; if (e.cd > 0) e.cd -= dt;
+  if (statusTick(e, dt) || tactics(e, b, dt)) return;
+  if (b.tunnel && !e.inside) {
+    if (!e.dig) {
+      if (e.x > DOOR_X + BURROW_STOP) { e.x -= b.spd * coilSlow(e) * dt; e.facing = -1; return; }
+      e.dig = { t: BURROW_DIG_TIME, warned: false }; e.hidden = true; burst(e.x, FLOORS[0] - 4, '#8a7a66', 10);
+      addShake(0.12); if (window.SFX && SFX.rumble) SFX.rumble(0.3);
+      return;
+    }
+    e.dig.t -= dt;
+    if (Math.random() < dt * 6) burst(e.x, FLOORS[0] - 4, '#8a7a66', 2);
+    if (!e.dig.warned && e.dig.t <= BURROW_DIG_TIME / 2) { e.dig.warned = true; if (!prefs.rm) addShake(0.08); if (window.SFX && SFX.rumble) SFX.rumble(0.4); }
+    if (e.dig.t <= 0) burrowerEmerge(e);
+    return;
+  }
   if (!e.inside) {
     // anyone standing on the surface in its way?
     const people = [...living().filter(c => c.floor === 0 && !c.climbing), ...(scene === 'bunker' && P.floor === 0 && !S.player.down ? [P] : [])];
     const near = people.filter(p => p.x < e.x + 4 && e.x - p.x < (b.ranged || 24)).sort((a, z) => z.x - a.x)[0];
-    const target = structureList().find(t => t.x < e.x + 4);
+    const target = pickTarget(e, b);
     const tx = target ? target.x + (b.ranged || 22) : DOOR_X;
     if (near && (!target || near.x > target.x)) return attack(e, b, near, near.x);
     if (!target) { e.x += b.spd * dt; return; }   // somehow left of the hatch: walk back to it
@@ -1542,12 +1640,14 @@ function attack(e, b, target, tx, what) {
   e.cd = b.rate;
   if (b.ranged) { tracer(e.x - 6, e.y - b.h + 8, tx, (target.y || FLOORS[0]) - 16, '#ff7a5a'); if (Math.random() > 0.65) return; }
   if (target === P) return hurtPlayer(b.dmg);
-  if (target.stats) { target.hp -= b.dmg; burst(target.x, target.y - 16, '#c33', 4); if (target.hp <= 0) kill(target); return; }
-  target.hp = Math.max(0, target.hp - b.dmg); burst(tx + 6, FLOORS[0] - 20, '#bbb', 3);
+  if (target.stats) { target.hp -= b.dmg * coverMul(target); burst(target.x, target.y - 16, '#c33', 4); if (target.hp <= 0) kill(target); return; }
+  target.hp = Math.max(0, target.hp - b.dmg * structDmgMul(what)); burst(tx + 6, FLOORS[0] - 20, '#bbb', 3);
   if (window.SFX) SFX.hit(what);
   if (what === 'door') {
+    fxDust(tx + 6, FLOORS[0] - 14, 4 + Math.floor(Math.random() * 3));
+    fxSparks(tx + 6, FLOORS[0] - 20, 3 + Math.floor(Math.random() * 3), 1);
     const dm = b.dmg || 1;
-    addShake(clamp(0.08 + dm * 0.015, 0.08, 0.45));
+    if (scene === 'bunker') addShake(clamp(0.08 + dm * 0.015, 0.08, 0.45));
     if (window.SFX && SFX.rumble) SFX.rumble(clamp(dm / 20, 0.15, 1));
   }
   if (what === 'door') {
@@ -1562,6 +1662,7 @@ function breach() {
   if (!S.alarm && !S.alarmAuto) { S.alarmAuto = true; toggleAlarm(); }
   if (S.breached) return;
   S.breached = true; addShake(0.5); if (window.SFX && SFX.rumble) SFX.rumble(1);
+  if (window.SFX && SFX.breach) SFX.breach();
   atLoc({ x: DOOR_X, y: FLOORS[0] }); lampSay('breach', 'warn'); moment('The door was breached');
   if (!S.breachLog) {
     if (S.tower.done >= 1) { S.breachLog = 2; lamp(pick(LAMP_LINES.breachCause), 'warn', 2500); }
@@ -1569,8 +1670,9 @@ function breach() {
   }
   if (speed > 1) setSpeed(1);
 }
-function hitEnemy(e, dmg, by) {
-  if (e.hp <= 0) return;
+function hitEnemy(e, dmg, by, dtype, crit) {
+  if (e.hp <= 0 || e.hidden) return;
+  dmg *= resMul(e, dtype || 'pierce');
   e.hp -= dmg; fx.nums.push({ x: e.x, y: e.y - ENEMIES[e.type].h - 6, t: 0.7, s: Math.round(dmg) });
   burst(e.x, e.y - ENEMIES[e.type].h / 2, '#7a2', 3);
   if (e.hp <= 0) {
@@ -1589,7 +1691,15 @@ function hitEnemy(e, dmg, by) {
     burst(e.x, e.y - 10, '#5a3', 12);
   }
 }
-function turretTick(dt) {
+function turretCrewed(t) {
+  if (!t) return false;
+  if (t.type === 'coil') return !!t.manned;
+  const i = S.turrets.indexOf(t);
+  if (i < 0) return false;
+  const job = i ? 'turretB' : 'turretA';
+  return living().some(c => c.job === job || (S.alarm && c.alarmSlot === i));
+}
+function turretTickOld(dt) {   // replaced by turretTick in systems.js
   S.turrets.forEach((t, i) => {
     if (!t) return;
     if (t.cd > 0) t.cd -= dt;
@@ -1598,10 +1708,13 @@ function turretTick(dt) {
     t.manned = !!gunner;
     if (!gunner || t.cd > 0) return;
     const spec = TURRETS[t.type];
-    const target = S.enemies.filter(e => !e.inside && e.hp > 0 && e.x > SLOT_X[i] && e.x - SLOT_X[i] < spec.range && e.x < W + 10).sort((a, z) => a.x - z.x)[0];
+    const target = S.enemies.filter(e => !e.inside && !e.hidden && e.hp > 0 && e.x > SLOT_X[i] && e.x - SLOT_X[i] < spec.range && e.x < W + 10).sort((a, z) => a.x - z.x)[0];
     if (!target) return;
     t.cd = spec.cd; t.flash = 0.08;
     if (window.SFX) SFX.turret(t.type);
+    fxSparks(SLOT_X[i] + 18, FLOORS[0] - 30, 3, 1);
+    fxDust(SLOT_X[i] + 14, FLOORS[0] - 24, 2);
+    if (scene === 'bunker') addShake(t.type === 'rifle' ? 0.05 : 0.09);
     const e = eff(gunner);
     for (let k = 0; k < spec.pellets; k++) {
       const ty = target.y - ENEMIES[target.type].h / 2 + rnd(-8, 8);
@@ -1620,7 +1733,7 @@ function simTick(dt) {
   // spawns
   for (let i = S.spawns.length - 1; i >= 0; i--) if (S.t >= S.spawns[i].at) { spawnEnemy(S.spawns[i].type); S.spawns.splice(i, 1); }
   mawTick(dt);
-  for (const c of S.crew) if (c.alive) crewTick(c, dt, mins);
+  for (const c of S.crew) if (c.alive && !c.exp) crewTick(c, dt, mins);
   maraWorkTick(mins);
   pairTick(mins);
   powerTick(mins / 60);
@@ -1650,10 +1763,10 @@ function simTick(dt) {
       lampEv('newcomer', 'Rook, one of Cinder’s raiders, stands at the hatch with his hands open. He says he is done with the wasteland’s hunger and wants to fight for the bunker. I let him in. He is hurt, and some of the crew will not trust him yet.', 'good');
     }
   }
-  if (S.breached && !S.enemies.some(e => e.inside) && S.door.hp > 40) S.breached = false;
+  if (S.breached && !S.enemies.some(e => e.inside) && S.door.hp > 40) { S.breached = false; if (window.SFX && SFX.repair) SFX.repair('seal'); }
   // Mara's needs
   const pl = S.player;
-  pl.food = Math.max(0, pl.food - FOOD_DRAIN * mins / 60);
+  pl.food = Math.max(0, pl.food - foodDrain() * mins / 60);
   if (pl.food <= 0 && !pl.down) hurtPlayer(3 * mins / 60, true);
   // tower
   if (S.tower.paid && !S.tower.half && S.tower.work >= TOWER[S.tower.done].work / 2 && S.tower.work < TOWER[S.tower.done].work) { S.tower.half = true; lampSay('towerHalf', 'good', { name: TOWER[S.tower.done].name }); }
@@ -1664,7 +1777,7 @@ function simTick(dt) {
     if (S.breachLog === 1) { S.breachLog = 2; lamp(pick(LAMP_LINES.breachCause), 'good', 3000); }
   }
   // tutorial nudges
-  if (S.hint === 0 && S.t > 9.5 * 60) { S.hint = 1; lamp('Tip: Old Bram in the Workshop repairs the door, wall and turrets with scrap, and turns spare scrap into parts.'); }
+  if (S.hint === 0 && S.t > 9.5 * 60) { S.hint = 1; lamp(S.rooms.workshop ? 'Tip: Old Bram in the Workshop repairs the door, wall and turrets with scrap, and turns spare scrap into parts.' : 'Tip: Build a Workshop (Build tab, then place it in the pit) so someone can repair the door and turrets.'); }
   if (S.hint === 1 && S.t > 17 * 60) { S.hint = 2; lamp('Night is coming. Check who is on the turrets after dark: day-shift crew go to bed at 23:00. Battle stations (G) wakes everyone up.', 'warn'); }
 }
 
@@ -1731,18 +1844,54 @@ function playerTick(dt) {
   if ((kd('shoot') || mouse.down) && P.cd <= 0) shoot();
   if (P.hurt > 0) P.hurt -= dt;
 }
+let walkHint = '', walkHoldT = 0, walkHoldX = 0, scavGoalWas = false, scavGoalT = 0;
+function scavGoalActive() {
+  const g = goalSteps().find(s => !s[2]);
+  return !!g && g[0] === 'scav';
+}
+function walkHintTick(dt) {
+  scavGoalT -= dt;
+  if (scavGoalT <= 0) {
+    scavGoalT = 0.25;
+    const a = scavGoalActive();
+    if (a && !scavGoalWas && sel) { sel = null; renderDrawer(); }
+    scavGoalWas = a;
+  }
+  if (scene !== 'bunker' || P.auto || S.player.down || P.onLadder || !kd('right')) { walkHoldT = 0; walkHoldX = P.x; walkHint = ''; return; }
+  if (Math.abs(P.x - walkHoldX) > 1) { walkHoldX = P.x; walkHoldT = 0; walkHint = ''; return; }
+  walkHoldT += dt;
+  if (walkHoldT < 0.4) return;
+  if (P.floor > 0) walkHint = 'Mara is still inside the bunker. Take the ladder up to the surface first.';
+  else if (sel) { sel = null; renderDrawer(); walkHint = 'Mara was not selected. Selecting her now, hold D again.'; }
+  else if (P.x >= W - 13) walkHint = 'Blocked: you are at the edge of the map.';
+  else walkHint = 'Blocked: something is in Mara\'s way.';
+}
+// Aim assist: Mara only fires at an enemy within AIM_SNAP px (3 tiles) of the cursor. Touch with no cursor target picks the nearest enemy she faces.
+const AIM_SNAP = 90, AIM_TOUCH = 420;
+function aimTarget() {
+  if ((scene !== 'bunker' && scene !== 'scav') || !S) return null;
+  const sc = scene === 'scav', list = sc ? (scav ? scav.enemies : []) : S.enemies;
+  const ok = e => e.hp > 0 && !e.hidden && ENEMIES[e.type] && (sc || ((e.floor || 0) === (P.floor || 0) && !e.climbing && !P.climbing));
+  const aimY = e => e.y - ENEMIES[e.type].h * 0.55;
+  let best = null, bd = AIM_SNAP;
+  if (mouse.inCv) for (const e of list) { if (!ok(e)) continue; const d = Math.hypot(e.x - mouse.wx, aimY(e) - mouse.wy); if (d < bd) { bd = d; best = e; } }
+  if (!best && document.body.classList.contains('touch')) { bd = AIM_TOUCH; for (const e of list) { if (!ok(e)) continue; const dx = (e.x - P.x) * P.facing; if (dx > 0 && dx < bd) { bd = dx; best = e; } } }
+  return best ? { e: best, x: best.x, y: aimY(best), sc } : null;
+}
 function shoot() {
+  const t = aimTarget(); if (!t) return;
   P.cd = 0.34;
-  const dir = mouse.down && scene !== 'menu' ? (Math.sign(mouse.wx - P.x) || P.facing) : P.facing; P.facing = dir;
-  fx.bullets.push({ x: P.x + dir * 12, y: P.y - 20, vx: dir * 900, life: 0.55, dmg: Math.round((13 + S.player.lvl * 2) * armoryMult()), world: scene });
+  const sx = P.x, sy = P.y - 20, dir = Math.sign(t.x - sx) || P.facing; P.facing = dir;
+  const dx = t.x - (sx + dir * 12), dy = t.y - sy, d = Math.hypot(dx, dy) || 1;
+  fx.bullets.push({ x: sx + dir * 12, y: sy, vx: dx / d * 900, vy: dy / d * 900, life: Math.min(1.2, d / 900 + 0.12), dmg: Math.round((13 + S.player.lvl * 2) * armoryMult()), world: scene });
 }
 function bulletsTick(dt) {
   for (const b of fx.bullets) {
-    b.x += b.vx * dt; b.life -= dt;
+    b.x += b.vx * dt; b.y += (b.vy || 0) * dt; b.life -= dt;
     const list = b.world === 'scav' ? (scav ? scav.enemies : []) : S.enemies;
     for (const e of list) {
       const spec = ENEMIES[e.type];
-      if (e.hp > 0 && Math.abs(e.x - b.x) < spec.w / 2 + 4 && b.y > e.y - spec.h - 4 && b.y < e.y + 2) {
+      if (e.hp > 0 && !e.hidden && Math.abs(e.x - b.x) < spec.w / 2 + 4 && b.y > e.y - spec.h - 4 && b.y < e.y + 2) {
         if (b.world === 'scav') scavHit(e, b.dmg); else hitEnemy(e, b.dmg, P);
         b.life = 0; break;
       }
@@ -1760,7 +1909,7 @@ function packCost() { const l = S.player.packLvl || 0; return l >= 4 ? null : { 
 function dropOff() {
   const c = carriedOf(), got = Object.entries(c).filter(([, v]) => v > 0);
   if (!got.length) return;
-  for (const e of got) { if (S.rooms.storage) e[1] = Math.ceil(e[1] * ROOM_FX.storageLoot); S.res[e[0]] += e[1]; c[e[0]] = 0; }
+  for (const e of got) { if (S.rooms.storage) e[1] = Math.ceil(e[1] * ROOM_FX.storageLoot); if (hasB('maps')) e[1] = Math.ceil(e[1] * 1.1); S.res[e[0]] += e[1]; c[e[0]] = 0; }
   { const sc = S.stats.scav || (S.stats.scav = {}); for (const [k, v] of got) sc[k] = (sc[k] || 0) + v; }
   moment('Scavenging trip: ' + got.map(([k, v]) => v + ' ' + k).join(', '));
   lamp('Unloaded: ' + got.map(([k, v]) => v + ' ' + RES.find(r => r.k === k).name.toLowerCase()).join(', ') + '.', 'good');
@@ -1885,6 +2034,7 @@ function endScav(keep) {
   }
   scav = null; scene = 'bunker';
   placePlayer('surface-right');
+  if (pendingFocus) { const pf = pendingFocus; pendingFocus = null; if (S && S.crew.some(x => x.id === pf)) { focusFx = { id: pf, t: performance.now() }; try { bcamFocus(pf); } catch (_) {} } }
   fx.bullets = [];
 }
 const SC_GROUND = 620;
@@ -2132,6 +2282,11 @@ function applyPrefs() {
   const t = document.getElementById('tTa');
   if (t) { t.firstChild.nodeValue = 'Touch aim: ' + (prefs.ta ? 'on' : 'off'); t.setAttribute('aria-pressed', prefs.ta ? 'true' : 'false'); }
   cv.style.touchAction = prefs.ta ? 'none' : '';
+  document.querySelectorAll('button[data-pref]').forEach(btn => {
+    const k = btn.dataset.pref, on = !!prefs[k];
+    btn.textContent = (k === 'hc' ? 'High contrast: ' : 'Colorblind: ') + (on ? 'on' : 'off');
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
 }
 function savePrefs() { try { localStorage.setItem(PREF_KEY, JSON.stringify({ cb: prefs.cb, hc: prefs.hc, rm: prefs.rm, ta: prefs.ta })); } catch (e) {} applyPrefs(); if (typeof renderHud === 'function') { renderHud(); renderDrawer(); } }
 { const a = document.getElementById('tCb'), b = document.getElementById('tRm');
@@ -2180,8 +2335,8 @@ function drawBunker() {
   g.fillStyle = 'rgba(40,28,22,.55)';
   for (let i = 0; i < 14; i++) { const x = i * 97 + 600, h = 30 + ((i * 53) % 70); if (x < W) g.fillRect(x, FLOORS[0] - h, 46, h); }
   // ground and underground
-  g.fillStyle = '#4b3a2a'; g.fillRect(0, FLOORS[0], W, 16);
-  g.fillStyle = '#1a130d'; g.fillRect(0, FLOORS[0] + 16, W, WH);
+  g.fillStyle = '#4b3a2a'; g.fillRect(0, FLOORS[0], W, 16); tex('soil', 0, FLOORS[0], W, 16, 1.2);
+  g.fillStyle = '#1a130d'; g.fillRect(0, FLOORS[0] + 16, W, WH); tex('soil', 0, FLOORS[0] + 16, W, WH, 0.8);
   for (const r of rock) { g.fillStyle = 'rgba(120,90,60,' + r.a + ')'; g.fillRect(r.x, r.y, r.r * 2, r.r); }
   // rooms
   lampTick();
@@ -2194,7 +2349,7 @@ function drawBunker() {
   for (let y = FLOORS[0] + 10; y < FLOORS[3]; y += 16) { g.beginPath(); g.moveTo(LADDER_X - 10, y); g.lineTo(LADDER_X + 10, y); g.stroke(); }
   // floor slabs
   g.fillStyle = '#3a2d1f';
-  for (let f = 1; f < 4; f++) { g.fillRect(IN_L - 6, FLOORS[f], IN_R - IN_L + 12, 10); }
+  for (let f = 1; f < 4; f++) { g.fillRect(IN_L - 6, FLOORS[f], IN_R - IN_L + 12, 10); tex('tread', IN_L - 6, FLOORS[f], IN_R - IN_L + 12, 10, 1.4); }
   g.fillRect(IN_L - 14, FLOORS[0] + 16, 10, FLOORS[3] - FLOORS[0]); g.fillRect(IN_R + 4, FLOORS[0] + 16, 10, FLOORS[3] - FLOORS[0]);
   drawBunkerLadders();
   drawDig();
@@ -2203,8 +2358,8 @@ function drawBunker() {
   // night over the surface only: the bunker keeps its lamps
   if (sky.dayAmt < 1) { g.fillStyle = 'rgba(5,6,18,' + (0.55 * (1 - sky.dayAmt)) + ')'; g.fillRect(0, 0, W, FLOORS[0] + 16); }
   drawDrops();
-  for (const c of S.crew) if (c.alive) drawPerson(c.x, c.y, c.color, c.accent, c, c.anim, c.facing, c.state === 'sleep', c.climbing);
-  for (const c of S.crew) if (c.alive && !c.left) drawTaskIcon(c);
+  for (const c of S.crew) if (c.alive && !c.exp) drawPerson(c.x, c.y, c.color, c.accent, c, c.anim, c.facing, c.state === 'sleep', c.climbing);
+  for (const c of S.crew) if (c.alive && !c.exp && !c.left) drawTaskIcon(c);
   drawFocus();
   drawCrewDebug();
   for (const e of S.enemies) drawEnemy(e);
@@ -2300,10 +2455,13 @@ function drawScavLantern(ox) {
     g.fillRect(x, y, 1.6, 1.6);
   }
 }
+function tex(kind, x, y, w, h, a) { if (typeof VEC !== 'undefined' && VEC.texFill) VEC.texFill(g, kind, x, y, w, h, a); }
 function drawRoom(k, r) {
   const y0 = FLOORS[r.floor - 1] + (r.floor === 1 ? 16 : 10), y1 = FLOORS[r.floor];
   const gr = g.createLinearGradient(0, y0, 0, y1); gr.addColorStop(0, '#2a1d12'); gr.addColorStop(1, '#4a3018');
   g.fillStyle = gr; g.fillRect(r.x0, y0, r.x1 - r.x0, y1 - y0);
+  tex('stone', r.x0, y0, r.x1 - r.x0, y1 - y0, 0.9);
+  g.fillStyle = 'rgba(60,40,22,.9)'; g.fillRect(r.x0, y1 - 6, r.x1 - r.x0, 6); tex('wood', r.x0, y1 - 6, r.x1 - r.x0, 6, 1.4);
   // lamplight
   const lx = (r.x0 + r.x1) / 2, rg = g.createRadialGradient(lx, y0 + 18, 4, lx, y0 + 40, (r.x1 - r.x0) * 0.6);
   const lf = lampFlick(r.x0 * 0.01);
@@ -2344,7 +2502,7 @@ function drawCrewDebug() {
   g.save();
   const rows = [['F', c => c.food, '#c9a27a'], ['R', c => restPct(c), '#7fc8ff'], ['H', c => c.hp / c.maxHp * 100, '#7ddc6f']];
   for (const c of S.crew) {
-    if (!c.alive) continue;
+    if (!c.alive || c.exp) continue;
     const x = Math.round(c.x) - 12, y0 = Math.round(c.y) - 84;
     const label = String(c.state || '?');
     g.font = '600 9px "IBM Plex Sans", sans-serif';
@@ -2404,7 +2562,7 @@ function drawSurface(sky) {
     if (t.flash > 0) { t.flash -= 1 / 60; g.fillStyle = '#ffe08a'; g.beginPath(); g.arc(x + (t.type === 'rifle' ? 36 : 26), y - 26, 5, 0, 7); g.fill(); }
     if (!_v && t.lvl > 1) { g.fillStyle = '#ffb347'; g.fillRect(x - 12, y - 16, 4, 4); }
     hpBar(x - 16, y - 44, 32, t.hp / t.max, '#ffb347');
-    if (!t.manned) { g.fillStyle = 'rgba(255,90,78,.9)'; g.font = '600 10px "IBM Plex Sans"'; g.fillText(t.type === 'coil' ? 'NO POWER' : 'EMPTY', x - 15, y - 48); }
+    if (!turretCrewed(t)) { g.fillStyle = 'rgba(255,90,78,.9)'; g.font = '600 10px "IBM Plex Sans"'; g.fillText(t.type === 'coil' ? 'NO POWER' : 'EMPTY', x - 15, y - 48); }
   });
   // wall
   if (S.wall.hp > 0) {
@@ -2472,8 +2630,10 @@ function drawEnemy(e, ox = 0) {
   const b = ENEMIES[e.type];
   g.save(); g.translate(Math.round(e.x - ox), Math.round(e.y));
   const bob = Math.sin(e.anim) * 2;
+  if (e.hidden) { box(-14, -6, 28, 6, '#5a4a38'); box(-8, -10, 16, 4, '#6e5a44'); g.restore(); return; }
   const ART = typeof VEC !== 'undefined' ? VEC : SPR;
-  if (ART.hasEnemy(e.type)) {
+  if (e.type === 'burrower') { box(-14, -18 + bob * 0.5, 28, 14, b.color); box(e.facing < 0 ? -20 : 10, -20 + bob * 0.5, 10, 10, '#4a3a2c'); g.fillStyle = '#e8e0d0'; g.fillRect(e.facing < 0 ? -22 : 18, -16, 2, 5); g.fillStyle = '#ff4030'; g.fillRect(e.facing < 0 ? -16 : 12, -18, 2, 2); }
+  else if (ART.hasEnemy(e.type)) {
     ART.enemy(g, e.type, b.color, Math.abs(bob) < 0.7 ? 0 : (bob > 0 ? 1 : 2), e.facing < 0, performance.now() / 1000);
     if ((e.type === 'raider' || e.type === 'cinder') && !e.gear) { g.fillStyle = '#222'; g.fillRect(e.facing < 0 ? -18 : 4, -b.h + 12, 14, 3); }
   }
@@ -2494,12 +2654,17 @@ function drawEnemy(e, ox = 0) {
 }
 function tracer(x1, y1, x2, y2, c, sc) { fx.tracers.push({ x1, y1, x2, y2, c, t: 0.09, sc: !!sc }); }
 function burst(x, y, c, n, sc) { for (let i = 0; i < n; i++) fx.parts.push({ x, y, vx: rnd(-90, 90), vy: rnd(-140, 10), t: rnd(0.3, 0.7), c, sc: !!sc }); }
+// Dust puff and sparks (fewer in Reduced motion; particle list capped)
+function fxDust(x, y, n) { if (prefs.rm) n = Math.ceil(n / 2); if (fx.parts.length > 400) return; for (let i = 0; i < n; i++) fx.parts.push({ x: x + rnd(-6, 6), y: y + rnd(-4, 4), vx: rnd(-45, 45), vy: rnd(-90, -20), t: rnd(0.4, 0.9), c: i % 2 ? '#a8957a' : '#7d6c58', sc: false }); }
+function fxSparks(x, y, n, dir) { if (prefs.rm) n = Math.ceil(n / 2); if (fx.parts.length > 400) return; for (let i = 0; i < n; i++) fx.parts.push({ x, y, vx: (dir || 0) * rnd(60, 200) + rnd(-80, 80), vy: rnd(-170, -30), t: rnd(0.15, 0.4), c: i % 2 ? '#ffd27a' : '#ff8a3a', sc: false }); }
 function drawFx(ox, scOnly) {
   const sc = !!scOnly;
   for (const t of fx.tracers) if (t.sc === sc) { g.strokeStyle = t.c; g.globalAlpha = clamp(t.t / 0.09, 0, 1); g.lineWidth = 1.5; g.beginPath(); g.moveTo(t.x1 - ox, t.y1); g.lineTo(t.x2 - ox, t.y2); g.stroke(); }
   g.globalAlpha = 1;
   for (const p of fx.parts) if (p.sc === sc) { g.fillStyle = p.c; g.fillRect(p.x - ox, p.y, 3, 3); }
-  for (const b of fx.bullets) if ((b.world === 'scav') === sc) { g.fillStyle = '#ffe08a'; g.fillRect(b.x - ox - 4, b.y - 1, 8, 2); }
+  for (const b of fx.bullets) if ((b.world === 'scav') === sc) { const sp = Math.hypot(b.vx, b.vy || 0) || 1, ux = b.vx / sp, uy = (b.vy || 0) / sp; g.strokeStyle = '#ffe08a'; g.lineWidth = 2; g.beginPath(); g.moveTo(b.x - ox - ux * 5, b.y - uy * 5); g.lineTo(b.x - ox + ux * 5, b.y + uy * 5); g.stroke(); }
+  // lock-on reticle around the enemy Mara would shoot
+  if ((scene === 'scav') === sc && !placing && !itemTool && !digTool && !bcam.overview && !P.auto) { const t = aimTarget(); if (t) { const e = t.e, h = ENEMIES[e.type].h, w = ENEMIES[e.type].w, x = e.x - ox, y = e.y - h / 2, r = Math.max(w, h) / 2 + 6, q = r * 0.45; g.strokeStyle = '#ff5a4e'; g.lineWidth = 2; g.beginPath(); for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { g.moveTo(x + sx * r, y + sy * (r - q)); g.lineTo(x + sx * r, y + sy * r); g.lineTo(x + sx * (r - q), y + sy * r); } g.stroke(); g.fillStyle = '#ff5a4e'; g.fillRect(x - 1.5, y - 1.5, 3, 3); } }
   g.font = '700 12px "IBM Plex Sans"';
   for (const n of fx.nums) if (!!n.scav === sc) { g.fillStyle = n.wide ? 'rgba(255,214,150,' + clamp(n.t, 0, 1) + ')' : 'rgba(255,240,200,' + clamp(n.t / 0.7, 0, 1) + ')'; const w = g.measureText(String(n.s)).width; g.fillText(n.s, n.x - ox - w / 2, n.y); }
 }
@@ -2508,11 +2673,39 @@ function fxTick(dt) {
   for (const p of fx.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 400 * dt; p.t -= dt; } fx.parts = fx.parts.filter(p => p.t > 0);
   for (const n of fx.nums) { n.y -= 24 * dt; n.t -= dt; } fx.nums = fx.nums.filter(n => n.t > 0);
 }
+// Parallax ridge silhouettes: depth is the camera-scroll factor, base is the ridge's mean y.
+function drawScavRidge(ox, depth, base, amp, step, color) {
+  const sh = ox * depth;
+  g.fillStyle = color; g.beginPath(); g.moveTo(0, SC_GROUND);
+  for (let x = 0; x <= W + step; x += step) {
+    const wx = x + sh;
+    const y = base - amp * (0.55 * Math.sin(wx * 0.004 + depth * 20) + 0.3 * Math.sin(wx * 0.011 + depth * 7) + 0.15 * Math.sin(wx * 0.027));
+    g.lineTo(x, y);
+  }
+  g.lineTo(W + step, SC_GROUND); g.closePath(); g.fill();
+}
+// Drifting ash: computed from the clock, no state. Static and thinner with reduced motion.
+function drawScavAsh(ox) {
+  const t = performance.now() / 1000, n = prefs.rm ? 24 : 70;
+  g.fillStyle = 'rgba(205,195,185,0.5)';
+  for (let i = 0; i < n; i++) {
+    const r1 = (Math.sin(i * 127.1 + 1.3) * 43758.5453) % 1, r2 = (Math.sin(i * 311.7 + 7.1) * 12543.123) % 1;
+    const a = Math.abs(r1), b = Math.abs(r2), near = i % 3 === 0, depth = near ? 0.9 : 0.5;
+    const speed = prefs.rm ? 0 : (near ? 38 : 20) * (0.6 + b), fall = prefs.rm ? 0 : (near ? 26 : 14) * (0.5 + a);
+    let x = (a * (W + 200) - ox * depth - t * speed) % (W + 200); if (x < 0) x += W + 200;
+    let y = (b * H + t * fall + (prefs.rm ? 0 : Math.sin(t * 0.8 + i) * 8)) % H;
+    const s = near ? 2.2 : 1.4;
+    g.globalAlpha = near ? 0.55 : 0.35;
+    g.fillRect(x - 100, y, s, s);
+  }
+  g.globalAlpha = 1;
+}
 function drawScav() {
   const ox = scav.cam, sky = skyColors();
   let gr = g.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, sky.top); gr.addColorStop(1, sky.bot);
   g.fillStyle = gr; g.fillRect(0, 0, W, H);
   if (sky.dayAmt < 0.6) { g.fillStyle = 'rgba(255,240,220,' + (0.6 - sky.dayAmt) + ')'; for (const s of stars) { g.beginPath(); g.arc(s.x, s.y, s.r, 0, 7); g.fill(); } }
+  if (!prefs.hc) { drawScavRidge(ox, 0.12, 470, 70, 24, 'rgba(58,44,40,.55)'); drawScavRidge(ox, 0.25, 520, 55, 20, 'rgba(46,35,31,.65)'); }
   // far ruins (parallax), the broken highway, near ruins
   for (const r of scav.ruins) { const x = r.x - ox * 0.4; if (x < -200 || x > W + 200) continue; g.fillStyle = r.c > 0.5 ? 'rgba(52,38,30,.8)' : 'rgba(44,32,26,.7)'; g.fillRect(x, SC_GROUND - r.h - 40, r.w, r.h + 40); g.fillStyle = 'rgba(255,190,110,.08)'; for (let wy = SC_GROUND - r.h; wy < SC_GROUND - 30; wy += 26) g.fillRect(x + 8, wy, 8, 10); }
   g.fillStyle = '#3e3026'; for (let x = -((ox * 0.7) % 220); x < W; x += 220) { g.fillRect(x, 420, 160, 14); g.fillRect(x + 60, 434, 16, 186); }
@@ -2538,6 +2731,7 @@ function drawScav() {
   for (const e of scav.enemies) drawEnemy(e, ox);
   if (!S.player.down) { g.save(); g.translate(-ox, 0); drawMara(); g.restore(); }
   drawFx(ox, true);
+  if (!prefs.hc) drawScavAsh(ox);
   if (sky.dayAmt < 1) { g.fillStyle = 'rgba(5,6,18,' + (0.5 * (1 - sky.dayAmt)) + ')'; g.fillRect(0, 0, W, H); }
   lampTick();
   drawScavLantern(ox);
@@ -2597,6 +2791,9 @@ function jumpTo(loc) {
   bcam.follow = null; bcam.cx = loc.x; bcam.cy = loc.y; bcam.tz = Math.max(bcam.tz, 1.8);
 }
 function sickEvent(c) { atLoc({ x: c.x, y: c.y }); lamp(c.name + ' has fallen sick.', 'warn'); }
+// Single source of truth for 'low' so the HUD and the one-time Lamp warning agree.
+function resLim(k) { return k === 'food' ? living().length * 2 : 5; }
+function resLow(k) { return S.res[k] < resLim(k); }
 function lowResCheck() {
   S.lowFlag = S.lowFlag || {};
   for (const r of RES) {
@@ -2722,8 +2919,8 @@ function renderHud() {
   const th = nextThreat(), pl = S.player;
   requestAnimationFrame(raidPopUpdate);
   $('#hud').innerHTML = `<span class="clock">${clockText()}</span>
-    <span class="res">${RES.map(r => { const v = Math.floor(S.res[r.k]); const low = r.k === 'food' ? v < living().length * 2 : v < 3; return `<span title="${r.name}"><i style="background:${r.color}"></i>${r.name} <b class="${low ? 'low' : ''}">${v}</b></span>`; }).join('')}</span>
-    <span class="res"><span title="Prepared meals at the serving station"><i style="background:#e8b86a"></i>Meals <b class="${kit().cooked < 2 ? 'low' : ''}">${Math.floor(kit().cooked)}</b></span></span>
+    <span class="res">${RES.map(r => { const v = Math.floor(S.res[r.k]); const low = resLow(r.k); return `<span class="${low ? 'lowres' : ''}" title="${r.name}${low ? ' (low)' : ''}"><i style="background:${r.color}"></i>${low ? '<em class="lowico" aria-hidden="true">&#9888;</em>' : ''}${({ elec: 'Elec', mat: 'Mat' })[r.k] || r.name} <b class="${low ? 'low' : ''}">${v}</b>${low ? '<em class="lowtag">LOW</em>' : ''}</span>`; }).join('')}</span>
+    <span class="res"><span class="${kit().cooked < 2 ? 'lowres' : ''}" title="Prepared meals at the serving station${kit().cooked < 2 ? ' (low)' : ''}"><i style="background:#e8b86a"></i>${kit().cooked < 2 ? '<em class="lowico" aria-hidden="true">&#9888;</em>' : ''}Meals <b class="${kit().cooked < 2 ? 'low' : ''}">${Math.floor(kit().cooked)}</b></span></span>
     <span class="threat ${th.hot ? 'hot' : ''}" data-raid="1" style="cursor:pointer" title="Click for raid details">${esc(th.text)} ${raidOpen ? '&#9662;' : '&#9656;'}</span>
     <span class="threat" title="Mara">Mara ${Math.ceil(pl.hp)}/${pl.maxHp}${pl.down ? ' · down' : ''}</span>
     <span class="spd">${[0, 1, 2, 4].map(s => `<button data-spd="${s}" class="${(s === 0 ? paused : (!paused && speed === s)) ? 'on' : ''}" title="${s ? s + 'x speed (' + (s === 4 ? 3 : s) + ')' : 'Pause (P)'}">${s ? s + 'x' : 'II'}</button>`).join('')}</span>`;
@@ -2743,7 +2940,7 @@ function crewPass(c) {
   if (crewView.need === 'food' && !(n.food < 35)) return false;
   if (crewView.need === 'rest' && !(n.rest < 40)) return false;
   if (crewView.need === 'any' && !(n.hp < 50 || n.food < 35 || n.rest < 40)) return false;
-  if (crewView.job !== 'all' && c.job !== crewView.job) return false;
+  if (crewView.job !== 'all' && !(c.job === crewView.job || (crewView.job === 'turretA' && c.job === 'turretB'))) return false;
   if (crewView.state !== 'all' && crewStateKey(c) !== crewView.state) return false;
   return true;
 }
@@ -2761,7 +2958,7 @@ function crewControls() {
   return `<div class="row" style="margin:6px 0;gap:4px;flex-wrap:wrap">
     ${sel2('sort', [['default', 'Sort: default'], ['name', 'Sort: name'], ['hp', 'Sort: health'], ['food', 'Sort: food'], ['rest', 'Sort: rest'], ['lvl', 'Sort: level']])}
     ${sel2('need', [['all', 'Need: all'], ['any', 'Any need'], ['hp', 'Low health'], ['food', 'Hungry'], ['rest', 'Tired']])}
-    ${sel2('job', [['all', 'Job: all'], ...Object.entries(JOBS).map(([k, j]) => [k, j.label])])}
+    ${sel2('job', [['all', 'Job: all'], ...Object.entries(JOBS).filter(([k, j]) => !j.hidden).map(([k, j]) => [k, j.label])])}
     ${sel2('state', [['all', 'State: all'], ['work', 'Working'], ['walk', 'Walking'], ['sleep', 'Sleeping'], ['patient', 'Med bay'], ['fight', 'Fighting']])}
   </div>`;
 }
@@ -2786,16 +2983,19 @@ function syncDrawerButtons() {
 function openDrawer(t) { tab = t; $('#drawer').hidden = false; $('#wrap').classList.add('dopen'); renderDrawer(); syncDrawerButtons(); }
 function closeDrawer() { $('#drawer').hidden = true; $('#wrap').classList.remove('dopen'); syncDrawerButtons(); }
 function toggleDrawer(t) { if (!$('#drawer').hidden && tab === t) closeDrawer(); else openDrawer(t); }
-function bar(pct, c, kind) { return `<div class="bar"><i class="${kind ? 'p-' + kind : ''}" style="width:${clamp(pct, 0, 100)}%;background:${c}"></i></div>`; }
+let pendingFocus = null;
+function bar(pct, c, kind, label) { const v = Math.round(clamp(pct, 0, 100)); const a = label ? ` role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${v}"` : ' aria-hidden="true"'; return `<div class="bar"${a}><i class="${kind ? 'p-' + kind : ''}" style="width:${clamp(pct, 0, 100)}%;background:${c}"></i></div>`; }
 function canPay(c) { return Object.entries(c).every(([k, v]) => S.res[k] >= v); }
 function pay(c) { for (const [k, v] of Object.entries(c)) S.res[k] -= v; }
 function renderDrawer() {
   if ($('#drawer').hidden || !S) return;
   document.querySelectorAll('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   const body = $('#dbody'); const keep = body.scrollTop; const fk = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.view : null;
+  const ae = document.activeElement, fc = ae && ae.dataset && ae.dataset.fk ? ae.dataset.fk : null;
   body.innerHTML = tab === 'crew' ? crewHTML() : tab === 'build' ? buildHTML() : tab === 'rel' ? relHTML() : tab === 'log' ? logHTML() : tab === 'gear' ? gearHTML() : towerHTML();
   body.scrollTop = keep;
   if (fk) { const el = body.querySelector(`[data-view="${fk}"]`); if (el) el.focus(); }
+  if (fc) { const el = body.querySelector(`[data-fk="${fc}"]`) || body.querySelector(`[data-fk="${(fc[0] === 'c' ? 'n' : 'c') + fc.slice(1)}"]`); if (el) el.focus({ preventScroll: true }); }
 }
 function gearRow(c) {
   const st = stock(), have = GEAR_IDS.filter(id => st[id] > 0);
@@ -2821,13 +3021,13 @@ function crewHTML() {
   return `<p class="note" style="margin:0">Jobs decide where people go when they are awake. Shifts decide when they sleep: after about 16 hours awake they slow down fast. Turrets only fire with someone on them. Click a person to find them in the bunker.</p>
   ${crewControls()}<button class="chip ${compactOn() ? 'on' : ''}" data-act="compact" title="One-line rows for big crews">Compact</button> <button class="chip" data-act="resetcam" title="Zoom out and stop following">Reset view</button><p class="note" style="margin:0">Showing ${shown} of ${total}</p>${shown === 0 && total > 0 ? '<p class="note">Nobody matches these filters.</p>' : ''}
   ${maraCard()}
-  ${[0, 1].map(i => !S.turrets[i] || S.turrets[i].type === 'coil' ? '' : !gunners(i ? 'turretB' : 'turretA') ? `<p class="note bad" style="margin:0">Turret ${i + 1} has nobody assigned.</p>` : '').join('')}
+  ${[0, 1].map(i => !S.turrets[i] || S.turrets[i].type === 'coil' ? '' : !turretCrewed(S.turrets[i]) ? `<p class="note bad" style="margin:0">Turret ${i + 1} has nobody assigned.</p>` : '').join('')}
   ${list.map(c => {
     if (!c.alive) return `<div class="card dead"><div class="ch"><span class="sw" style="background:${c.color}"></span><b>${esc(c.name)}</b><span class="tag">${c.left ? 'left the bunker' : 'lost'}</span></div></div>`;
     if (compactOn() && sel !== c.id) {
       const cs = c.state === 'sleep' ? 'zzz' : c.state === 'patient' ? 'med' : c.state === 'fight' ? 'fight' : c.state === 'walk' ? 'walk' : 'work';
       const sfc = sleepFactor(c.awake), mb = (pct, col) => `<div style="width:44px">${bar(pct, col)}</div>`;
-      return `<div class="card" data-crew="${c.id}" style="padding:4px 8px;cursor:pointer"><div class="row" style="gap:6px;align-items:center;flex-wrap:nowrap"><span class="sw" style="background:${c.color}"></span><b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</b><span class="note" style="margin:0;white-space:nowrap">${cs}${c.sick ? ' · sick' : ''} · ${JOBS[c.job] ? JOBS[c.job].label : '-'}</span>${mb(c.hp / c.maxHp * 100, '#7ddc6f')}${mb(c.food, '#c9a27a')}${mb(restPct(c), sfc < 0.6 ? '#ff5a4e' : '#7fc8ff')}</div></div>`;
+      return `<div class="card" data-crew="${c.id}" data-fk="c:${c.id}" tabindex="0" role="button" aria-label="${esc(c.name)}, ${cs}. Focus camera" style="padding:4px 8px;cursor:pointer"><div class="row" style="gap:6px;align-items:center;flex-wrap:nowrap"><span class="sw" style="background:${c.color}"></span><span aria-hidden="true">${stateIcon(c)}</span><b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</b><span class="note" style="margin:0;white-space:nowrap">${cs}${c.sick ? ' · sick' : ''} · ${JOBS[c.job] ? JOBS[c.job].label : '-'}</span>${mb(c.hp / c.maxHp * 100, '#7ddc6f')}${mb(c.food, '#c9a27a')}${mb(restPct(c), sfc < 0.6 ? '#ff5a4e' : '#7fc8ff')}</div></div>`;
     }
     const sf = sleepFactor(c.awake), rest = restPct(c);
     let alarmDest = '';
@@ -2840,9 +3040,9 @@ function crewHTML() {
     const state = c.state === 'sleep' ? (c.bed === false ? 'sleeping (floor)' : 'sleeping') : c.state === 'patient' ? 'in the med bay' : c.state === 'fight' ? 'fighting!' : alarmNow ? (c.state === 'walk' ? 'on the way to ' + alarmDest : (alarmDest === 'the door' ? 'guarding the door' : 'manning ' + alarmDest)) : c.state === 'walk' ? 'on the way' : c.state === 'eat' ? 'eating' : c.state === 'queue' ? 'waiting for food' : (c.wait && c.wait.job) ? 'waiting for ' + ((JOBS[c.wait.job] && JOBS[c.wait.job].label) || c.wait.job) + ' (full), retry in ' + Math.max(1, Math.ceil(c.wait.until - S.t)) + 'm' : 'working';
     const bondNames = c.bonds.map(id => S.crew.find(o => o.id === id)).filter(o => o && o.alive).map(o => o.name);
     return `<div class="card ${sel === c.id ? 'sel' : ''}" data-crew="${c.id}">
-      <div class="ch"><span class="sw" style="background:${c.color}"></span><b>${esc(c.name)}</b><span class="tag">${esc(c.role)} · ${state}${c.sick ? ' · SICK' : ''}</span><span class="lvl">LV ${c.lvl}</span></div>
-      <div class="bars"><span>Health</span>${bar(c.hp / c.maxHp * 100, '#7ddc6f', 'hp')}<span>Food</span>${bar(c.food, '#c9a27a', 'food')}<span style="white-space:nowrap">Rest${prefs.cb && sf < 0.6 ? ' \u26A0' : ''}</span>${bar(rest, sf < 0.6 ? '#ff5a4e' : '#7fc8ff', sf < 0.6 ? 'low' : 'rest')}</div>
-      <div class="row">${Object.entries(JOBS).map(([k, j]) => { const dis = (k === 'turretA' && !S.turrets[0]) || (k === 'turretB' && !S.turrets[1]); return `<button class="chip ${c.job === k ? 'on' : ''}" data-job="${k}" data-id="${c.id}" ${dis ? 'disabled title="Build this turret first"' : ''}>${j.label}</button>`; }).join('')}</div>
+      <div class="ch"><span class="sw" style="background:${c.color}"></span><span aria-hidden="true">${stateIcon(c)}</span><button type="button" data-fk="n:${c.id}" aria-label="Focus camera on ${esc(c.name)}" style="background:none;border:0;color:inherit;font:inherit;font-weight:bold;padding:0;cursor:pointer;text-align:left">${esc(c.name)}</button><span class="tag">${esc(c.role)} · ${state}${c.sick ? ' · SICK' : ''}</span><span class="lvl">LV ${c.lvl}</span></div>
+      <div class="bars"><span>Health</span>${bar(c.hp / c.maxHp * 100, '#7ddc6f', 'hp', 'Health')}<span>Food</span>${bar(c.food, '#c9a27a', 'food', 'Food')}<span style="white-space:nowrap">Rest${prefs.cb && sf < 0.6 ? ' \u26A0' : ''}</span>${bar(rest, sf < 0.6 ? '#ff5a4e' : '#7fc8ff', sf < 0.6 ? 'low' : 'rest', 'Rest')}</div>
+      <div class="row">${Object.entries(JOBS).filter(([k, j]) => !j.hidden).map(([k, j]) => { const dis = k === 'turretA' && !S.turrets.some(t => t && t.type !== 'coil'); return `<button class="chip ${c.job === k || (k === 'turretA' && c.job === 'turretB') ? 'on' : ''}" data-job="${k}" data-id="${c.id}" ${dis ? 'disabled title="Build a gun turret first"' : (k === 'turretA' ? 'title="Picks a gun turret automatically"' : '')}>${j.label}</button>`; }).join('')}</div>
       <div class="row" style="margin-top:5px">${Object.entries(SHIFTS).map(([k, s]) => { const p = n => String(n % 24).padStart(2, '0') + ':00', h = Math.floor(hourF()), awake = !s.sleep || !(s.sleep[0] > s.sleep[1] ? (h >= s.sleep[0] || h < s.sleep[1]) : (h >= s.sleep[0] && h < s.sleep[1])); return `<button class="chip ${c.shift === k ? 'on' : ''}" data-shift="${k}" data-id="${c.id}" title="${awake ? 'Awake right now' : 'Asleep right now'}">${awake ? '● ' : ''}${s.sleep ? 'Sleeps ' + p(s.sleep[0]) + '-' + p(s.sleep[1]) : s.label}</button>`; }).join('')}</div>
       ${gearRow(c)}
       ${schedHTML(c)}
@@ -2852,6 +3052,15 @@ function crewHTML() {
   }).join('')}`;
 }
 const pctS = v => Math.round(v * 100);
+function stateIcon(c) {
+  if (c.state === 'sleep') return '\u{1F4A4}';
+  if (c.state === 'patient') return '\u271A';
+  if (c.state === 'fight') return '\u2694';
+  if (c.state === 'walk') return '\u{1F6B6}';
+  if (c.state === 'eat') return '\u{1F372}';
+  if (c.state === 'queue' || (c.wait && c.wait.job)) return '\u23F3';
+  return '\u{1F527}';
+}
 function bgHTML(c) {
   if (typeof CrewGen === 'undefined') return '';
   const d = CrewGen.describe(c);
@@ -2913,7 +3122,9 @@ function relHTML() {
 function buildHTML() {
   const item = (title, desc, cost, act, ok = true, label = 'Build') => `<div class="card bitem"><div><b>${title}</b><p>${desc}</p>${cost ? `<span class="cost">${fmtCost(cost)}</span>` : ''}</div><button class="btn" data-build="${act}" ${ok && (!cost || canPay(cost)) ? '' : 'disabled'}>${label}</button></div>`;
   const repCost = s => ({ scrap: Math.ceil((s.max - s.hp) / 10) });
-  const out = ['<div class="sec">DEFENSES</div>'];
+  const CATS = { structure: [], energy: [], crafting: [], research: [], food: [], water: [], defenses: [], medical: [], furniture: [], decor: [] };
+  const RC = { workshop: CATS.crafting, generator: CATS.energy, armory: CATS.defenses, storage: CATS.structure };
+  let out = CATS.defenses;
   out.push(item('Repair the hatch', `${Math.ceil(S.door.hp)} / ${S.door.max}. The workshop also repairs it slowly.`, S.door.hp < S.door.max ? repCost(S.door) : null, 'repDoor', S.door.hp < S.door.max && !S.enemies.some(e => e.inside), 'Repair'));
   out.push(item(S.wall.hp > 0 ? 'Repair the wall' : 'Rebuild the wall', `${Math.ceil(S.wall.hp)} / ${S.wall.max}. Enemies have to break it before they reach the turrets.`, S.wall.hp < S.wall.max ? repCost(S.wall) : null, 'repWall', S.wall.hp < S.wall.max, 'Repair'));
   if (S.wall.lvl < 2) out.push(item('Reinforce the wall', 'Double its strength and add spikes.', { scrap: 30, mat: 12 }, 'upWall'));
@@ -2925,18 +3136,41 @@ function buildHTML() {
       if (t.lvl < 2 && t.type !== 'coil') out.push(item(`Upgrade turret ${i + 1} (${TURRETS[t.type].name.toLowerCase()})`, '40% more damage per hit.', { parts: 8, elec: 2 }, 'upT' + i, true, 'Upgrade'));
     }
   }
-  out.push('<div class="sec">ROOMS</div>');
-  if ((S.rooms.hydro || 1) < 2) out.push(item('Hydroponics: grow lamps', 'Hydroponics grows 50% more food.', { elec: 3, mat: 8 }, 'upHydro', true, 'Upgrade'));
-  if (S.rooms.med < 2) out.push(item('Med bay: proper beds', 'Patients heal 50% faster.', { elec: 3, mat: 6 }, 'upMed', true, 'Upgrade'));
-  if (S.rooms.bunks < 2) out.push(item('Bunks: real mattresses', 'A full rest takes 5 hours instead of 7.', { scrap: 10, mat: 10 }, 'upBunks', true, 'Upgrade'));
+  for (const i of [0, 1]) if (S.turrets[i]) CATS.defenses.push(turretStatusHTML(i));
+  out = CATS.structure;
+  if ((S.rooms.hydro || 1) < 2) CATS.food.push(item('Hydroponics: grow lamps', 'Hydroponics grows 50% more food.', { elec: 3, mat: 8 }, 'upHydro', true, 'Upgrade'));
+  if (S.rooms.med < 2) CATS.medical.push(item('Med bay: proper beds', 'Patients heal 50% faster.', { elec: 3, mat: 6 }, 'upMed', true, 'Upgrade'));
+  if (S.rooms.bunks < 2) CATS.furniture.push(item('Bunks: real mattresses', 'A full rest takes 5 hours instead of 7.', { scrap: 10, mat: 10 }, 'upBunks', true, 'Upgrade'));
   out.push(`<div class="card bitem"><div><b>Dig tool (X)</b><p>Drag a box over the pit under the bunker to mark cells. Crew on the Miner job clear them: dirt is quick, clay slower, rock slow, hard stone very slow. Annex rooms are built in cleared chambers.</p></div><button class="btn ghost" data-build="toggleDig">${digTool ? 'On' : 'Off'}</button></div>`);
-  for (const [k, r] of Object.entries(BUILD_ROOMS)) if (!S.rooms[k]) { const sz = ROOM_CELLS[k]; out.push(item('Build ' + ROOMS[k].name, r.desc + ' A ' + sz.w + 'x' + sz.h + ' tile room: you choose the spot on the pit grid, on cleared tiles that connect to the bunker.', r.cost, 'room_' + k, true, 'Place')); }
+  for (const [k, r] of Object.entries(BUILD_ROOMS)) if (!S.rooms[k]) { const sz = ROOM_CELLS[k]; RC[k].push(item('Build ' + ROOMS[k].name, r.desc + ' A ' + sz.w + 'x' + sz.h + ' tile room: you choose the spot on the pit grid, on cleared tiles that connect to the bunker.', r.cost, 'room_' + k, true, 'Place')); }
   out.push(`<div class="card bitem"><div><b>Ladder segments (L)</b><p>One tile wide. In the pit, put one on a cleared tile that touches the floor above, a room or another ladder: crew only change rows on ladders and inside rooms. In the bunker, put one between two floors for a second route.</p><span class="cost">${fmtCost(LADDER_COST.pit)} per pit tile · ${fmtCost(LADDER_COST.bunker)} per floor gap</span></div><button class="btn ghost" data-build="toggleLadder">${placing && placing.kind === 'ladder' ? 'On' : 'Off'}</button></div>`);
   for (const k of Object.keys(BUILD_ROOMS)) if (S.rooms[k] && dg().rooms[k] && !pitRoomReachable(k)) out.push(`<p class="note bad">${ROOMS[k].name}: no ladder route from the bunker yet. Dig and ladder a way down to it.</p>`);
-  if (!S.rooms.workshop) out.push('<p class="note bad">No workshop yet: nothing is repaired and nobody makes parts or weapons. Place one above.</p>');
-  if (S.rooms.generator) out.push(`<p class="note">Generator: ${S.powered ? 'running, burning about ' + Math.round(ROOM_FX.fuelPerHour * 24) + ' scrap a day' : '<span style="color:var(--red)">OFF: out of scrap</span>'}</p>`);
-  if (S.rooms.workshop) out.push(`<div class="card bitem"><div><b>Workshop makes parts</b><p>When nothing needs repairing, workshop crew turn 2 scrap into 1 part.</p></div><button class="btn ghost" data-build="toggleParts">${S.makeParts ? 'On' : 'Off'}</button></div>`);
-  return out.join('');
+  if (!S.rooms.workshop) CATS.crafting.push('<p class="note bad">No workshop yet: nothing is repaired and nobody makes parts or weapons. Place one above.</p>');
+  if (S.rooms.generator) CATS.energy.push(`<p class="note">Generator: ${S.powered ? 'running, burning about ' + Math.round(ROOM_FX.fuelPerHour * 24) + ' scrap a day' : '<span style="color:var(--red)">OFF: out of scrap</span>'}</p>`);
+  if (S.rooms.workshop) CATS.crafting.push(`<div class="card bitem"><div><b>Workshop makes parts</b><p>When nothing needs repairing, workshop crew turn 2 scrap into 1 part.</p></div><button class="btn ghost" data-build="toggleParts">${S.makeParts ? 'On' : 'Off'}</button></div>`);
+  // furniture bought one piece at a time (auto-placed in the next free spot) and installable buildings
+  const own = t => itemList().filter(it => it.type === t).length;
+  const buy = (t, cat, desc, top) => { const T = ITEM_TYPES[t]; const h = item(T.name + ' <span class="tag">' + own(t) + ' built</span>', desc, T.cost, 'buy_' + t, !!ROOMS[T.room], 'Build'); if (top) CATS[cat].unshift(h); else CATS[cat].push(h); };
+  const beds = bedCount(), crewN = living().length;
+  buy('bunk', 'furniture', 'Each bunk gives two crew a bed. Beds: ' + beds + ' for ' + crewN + ' crew. People without one sleep on the floor and rest worse.', true);
+  buy('cot', 'medical', 'Another cot for the med bay.');
+  buy('table', 'furniture', 'A table in the common room, where meals are eaten.');
+  buy('poster', 'decor', 'Faded pre-ash poster. Small morale boost for everyone.');
+  buy('rug', 'decor', 'A worn rug for the common room. Small morale boost for everyone.');
+  buy('plant', 'decor', 'A potted plant that somehow survived. Small morale boost for everyone.');
+  buy('lantern', 'decor', 'Warm light for the bunks. Small morale boost for everyone.');
+  CATS.decor.push(`<p class="note">Decorations raise morale a little for everyone (${decoCount()} placed, up to +${(DECO_CAP).toFixed(1)} an hour).</p>`);
+  buy('console', 'research', 'Another signal console.');
+  buy('planter', 'food', 'Another hydroponics planter. More planters, more crew can grow food at once.');
+  buy('stove', 'food', 'Another stove for the kitchen.');
+  for (const [k, b] of Object.entries(BUILDS)) {
+    const done = hasB(k), ok = !b.req || S.rooms[b.req];
+    CATS[b.cat].push(done ? `<div class="card bitem"><div><b>${b.name}</b><p>${b.desc}</p></div><span class="tag">BUILT</span></div>` : item(b.name, b.desc + (ok ? '' : ' Needs the ' + ROOMS[b.req].name + ' first.'), b.cost, 'bld_' + k, !!ok));
+  }
+  CATS.crafting.push(maintHTML()); CATS.research.unshift(...researchHTML()); CATS.expedition = expHTML();
+  const cat = CATS[buildCat] ? buildCat : 'structure';
+  const rail = BUILD_CATS.map(([k, n]) => `<button class="bcat ${k === cat ? 'on' : ''}" data-bcat="${k}" title="${n}" aria-label="${n}"><span class="bi bi-${k}"></span><em>${n}</em></button>`).join('');
+  return `<div class="brow"><nav class="brail" aria-label="Build categories">${rail}</nav><div class="bmain"><div class="sec">${BUILD_CATS.find(c => c[0] === cat)[1].toUpperCase()}</div>${CATS[cat].join('') || '<p class="note">Nothing to build here yet.</p>'}</div></div>`;
 }
 function towerShort(c) { return Object.entries(c).filter(([k, v]) => (S.res[k] || 0) < v).map(([k, v]) => ({ k, need: v - Math.floor(S.res[k] || 0) })); }
 function towerCostHTML(c, live) {
@@ -2956,20 +3190,35 @@ function towerHTML() {
   <div class="stages">${TOWER.map((t, i) => `<div class="card stage ${i < st ? 'done' : i === st ? 'cur' : ''}"><span class="n">${i < st ? '✓' : i + 1}</span><div style="flex:1"><b>${t.name}</b><p class="note" style="margin:2px 0 0">${towerCostHTML(t.cost, i === st && !S.tower.paid)} · ${t.work} work</p>
     ${i === st ? (S.tower.paid ? `<div style="margin-top:6px">${bar(S.tower.work / need * 100, '#7fc8ff')}</div><p class="note">${Math.floor(S.tower.work)} / ${need} work · ${workers.length ? workers.map(w => esc(w.name)).join(', ') + ' on it' : '<span style="color:var(--red)">nobody is on the Signal tower job</span>'}</p>` : `<button class="btn" style="margin-top:6px" data-build="tower" ${canPay(t.cost) ? '' : 'disabled'}>Start this stage</button>${canPay(t.cost) ? '' : towerNote(t.cost)}`) : ''}</div></div>`).join('')}</div>`;
 }
+function jobChipFeedback(id, job, name, walking) {
+  const label = (JOBS[job] && JOBS[job].label) || job;
+  lamp(walking ? name + ' assigned to ' + label + ' \u2013 walking there now.' : name + ' set to ' + label + '.', 'good');
+  if (window.SFX && SFX.click) SFX.click();
+  const chip = document.querySelector('#dbody [data-job="' + (job === 'turretB' ? 'turretA' : job) + '"][data-id="' + id + '"]');
+  if (chip && chip.animate && !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)) {
+    chip.animate([{ transform: 'scale(1)', boxShadow: '0 0 0 0 rgba(255,200,90,.9)' }, { transform: 'scale(1.18)', boxShadow: '0 0 0 6px rgba(255,200,90,0)' }, { transform: 'scale(1)', boxShadow: '0 0 0 0 rgba(255,200,90,0)' }], { duration: 450, easing: 'ease-out' });
+  }
+}
 $('#dbody').addEventListener('click', e => {
   const j = e.target.closest('[data-job]'), s = e.target.closest('[data-shift]'), b = e.target.closest('[data-build]'), card = e.target.closest('[data-crew]');
   if (e.target.closest('[data-act="compact"]')) { crewView.compact = !compactOn(); renderDrawer(); return; }
+  const bc = e.target.closest('[data-bcat]'); if (bc) { buildCat = bc.dataset.bcat; renderDrawer(); return; }
   const gb = e.target.closest('[data-gear]');
   if (gb) { gearAct(gb.dataset.gear, gb.dataset.g, gb.dataset.id); renderDrawer(); renderHud(); return; }
   const br = e.target.closest('[data-brush]'), cell = e.target.closest('[data-cell]');
   if (br) { schedBrush = br.dataset.brush; renderDrawer(); return; }
   if (cell) { const c = S.crew.find(x => x.id === cell.dataset.id); if (c) { const a = ensureSched(c).split(''); a[+cell.dataset.cell] = schedBrush; c.sched = a.join(''); c.shift = 'custom'; c.restUntil = 0; c.restPrev = null; sel = c.id; } renderDrawer(); return; }
-  if (j) { if (j.dataset.id === 'player') { S.player.job = j.dataset.job; renderDrawer(); return; } const c = S.crew.find(x => x.id === j.dataset.id); c.job = j.dataset.job; if (tut) tut.job = true; c.alarmSlot = null; sel = c.id; renderDrawer(); return; }
+  if (j) { if (j.dataset.id === 'player') { S.player.job = j.dataset.job; renderDrawer(); jobChipFeedback('player', S.player.job, S.player.name || 'Mara', false); return; } const c = S.crew.find(x => x.id === j.dataset.id); c.job = j.dataset.job; if (c.job === 'turretA' || c.job === 'turretB') c.job = autoTurret(c); if (tut) tut.job = true; c.alarmSlot = null; sel = c.id; renderDrawer(); jobChipFeedback(c.id, c.job, c.name, true); return; }
   if (s) { const c = S.crew.find(x => x.id === s.dataset.id); c.shift = s.dataset.shift; c.sched = defaultSched(c.shift); c.restUntil = 0; c.restPrev = null; sel = c.id; renderDrawer(); return; }
   if (b) { doBuild(b.dataset.build); renderDrawer(); renderHud(); return; }
   const evEl = e.target.closest('[data-ev]');
   if (evEl) { const ev = events.find(x => String(x.id) === evEl.dataset.ev); if (ev) jumpTo(ev.loc); return; }
-  if (card) { sel = card.dataset.crew; focusFx = { id: sel, t: performance.now() }; bcamFocus(sel); renderDrawer(); }
+  if (card) {
+    sel = card.dataset.crew;
+    if (scene === 'bunker') { focusFx = { id: sel, t: performance.now() }; bcamFocus(sel); pendingFocus = null; }
+    else { pendingFocus = sel; try { lamp('Selected. The camera will find them when you are back in the bunker.'); } catch (_) {} }
+    renderDrawer();
+  }
 });
 $('#dbody').addEventListener('pointerdown', e => {
   const r = e.target.closest && e.target.closest('[data-rest]');
@@ -2991,6 +3240,11 @@ $('#dbody').addEventListener('pointerdown', e => {
   requestAnimationFrame(tickFill);
 });
 $('#dbody').addEventListener('contextmenu', e => { if (e.target.closest && e.target.closest('[data-rest]')) e.preventDefault(); });
+// keyboard: Enter/Space on a focused compact crew row acts like a click (name buttons handle this natively)
+$('#dbody').addEventListener('keydown', e => {
+  const t = e.target;
+  if ((e.key === 'Enter' || e.key === ' ') && t && t.matches && t.matches('[data-crew][tabindex]')) { e.preventDefault(); t.click(); }
+});
 function cancelRestHold() { if (restHold) { clearTimeout(restHold.timer); restHold = null; renderDrawer(); } }
 window.addEventListener('pointerup', cancelRestHold);
 window.addEventListener('pointercancel', cancelRestHold);
@@ -3002,15 +3256,20 @@ const ITEM_TYPES = {
   cot:     { name: 'Med cot',   room: 'med',      w: 3, cost: { scrap: 14 }, color: '#d8d2c4' },
   bunk:    { name: 'Bunk',      room: 'bunks',    w: 2, cost: { scrap: 10 }, color: '#6a5a48' },
   table:   { name: 'Table',     room: 'common',   w: 3, cost: { scrap: 8 },  color: '#6b4b33' },
-  console: { name: 'Console',   room: 'signal',   w: 2, cost: { scrap: 20 }, color: '#3d4650' }
+  console: { name: 'Console',   room: 'signal',   w: 2, cost: { scrap: 20 }, color: '#3d4650' },
+  poster:  { name: 'Poster',    room: 'common',   w: 1, cost: { scrap: 4 },  color: '#b08a5a', deco: true },
+  rug:     { name: 'Rug',       room: 'common',   w: 3, cost: { scrap: 6 },  color: '#8a3a2a', deco: true },
+  plant:   { name: 'Plant',     room: 'common',   w: 1, cost: { scrap: 5 },  color: '#4a6a3a', deco: true },
+  lantern: { name: 'Lantern',   room: 'bunks',    w: 1, cost: { scrap: 4, parts: 1 }, color: '#3a2a18', deco: true }
 };
+const DECO_CAP = 1.5;   // max morale per hour from decorations
+const decoCount = () => itemList().filter(it => ITEM_TYPES[it.type] && ITEM_TYPES[it.type].deco).length;
 const ITEM_MAX_LVL = 3;
 // Starter furniture, all snapped to the 30px grid (col = (x - ITX0) / ITILE). Seeded lazily so old saves without items get it too.
 const DEFAULT_ITEM_LAYOUT = [
   ['hydro', 'planter', 3], ['hydro', 'planter', 6], ['hydro', 'planter', 9], ['hydro', 'planter', 12], ['hydro', 'planter', 15],
   ['kitchen', 'stove', 3],
   ['med', 'cot', 19], ['med', 'cot', 24], ['med', 'cot', 29],
-  ['bunks', 'bunk', 3], ['bunks', 'bunk', 6], ['bunks', 'bunk', 9], ['bunks', 'bunk', 12], ['bunks', 'bunk', 15], ['bunks', 'bunk', 18],
   ['common', 'table', 26],
   ['signal', 'console', 33]
 ];
@@ -3127,7 +3386,7 @@ function drawItems(k, r) {
 }
 let itemTool = false, itemSel = 'stove';
 const itemUI = document.createElement('div');
-itemUI.style.cssText = 'position:fixed;left:10px;bottom:70px;z-index:40;display:none;font:600 12px "Chakra Petch",sans-serif;color:#ffd9a0;background:rgba(20,14,8,.9);border:1px solid #5a4428;padding:6px;border-radius:6px;max-width:220px';
+itemUI.style.cssText = 'position:fixed;left:10px;bottom:84px;z-index:40;display:none;font:600 12px "Chakra Petch",sans-serif;color:#ffd9a0;background:rgba(20,14,8,.9);border:1px solid #5a4428;padding:6px;border-radius:6px;max-width:220px';
 document.body.appendChild(itemUI);
 function renderItemUI() {
   itemUI.innerHTML = `<button class="btn ghost" data-it="toggle">Build items: ${itemTool ? 'On' : 'Off'}</button>` + (itemTool ? Object.keys(ITEM_TYPES).map(t => `<div><button class="btn ${t === itemSel ? '' : 'ghost'}" data-it="${t}" style="margin-top:4px;width:100%">${ITEM_TYPES[t].name} · ${fmtCost(ITEM_TYPES[t].cost)}</button></div>`).join('') + '<p style="margin:6px 0 0;font-weight:400">Click a tile in the matching room to place. Click an item to upgrade it. Shift+click removes it (no refund).</p>' : '');
@@ -3149,12 +3408,17 @@ function doBuild(a) {
   if (a === 'repDoor') { if (S.enemies.some(e => e.inside) || !rep(S.door)) return; S.breached = false; lampEv('door_repair', 'Hatch repaired.', 'good'); }
   else if (a === 'repWall') { if (rep(S.wall)) lamp('Wall repaired.', 'good'); }
   else if (a === 'upWall') { const c = { scrap: 30, mat: 12 }; if (!canPay(c)) return; pay(c); S.wall.lvl = 2; S.wall.max = 600; S.wall.hp = 600; lamp('The wall is reinforced.', 'good'); }
-  else if (/^turret\d/.test(a)) { const i = +a[6], k = a.slice(7), sp = TURRETS[k]; if (!canPay(sp.cost) || S.turrets[i]) return; pay(sp.cost); S.turrets[i] = { type: k, hp: sp.hp, max: sp.hp, lvl: 1, cd: 0 }; lamp(sp.name + ' built in slot ' + (i + 1) + (k === 'coil' ? '. It runs on generator power, no crew needed.' : '. Assign someone to it in Crew.'), 'good'); }
+  else if (/^turret\d/.test(a)) { const i = +a[6], k = a.slice(7), sp = TURRETS[k]; if (!canPay(sp.cost) || S.turrets[i]) return; pay(sp.cost); S.turrets[i] = { type: k, hp: sp.hp, max: sp.hp, lvl: 1, cd: 0 }; lamp(sp.name + ' built in slot ' + (i + 1) + (k === 'coil' ? '. It runs on generator power, no crew needed.' : '. Give someone the Turret job in Crew.'), 'good'); balanceTurrets(); }
   else if (/^repT/.test(a)) rep(S.turrets[+a[4]]);
   else if (/^upT/.test(a)) { const c = { parts: 8, elec: 2 }; if (!canPay(c)) return; pay(c); S.turrets[+a[3]].lvl = 2; lamp('Turret ' + (+a[3] + 1) + ' upgraded.', 'good'); }
   else if (a === 'upHydro' || a === 'upMed' || a === 'upBunks') { const k = a.slice(2).toLowerCase(); const c = { hydro: { elec: 3, mat: 8 }, med: { elec: 3, mat: 6 }, bunks: { scrap: 10, mat: 10 } }[k]; if (!canPay(c)) return; pay(c); S.rooms[k] = 2; lamp(ROOMS[k].name + ' upgraded.', 'good'); }
   else if (/^room_/.test(a)) { const k = a.slice(5), r = BUILD_ROOMS[k]; if (!r || S.rooms[k]) return; if (!canPay(r.cost)) { lamp('The ' + ROOMS[k].name + ' needs ' + fmtCost(r.cost) + '.', 'warn'); return; } startPlace({ kind: 'room', k }); }
   else if (a === 'toggleLadder') { if (placing && placing.kind === 'ladder') cancelPlace(); else startPlace({ kind: 'ladder' }); }
+  else if (/^buy_/.test(a)) buyItem(a.slice(4));
+  else if (/^bld_/.test(a)) buyBuild(a.slice(4));
+  else if (/^rs_/.test(a)) rsAction(a.slice(3));
+  else if (/^x_/.test(a)) expAction(a.slice(2));
+  else if (/^prio_/.test(a)) cyclePrio(+a.slice(5));
   else if (a === 'toggleParts') S.makeParts = !S.makeParts;
   else if (a === 'toggleDig') toggleDig();
   else if (a === 'tower') { const t = TOWER[S.tower.done]; if (!t || S.tower.paid || !canPay(t.cost)) return; pay(t.cost); S.tower.paid = true; S.tower.work = 0; lampEv('exit_build_start', 'Signal tower: work on the ' + t.name.toLowerCase() + ' can begin. Put people with Tech on the Signal tower job.', 'good'); }
@@ -3198,14 +3462,14 @@ function interactable() {
   }
   return null;
 }
-const mouse = { x: 0, y: 0, wx: 0, down: false };
+const mouse = { x: 0, y: 0, wx: 0, wy: 0, down: false };
 function toCanvas(e) { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H }; }
 cv.addEventListener('pointermove', e => {
   if (e.pointerType === 'touch' && aimId !== null && e.pointerId !== aimId) return;
   const p = toCanvas(e); mouse.x = p.x; mouse.y = p.y; mouse.inCv = true;
   if (bcam.pan) { bcam.cx -= (p.x - bcam.pan.x) / bcam.z; bcam.cy -= (p.y - bcam.pan.y) / bcam.z; bcam.pan = { x: p.x, y: p.y }; bcam.follow = null; const v = bcamView(); bcam.cx = v.ox + W / v.z / 2; bcam.cy = v.oy + H / v.z / 2; }
   const bp = scene === 'bunker' ? bcamToWorld(p) : p;
-  mouse.wx = bp.x + (scene === 'scav' && scav ? scav.cam : 0); hover = scene === 'bunker' && S ? personAt(bp.x, bp.y) : null;
+  mouse.wx = bp.x + (scene === 'scav' && scav ? scav.cam : 0); mouse.wy = bp.y; hover = scene === 'bunker' && S ? personAt(bp.x, bp.y) : null;
 });
 cv.addEventListener('pointerdown', e => {
   if (scene !== 'bunker' && scene !== 'scav') return;
@@ -3221,11 +3485,12 @@ cv.addEventListener('pointerdown', e => {
     markTouch();
     // touch aim: in scav, tap/drag on the canvas sets shoot direction; otherwise touch shoots via the FIRE button
     if (!(prefs.ta && scene === 'scav' && scav)) return;
-    aimId = e.pointerId; mouse.wx = p.x + scav.cam;
+    aimId = e.pointerId; mouse.wx = p.x + scav.cam; mouse.wy = p.y; mouse.inCv = true;
   }
   mouse.down = true;
 });
 let aimId = null;
+cv.addEventListener('pointerleave', e => { if (e.pointerType !== 'touch') mouse.inCv = false; });
 function aimRelease(e) {
   if (e.pointerType === 'touch' && aimId !== null) { if (e.pointerId === aimId) { aimId = null; mouse.down = false; } return; }
   mouse.down = false;
@@ -3242,7 +3507,7 @@ function bcamFocus(id) { bcam.follow = id; bcam.tz = Math.max(bcam.tz, 1.8); }
 function bcamReset() { bcam.follow = null; bcam.anchor = null; bcam.tz = 1; bcam.cx = W / 2; bcam.cy = H / 2; }
 // ---- overview mode + Mara autopilot ----
 const MARA_STATS = { cook: 0.7, tech: 0.7, build: 0.7, acc: 0.7 };
-const MARA_JOBS = ['workshop', 'signal', 'kitchen', 'hydro', 'idle'];
+const MARA_JOBS = ['workshop', 'research', 'signal', 'kitchen', 'hydro', 'idle'];
 function toggleOverview() {
   if (scene !== 'bunker' || !S || S.over || S.player.down) return;
   bcam.overview = !bcam.overview;
@@ -3264,7 +3529,7 @@ function endOverview() {
 function maraAuto(dt) {
   let floor, x, work = null, pitSpot = null;
   if (S.alarm) { floor = 0; x = 290; }
-  else { work = (S.player.job && MARA_JOBS.includes(S.player.job)) ? S.player.job : 'idle'; if (work === 'workshop' && !S.rooms.workshop) work = 'idle'; const sp = jobSpot(P, work); floor = sp.floor; x = sp.x; if (sp.pit) pitSpot = sp; }
+  else { work = (S.player.job && MARA_JOBS.includes(S.player.job)) ? S.player.job : 'idle'; if (work === 'workshop' && !S.rooms.workshop) work = 'idle'; if (work === 'research' && !(S.builds && S.builds.lab)) work = 'idle'; const sp = jobSpot(P, work); floor = sp.floor; x = sp.x; if (sp.pit) pitSpot = sp; }
   let arrived;
   if (pitSpot) arrived = pitGoto(P, pitSpot, dt, 175);
   else if (P.pit) { arrived = false; if (pitLeave(P, dt, true)) arrived = moveTo(P, floor, x, dt, 175); }
@@ -3273,7 +3538,7 @@ function maraAuto(dt) {
   P.anim += arrived ? 0 : dt * 10;
   P.autoWork = arrived && !S.alarm ? work : null;
   if (arrived && S.alarm && P.cd <= 0) {
-    const t = S.enemies.find(en => !en.inside && en.hp > 0 && en.x > P.x && en.x - P.x < 320);
+    const t = S.enemies.find(en => !en.inside && !en.hidden && en.hp > 0 && en.x > P.x && en.x - P.x < 320);
     if (t) { P.facing = 1; P.cd = 0.34; fx.bullets.push({ x: P.x + 12, y: P.y - 20, vx: 900, life: 0.55, dmg: Math.round((13 + S.player.lvl * 2) * armoryMult()), world: scene }); }
   }
   P.inMed = P.floor === 2 && P.x > ROOMS.med.x0 && !P.climbing;
@@ -3284,18 +3549,19 @@ function maraWorkTick(mins) {
   const m = { stats: MARA_STATS, food: 100, awake: 0, grief: 0, bonds: [], state: 'work', job, xp: 0, lvl: 1, cd: 0 };
   const e = eff(m) * (S.powered && POWERED_JOBS.includes(job) ? ROOM_FX.powerBoost : 1);
   switch (job) {
-    case 'hydro': S.res.food += 1.3 * m.stats.cook * e * h * (S.rooms.hydro > 1 ? 1.5 : 1); break;
+    case 'hydro': S.res.food += 1.3 * m.stats.cook * e * h * (S.rooms.hydro > 1 ? 1.5 : 1) * (hasB('rain') ? 1.25 : 1) * wearF('planter') * hydroMul(); break;
     case 'kitchen': {
       const k = kit();
       if (k.cooked < k.cap) {
-        k.prog += 4 * m.stats.cook * e * h;
+        k.prog += 4 * m.stats.cook * e * h * wearF('stove') * (tech('cook1') ? 1.15 : 1); wearBy('stove', 0.5 * h);
         while (k.prog >= 1 && S.res.food >= 1 && k.cooked < k.cap) { k.prog -= 1; S.res.food -= 1; k.cooked += 1; }
         if (k.prog > 1) k.prog = 1;
       }
       break;
     }
     case 'workshop': workshopTick(m, e, h); break;
-    case 'signal': if (S.tower.paid) S.tower.work += 2 * m.stats.tech * e * h; break;
+    case 'research': researchWork(3 * m.stats.tech * e * h); break;
+    case 'signal': if (S.tower.paid) S.tower.work += 2 * m.stats.tech * e * h * (hasB('lab') ? 1.15 : 1); break;
   }
 }
 function maraCard() {
@@ -3438,6 +3704,17 @@ document.querySelectorAll('#touch button').forEach(b => {
   b.addEventListener('lostpointercapture', release);
   b.addEventListener('contextmenu', e => e.preventDefault());
 });
+// show the touch pad only during live play (not menu / pause / game over)
+(function touchPadVisibility() {
+  const tp = document.getElementById('touch'); if (!tp) return;
+  setInterval(() => {
+    const ov = document.getElementById('overlay');
+    const live = (scene === 'bunker' || scene === 'scav') && S && !S.over && !(ov && !ov.hidden);
+    if (tp.hidden === !live) return;
+    tp.hidden = !live;
+    if (!live) clearInput();
+  }, 150);
+})();
 document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => openDrawer(b.dataset.tab));
 $('#dClose').onclick = closeDrawer;
 $('#tCrew').onclick = () => toggleDrawer('crew');
@@ -3445,6 +3722,7 @@ $('#tBuild').onclick = () => toggleDrawer('build');
 $('#tTower').onclick = () => toggleDrawer('tower');
 $('#tAlarm').onclick = () => toggleAlarm();
 $('#tHelp').onclick = () => showHelp(true);
+$('#tMore').onclick = e => { const on = $('#tools').classList.toggle('more'); e.currentTarget.setAttribute('aria-pressed', on ? 'true' : 'false'); e.currentTarget.blur(); };
 $('#tMute').onclick = e => { if (window.SFX) SFX.toggleMute(); e.currentTarget.blur(); };
 
 // menus
@@ -3452,7 +3730,7 @@ function overlay(html) { const o = $('#overlay'); o.innerHTML = html; o.hidden =
 const HELP = `<div class="help" tabindex="0" aria-label="Controls and tips. Use the arrow keys to scroll.">
   <h3>THE LOOP</h3><ul><li>Days are for work: give the crew jobs and shifts, build, and scavenge topside.</li><li>At ${RAID_CLOCK} every night something attacks from the east. Bigger every night. Cinder comes on night 3.</li><li>Finish the four stages of the <b>signal tower</b> to win. Lose if everyone dies.</li></ul>
   <h3>THE CREW</h3><ul><li>Turrets only fire with someone on them. Good shots hit more.</li><li>Shifts decide who sleeps when. Past 16 hours awake people slow down fast. Hungry or grieving people work slower.</li><li>Meals are at 07:00, 13:00 and 19:00. Kitchen crew grow raw food and cook it into meals (1 food each) at the serving station; hungry crew fetch a meal there and eat it in the common room.</li><li>Badly hurt crew go to the med bay on their own. Doc heals them faster.</li><li>Bram, Doc and Tick share history: paired on a job they work better. Lose one and the others grieve.</li><li>Newcomers may leave in the night with your supplies if morale is low.</li></ul>
-  <h3>CONTROLS</h3><ul><li><kbd>A</kbd><kbd>D</kbd> move · <kbd>W</kbd><kbd>S</kbd> climb the shaft · <kbd>${keyLabel(BIND.jump)}</kbd> jump · <kbd>${keyLabel(BIND.shoot)}</kbd> or click to shoot</li><li><kbd>${keyLabel(BIND.interact)}</kbd> interact: walk off the right edge of the surface to scavenge · search crates · invite wanderers</li><li><kbd>C</kbd> crew · <kbd>B</kbd> build · <kbd>T</kbd> tower · <kbd>G</kbd> battle stations · <kbd>H</kbd> help · <kbd>P</kbd> pause · <kbd>1</kbd>–<kbd>3</kbd> speed · click a person to select them</li><li class="touchonly"><b>Touch:</b> left pad moves and climbs (▲▼), JUMP jumps, FIRE shoots, E interacts. Tap a person to select them. Use the top buttons for Crew, Build and Tower.</li></ul>
+  <h3>CONTROLS</h3><ul><li><kbd>A</kbd><kbd>D</kbd> move · <kbd>W</kbd><kbd>S</kbd> climb the shaft · <kbd>${keyLabel(BIND.jump)}</kbd> jump · <kbd>${keyLabel(BIND.shoot)}</kbd> or click to shoot the enemy under your mouse (it locks onto anything within about 3 tiles of the cursor, shown by red brackets; no target, no shot)</li><li><kbd>${keyLabel(BIND.interact)}</kbd> interact: walk off the right edge of the surface to scavenge · search crates · invite wanderers</li><li><kbd>C</kbd> crew · <kbd>B</kbd> build · <kbd>T</kbd> tower · <kbd>G</kbd> battle stations · <kbd>H</kbd> help · <kbd>P</kbd> pause · <kbd>1</kbd>–<kbd>3</kbd> speed · click a person to select them</li><li class="touchonly"><b>Touch:</b> left pad moves and climbs (▲▼), JUMP jumps, FIRE shoots the nearest enemy Mara is facing, E interacts. Tap a person to select them. Use the top buttons for Crew, Build and Tower.</li></ul>
 </div>`;
 function showMenu() {
   scene = 'menu'; tutHide(); const sv = loadSave();
@@ -3501,6 +3779,57 @@ function showHint() {
   $('#hintX').onclick = markHelpSeen;
   clearTimeout(hintTimer); hintTimer = setTimeout(markHelpSeen, 15000);
 }
+const HELP_COMBAT = `<div class="help" tabindex="0" aria-label="Combat guide. Use the arrow keys to scroll.">
+  <h3>DAMAGE TYPES</h3><ul>
+    <li><b>Pierce</b>: rifles, pistols, SMGs, machetes and the rifle turret. Great against soft targets, weak against armor.</li>
+    <li><b>Blunt</b>: shotguns, the shotgun turret and pipe clubs. Hits armored bruisers hard and can stun for a moment.</li>
+    <li><b>Shock</b>: the slow-field coil zaps the nearest enemy every few seconds and stuns it briefly. Rigs and Cinder take extra.</li>
+    <li><b>Bleed</b>: damage over time from rifle crits and machete cuts. Fleshy enemies suffer, tough ones barely notice.</li>
+  </ul>
+  <h3>WHO TAKES WHAT</h3><ul>
+    <li><b>Mutant hound</b>: weak to blunt (+15%).</li>
+    <li><b>Ash ghoul</b>: resists bleed (40% less).</li>
+    <li><b>Burrower</b>: weak to blunt (+20%).</li>
+    <li><b>Brute</b>: resists pierce (45% less), weak to blunt (+25%). Bring shotguns.</li>
+    <li><b>Pike's ram rig</b>: resists pierce (60% less) and a little blunt, weak to shock (+30%).</li>
+    <li><b>Cinder</b>: resists pierce (20% less) and bleed (50% less), weak to shock (+30%).</li>
+    <li><b>The Maw</b>: resists pierce (30% less) and bleed (70% less).</li>
+    <li><b>Raider</b>: no resistances, but it may break and run when it drops below a quarter health. Raiders shoot turrets from range, so keep the wall up.</li>
+  </ul>
+  <h3>CRITS AND STATUS</h3><ul>
+    <li>Good shots sometimes crit for 80% extra damage. A rifle crit also makes the target bleed.</li>
+    <li>Stunned enemies stop and cannot attack until it wears off.</li>
+  </ul>
+  <h3>TURRETS</h3><ul>
+    <li>Turrets hold a magazine. An empty one reloads for 1 scrap. Firing builds heat: at 100% it locks up until it cools.</li>
+    <li>Open Build, Defenses to set each turret's target: nearest, strongest, weakest or ranged first.</li>
+    <li>Worn turrets fire slower and can jam. Keep someone on the Workshop job.</li>
+  </ul>
+  <h3>CREW AND ARMS</h3><ul>
+    <li>Guards fight with what they hold: a rifle reaches far, an SMG sprays, a shotgun is deadly up close, a machete or pipe is melee.</li>
+    <li>Guards at the hatch or turrets on the surface take 20% less damage from cover.</li>
+    <li>Research Hardened barrels (+15% damage) and Armor-piercing rounds (halves resistance to pierce) in the Research tab.</li>
+  </ul>
+</div>`;
+// small illustrations for each tutorial section (inline SVG, game palette)
+const HELP_PICS = (() => {
+  const A = '#ffb347', R = '#ff5a4e', G = '#7ddc6f', B = '#7fc8ff', M = '#b8a78a', D = '#2d2215', W = '#f1e6d2';
+  const wrap = body => `<svg class="hpic" viewBox="0 0 300 60" role="img" aria-hidden="true" style="display:block;width:100%;height:auto;margin:6px 0 8px;background:#1b140c;border:1px solid #3a2c18">${body}</svg>`;
+  const person = (x, c) => `<circle cx="${x}" cy="26" r="6" fill="${W}"/><rect x="${x - 7}" y="33" width="14" height="18" fill="${c}"/>`;
+  const key = (x, t) => `<rect x="${x}" y="20" width="26" height="26" fill="${D}" stroke="${A}"/><text x="${x + 13}" y="38" font-size="13" font-weight="700" text-anchor="middle" fill="${A}" font-family="sans-serif">${t}</text>`;
+  return {
+    'THE LOOP': wrap(`<circle cx="40" cy="30" r="12" fill="${A}"/><path d="M62 30h46" stroke="${M}" stroke-dasharray="4 3"/><rect x="120" y="28" width="60" height="24" fill="#4a3a22"/><rect x="128" y="20" width="16" height="8" fill="${M}"/><rect x="150" y="36" width="8" height="16" fill="${A}"/><path d="M192 30h30" stroke="${M}" stroke-dasharray="4 3"/><circle cx="262" cy="26" r="11" fill="#cfd6e6"/><circle cx="268" cy="23" r="10" fill="#1b140c"/><path d="M232 52l8-14 8 14z" fill="${R}"/><path d="M252 52l8-14 8 14z" fill="${R}"/>`),
+    'THE CREW': wrap(`${person(60, A)}${person(110, G)}${person(160, B)}${person(210, R)}<rect x="52" y="8" width="16" height="10" fill="${D}" stroke="${A}"/><rect x="102" y="8" width="16" height="10" fill="${D}" stroke="${G}"/><rect x="152" y="8" width="16" height="10" fill="${D}" stroke="${B}"/><rect x="202" y="8" width="16" height="10" fill="${D}" stroke="${R}"/>`),
+    'CONTROLS': wrap(`${key(30, 'A')}${key(60, 'D')}${key(100, 'W')}${key(130, 'S')}<rect x="190" y="12" width="26" height="38" rx="13" fill="${D}" stroke="${A}"/><path d="M203 12v16M190 28h26" stroke="${A}"/><rect x="190" y="12" width="13" height="16" fill="${A}" opacity=".6"/><rect x="236" y="22" width="44" height="22" fill="${D}" stroke="${A}"/>`),
+    'DAMAGE TYPES': wrap(`<g transform="translate(16 0)"><path d="M20 30h50" stroke="${M}" stroke-width="3"/><path d="M70 30l-10-7v14z" fill="${A}"/><text x="40" y="54" font-size="9" fill="${M}" text-anchor="middle" font-family="sans-serif">PIERCE</text></g><g transform="translate(94 0)"><rect x="14" y="14" width="30" height="16" fill="${M}"/><rect x="26" y="28" width="6" height="16" fill="#7a6650"/><text x="29" y="54" font-size="9" fill="${M}" text-anchor="middle" font-family="sans-serif">BLUNT</text></g><g transform="translate(164 0)"><path d="M34 8l-14 22h10l-6 18 18-24h-10l8-16z" fill="${B}"/><text x="29" y="56" font-size="9" fill="${M}" text-anchor="middle" font-family="sans-serif">SHOCK</text></g><g transform="translate(228 0)"><path d="M30 10c8 12 12 18 12 24a12 12 0 0 1-24 0c0-6 4-12 12-24z" fill="${R}"/><text x="30" y="56" font-size="9" fill="${M}" text-anchor="middle" font-family="sans-serif">BLEED</text></g>`),
+    'WHO TAKES WHAT': wrap(`<ellipse cx="46" cy="42" rx="20" ry="9" fill="#9b6a4a"/><rect x="28" y="44" width="4" height="8" fill="#9b6a4a"/><rect x="58" y="44" width="4" height="8" fill="#9b6a4a"/><rect x="104" y="14" width="26" height="38" fill="#6d5a7a"/><circle cx="117" cy="11" r="7" fill="#6d5a7a"/><rect x="176" y="22" width="14" height="30" fill="#b0553a"/><circle cx="183" cy="18" r="6" fill="#b0553a"/><rect x="190" y="28" width="14" height="3" fill="${M}"/><rect x="236" y="24" width="46" height="22" fill="#6a4a3a"/><circle cx="246" cy="48" r="6" fill="${D}" stroke="${M}"/><circle cx="272" cy="48" r="6" fill="${D}" stroke="${M}"/>`),
+    'CRITS AND STATUS': wrap(`<path d="M70 8l6 16 16-6-8 14 16 6-17 3 3 17-12-12-12 12 3-17-17-3 16-6-8-14 16 6z" fill="${A}"/><text x="70" y="36" font-size="11" font-weight="700" fill="#1a0f02" text-anchor="middle" font-family="sans-serif">x1.8</text><path d="M150 12c6 10 9 15 9 20a9 9 0 0 1-18 0c0-5 3-10 9-20z" fill="${R}"/><path d="M180 20c4 7 6 10 6 14a6 6 0 0 1-12 0c0-4 2-7 6-14z" fill="${R}" opacity=".6"/><circle cx="250" cy="34" r="9" fill="#b0553a"/><g fill="${A}"><circle cx="236" cy="14" r="2.5"/><circle cx="250" cy="10" r="2.5"/><circle cx="264" cy="14" r="2.5"/></g>`),
+    'TURRETS': wrap(`<rect x="30" y="40" width="44" height="12" fill="#4a3a22"/><rect x="40" y="30" width="24" height="12" fill="${M}"/><rect x="62" y="33" width="36" height="5" fill="${W}"/><g fill="${A}"><rect x="130" y="12" width="8" height="14"/><rect x="142" y="12" width="8" height="14"/><rect x="154" y="12" width="8" height="14"/><rect x="166" y="12" width="8" height="14"/></g><rect x="178" y="12" width="8" height="14" fill="${D}" stroke="${A}"/><rect x="130" y="36" width="100" height="8" fill="${D}"/><rect x="130" y="36" width="64" height="8" fill="#ff8c2a"/><text x="232" y="43" font-size="9" fill="${M}" font-family="sans-serif"> HEAT</text><path d="M262 14l12 8-12 8z" fill="${B}"/>`),
+    'CREW AND ARMS': wrap(`<rect x="20" y="26" width="26" height="8" fill="${M}"/><rect x="20" y="32" width="8" height="14" fill="#7a6650"/><rect x="66" y="28" width="64" height="6" fill="${M}"/><rect x="66" y="32" width="20" height="12" fill="#7a6650"/><rect x="150" y="26" width="42" height="7" fill="${M}"/><rect x="150" y="31" width="16" height="13" fill="#7a6650"/><rect x="150" y="36" width="42" height="5" fill="${M}"/><rect x="214" y="14" width="6" height="38" transform="rotate(30 217 33)" fill="${M}"/><circle cx="262" cy="32" r="14" fill="${D}" stroke="${G}" stroke-width="2"/><path d="M255 32l5 5 9-10" stroke="${G}" stroke-width="2.5" fill="none"/>`),
+  };
+})();
+const withPics = html => html.replace(/<h3>([^<]+)<\/h3>/g, (m, k) => { let a = ''; try { a = typeof helpArt === 'function' ? helpArt(k) : ''; } catch (e) { a = ''; } return m + (a || HELP_PICS[k] || ''); });
+function helpTabs(sel) { return `<div class="row" role="tablist" style="justify-content:center;margin-bottom:8px"><button class="chip ${sel === 'basics' ? 'on' : ''}" role="tab" data-htab="basics">Basics</button><button class="chip ${sel === 'combat' ? 'on' : ''}" role="tab" data-htab="combat">Combat</button></div>`; }
 function showHelp(inGame, from) {
   if (document.querySelector('#overlay .help')) return;
   if (!from && $('#pRes')) from = 'pause';
@@ -3508,12 +3837,19 @@ function showHelp(inGame, from) {
   if (inGame) { paused = true; clearInput(); }
   if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   markHelpSeen();
-  overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="hTitle" style="width:640px"><h1 id="hTitle" style="font-size:36px">HOW TO PLAY</h1>${HELP}<button class="btn" id="hBack">${inGame ? 'Back to the bunker' : 'Back'}</button></div>`);
+  overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="hTitle" style="width:640px"><h1 id="hTitle" style="font-size:36px">HOW TO PLAY</h1><div id="hTabs">${helpTabs('basics')}</div>${withPics(HELP)}<button class="btn" id="hBack">${inGame ? 'Back to the bunker' : 'Back'}</button></div>`);
   $('#hBack').onclick = () => {
     if (from === 'pause') showPauseMenu();
     else if (inGame) { overlay(''); paused = was; renderHud(); }
     else showMenu();
   };
+  $('#hTabs').addEventListener('click', e => {
+    const b = e.target.closest('[data-htab]'); if (!b) return;
+    const k = b.dataset.htab, cur = document.querySelector('#overlay .help'); if (!cur) return;
+    cur.outerHTML = withPics(k === 'combat' ? HELP_COMBAT : HELP);
+    $('#hTabs').innerHTML = helpTabs(k);
+    const hp2 = document.querySelector('#overlay .help'); if (hp2) hp2.focus();
+  });
   const hp = document.querySelector('#overlay .help'); if (hp) hp.focus();
 }
 const KEYBINDS = [
@@ -3539,7 +3875,7 @@ function showSettings(from) {
   const curTs = getTextSize();
   const tsBtns = '<div class="tsrow">' + TEXT_SIZES.map(([k, label]) => `<button class="btn ghost" data-ts="${k}" aria-pressed="${k === curTs}">${label}</button>`).join('') + '</div>';
   const muted = !!(window.SFX && SFX.muted);
-  overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="sTitle" style="width:640px"><h1 id="sTitle" style="font-size:36px">SETTINGS</h1><div class="setp"><h3>VOLUME</h3>${rows}<button class="btn ghost" id="sMute" style="min-width:0">${muted ? 'Sound: off' : 'Sound: on'}</button><h3>TEXT SIZE</h3>${tsBtns}<h3>MOVEMENT &amp; ACTION KEYS</h3><div class="binds">${bindRows}</div><h3>OTHER KEYS</h3><dl class="keys">${keys}</dl></div><button class="btn" id="sBack">Back</button></div>`);
+  overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="sTitle" style="width:640px"><h1 id="sTitle" style="font-size:36px">SETTINGS</h1><div class="setp"><h3>VOLUME</h3>${rows}<button class="btn ghost" id="sMute" style="min-width:0">${muted ? 'Sound: off' : 'Sound: on'}</button><h3>DISPLAY</h3><div class="tsrow"><button class="btn ghost" data-pref="cb" aria-pressed="false">Colorblind: off</button><button class="btn ghost" data-pref="hc" aria-pressed="false">High contrast: off</button></div><h3>TEXT SIZE</h3>${tsBtns}<h3>MOVEMENT &amp; ACTION KEYS</h3><div class="binds">${bindRows}</div><h3>OTHER KEYS</h3><dl class="keys">${keys}</dl></div><button class="btn" id="sBack">Back</button></div>`);
   document.querySelectorAll('#overlay input[data-vol]').forEach(inp => {
     const out = inp.parentNode.querySelector('b');
     inp.oninput = () => { if (window.SFX && SFX.setVol) SFX.setVol(inp.dataset.vol, inp.value / 100); out.textContent = inp.value + '%'; };
@@ -3554,6 +3890,15 @@ function showSettings(from) {
   document.querySelectorAll('#overlay button[data-ts]').forEach(b => {
     b.onclick = () => { setTextSize(b.dataset.ts); showSettings(from); };
   });
+  document.querySelectorAll('#overlay button[data-pref]').forEach(b => {
+    b.onclick = () => {
+      const k = b.dataset.pref;
+      prefs[k] = !prefs[k];
+      savePrefs();
+      try { lamp((k === 'hc' ? 'High contrast' : 'Colorblind') + ' mode ' + (prefs[k] ? 'on' : 'off')); } catch (err) {}
+    };
+  });
+  applyPrefs();
   $('#sBack').focus();
 }
 function pauseVolHtml() {
@@ -3593,7 +3938,7 @@ function tutStart() {
 function tutSteps() {
   const touch = document.body.classList.contains('touch');
   return [
-    { hl: ['tCrew'], text: 'Step 1/5 · ' + (touch ? 'Tap <b>Crew</b>' : 'Press <kbd>C</kbd> (Crew)') + ' and tap a job chip to assign someone. Turrets only fire with a gunner on them.', done: () => tut.job },
+    { hl: ['tCrew'], text: 'Step 1/5 · ' + (touch ? 'Tap <b>Crew</b>' : 'Press <kbd>C</kbd> (Crew)') + ' and tap a job chip to assign someone. Turrets only fire with a gunner on them.', done: () => !!tut.job || living().some(c => (c.job === 'turretA' || c.job === 'turretB') && turretFor(c.job) && turretFor(c.job).type !== 'coil') },
     { hl: ['tBuild'], text: 'Step 2/5 · ' + (touch ? 'Tap <b>Build</b>' : 'Press <kbd>B</kbd> (Build)') + ' and build a second turret. It needs scrap and parts, so scavenge topside if you are short.', done: () => !!S.turrets[1] },
     { hl: ['tCrew'], text: 'Step 3/5 · Open <b>Crew</b> and put someone on the new turret (the Turret 2 job chip). An empty turret does not fire.', done: () => !S.turrets[1] || S.turrets[1].type === 'coil' || S.crew.some(c => c.alive && c.job === 'turretB') },
     { hl: ['tAlarm'], text: 'Step 4/5 · A raid hits at ' + RAID_CLOCK + ' from the east. ' + (touch ? 'Use the battle stations button' : 'Press <kbd>G</kbd> for battle stations') + ' when it starts to wake everyone and man the turrets.', done: () => !!S.raidActive || S.stats.raids > 0 },
@@ -3681,9 +4026,9 @@ function frameBody(now) {
       let n = 0;
       while (simAcc >= SIM_STEP && n < MAX_STEPS) { simTick(SIM_STEP); simAcc -= SIM_STEP; n++; }
       if (simAcc >= SIM_STEP) simAcc = 0; // drop backlog rather than spiral
-      playerTick(dtReal); bulletsTick(dtReal); fxTick(dtReal);
+      playerTick(dtReal); walkHintTick(dtReal); bulletsTick(dtReal); fxTick(dtReal);
     }
-    const it = interactable(); $('#prompt').textContent = it ? (document.body.classList.contains('touch') ? it.text.replace(/^E · /, 'Tap E · ') : it.text.replace(/^E · /, keyLabel(BIND.interact) + ' · ')) : '';
+    const it = interactable(); $('#prompt').textContent = it ? (document.body.classList.contains('touch') ? it.text.replace(/^E · /, 'Tap E · ') : it.text.replace(/^E · /, keyLabel(BIND.interact) + ' · ')) : walkHint;
     hudT -= dtReal; if (hudT <= 0) { hudT = 0.25; renderHud(); renderScavHud(); tutTick(); }
     drawerT -= dtReal; if (drawerT <= 0) { drawerT = living().length > 40 ? 1.5 : 0.6; const restDone = S.crew.some(c => c.restUntil && S.t >= c.restUntil); if (!restHold && (restDone || !document.querySelector('#drawer:hover')) && !(document.activeElement && document.activeElement.tagName === 'SELECT')) renderDrawer(); }
   }
