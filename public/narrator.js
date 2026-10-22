@@ -194,7 +194,7 @@
   }
   window.narrApplyVolume = function () {
     if (!audio) return;
-    if (isMuted() || narrVol() <= 0) { try { audio.pause(); } catch (e) {} playingUntilEnd = false; pendingClip = null; return; }
+    if (isMuted() || narrVol() <= 0) { try { audio.pause(); } catch (e) {} clearTimeout(wd); playingUntilEnd = false; pendingClip = null; hideCap(); return; }
     audio.volume = Math.min(1, Math.max(0, narrVol()));
   };
 

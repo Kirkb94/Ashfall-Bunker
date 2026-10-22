@@ -2490,6 +2490,7 @@ function drawScavMap() {
   g.restore();
 }
 function startScav(area) {
+  try { window.SFX && SFX.hatch && SFX.hatch(true); } catch (e) {}
   S.stats.trips++;
   const town = area === 'town';
   const len = town ? 3000 : 3600 * WASTE_SCALE;
@@ -2531,6 +2532,7 @@ function endScav(keep) {
     if (!got.length) lampEv('topside_empty', 'Welcome back. Nothing useful this time.', 'good');
   }
   scav = null; scene = 'bunker'; hideHint();
+  try { window.SFX && SFX.hatch && SFX.hatch(false); } catch (e) {}
   placePlayer('surface-right');
   if (pendingFocus) { const pf = pendingFocus; pendingFocus = null; if (S && S.crew.some(x => x.id === pf)) { focusFx = { id: pf, t: performance.now() }; try { bcamFocus(pf); } catch (_) {} } }
   fx.bullets = [];
@@ -2898,6 +2900,7 @@ function draw() {
   drawNightLight();
   drawMinimap();
   drawDuskGlow();
+  drawDuskWarnVignette();
   drawDoorVignette();
   drawDoorHitVignette();
   drawLossVignette();
@@ -2930,8 +2933,27 @@ function drawDuskGrade(x, y, w, hh) {
 }
 // Dusk warning gradient: warm red-orange glow building from ~17:00, peaking ~20:00, gone by ~21:30 (weaker dawn glow 4:30-6:30).
 // Honors the Night lighting toggle (prefs.nl). Reduced motion / Low effects: steady, no pulse. Topside gets a ground-up glow, bunker a sky-down one.
+// Warning vignette: red screen-edge darkening that builds slowly from ~18:00 to raid hour, then fades. Static (no pulse); skipped under reduced motion / photosensitive mode / dim effects off.
+function drawDuskWarnVignette() {
+  if (prefs.rm || prefs.ps || !prefs.nl || typeof S === 'undefined' || !S) return;
+  const h = hourF();
+  let k = 0;
+  if (h >= 18 && h < RAID_HOUR) k = (h - 18) / Math.max(0.5, RAID_HOUR - 18);
+  else if (h >= RAID_HOUR && h < RAID_HOUR + 1) k = 1 - (h - RAID_HOUR);
+  k = clamp(k, 0, 1);
+  if (k < 0.01) return;
+  k = k * k * (3 - 2 * k);
+  const w = cv.width, hh = cv.height;
+  g.save();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  const rg = g.createRadialGradient(w / 2, hh / 2, Math.min(w, hh) * 0.35, w / 2, hh / 2, Math.hypot(w, hh) / 2);
+  rg.addColorStop(0, 'rgba(150,20,20,0)');
+  rg.addColorStop(1, 'rgba(150,20,20,' + (0.4 * k).toFixed(3) + ')');
+  g.fillStyle = rg; g.fillRect(0, 0, w, hh);
+  g.restore();
+}
 function drawDuskGlow() {
-  if (prefs.rm || !prefs.nl || typeof S === 'undefined' || !S) return;
+  if (prefs.rm || prefs.ps || !prefs.nl || typeof S === 'undefined' || !S) return;
   const h = hourF();
   const ramp = (x, a, b) => clamp((x - a) / (b - a), 0, 1);
   const dusk = Math.min(ramp(h, 17, 20), 1 - ramp(h, 20, 21.5));
@@ -2955,7 +2977,7 @@ function drawDuskGlow() {
 // Subtle night tint over the whole view, driven by the clock (hourF via skyColors). Static, so safe for reduced motion.
 // Time-of-day tint: warm red at dusk/dawn, deepening to dark blue-black at full night. Returns null by day or when dim effects are off.
 function todTint(strength) {
-  if (prefs.rm || !prefs.nl || typeof S === 'undefined' || !S) return null;
+  if (prefs.rm || prefs.ps || !prefs.nl || typeof S === 'undefined' || !S) return null;
   const day = skyColors().dayAmt, night = 1 - day;
   if (night < 0.01) return null;
   const dusk = 1 - Math.abs(2 * day - 1); // peaks mid-transition
@@ -3550,6 +3572,19 @@ function drawSurface(sky) {
   }
   if (dp <= 0) { g.strokeStyle = '#ff5a4e'; g.lineWidth = 2; g.strokeRect(DOOR_X - 16, y - 38, 32, 38); }
   g.restore(); // end door shake
+  // light shaft falling from the hatch after a hit (skipped under reduced motion / photosensitive mode / zero effects)
+  if (!prefs.rm && !prefs.ps && prefs.fx > 0) {
+    const shaftAge = performance.now() - doorHitAt;
+    if (shaftAge >= 0 && shaftAge < 700) {
+      const sk = 1 - shaftAge / 700, sa = 0.16 * sk * sk * Math.min(1, prefs.fx) * clamp(doorHitPow || 0.5, 0.5, 1);
+      const sg = g.createLinearGradient(0, y, 0, y + 150);
+      sg.addColorStop(0, 'rgba(255,240,210,' + sa.toFixed(3) + ')');
+      sg.addColorStop(1, 'rgba(255,240,210,0)');
+      g.save(); g.fillStyle = sg;
+      g.beginPath(); g.moveTo(DOOR_X - 12, y); g.lineTo(DOOR_X + 12, y); g.lineTo(DOOR_X + 38, y + 150); g.lineTo(DOOR_X - 30, y + 150); g.closePath(); g.fill();
+      g.restore();
+    }
+  }
   const hatchHurt = dp < 1 || S.breached;
   if (hatchHurt) {
     const hcb = !!prefs.cb, hbr = S.breached || dp <= 0;
@@ -4140,6 +4175,7 @@ function drawScavDebris(ox) {
 function duskGlow() {
   const h = hourF();
   let a = 0;
+  if (prefs.rm || prefs.ps) return 0;
   if (h >= 16 && h < 20) a = (h - 16) / 4;
   else if (h >= 20 && h <= RAID_HOUR) a = 1;
   else if (h > RAID_HOUR && h < 22.5) a = 1 - (h - RAID_HOUR) / 1.5;
@@ -4692,11 +4728,12 @@ function hatchHudHTML() {
   const mark = { ok: '&#9632;', warn: '&#9650;', crit: '&#9888;', breach: '&#10005;' }[st];
   const tag = { ok: '', warn: 'WORN', crit: 'CRITICAL', breach: 'BREACHED' }[st];
   const pulse = (st === 'crit' || st === 'breach') && !(prefs && prefs.rm) ? ' pulse' : '';
+  const pulseDelay = pulse ? ' style="animation-delay:-' + ((performance.now() / 1000) % 1).toFixed(2) + 's"' : '';
   let lvl = 'quiet', lvlTxt = 'QUIET', lvlGlyph = '&#9675;';
   if (S.breached) { lvl = 'breach'; lvlTxt = 'BREACH'; lvlGlyph = '&#10005;'; }
   else if (S.enemies.length || S.spawns.length) { lvl = 'raid'; lvlTxt = 'RAID'; lvlGlyph = '&#9650;'; }
   else if (((RAID_HOUR - hourF() + 24) % 24) < 1.5) { lvl = 'dusk'; lvlTxt = 'DUSK'; lvlGlyph = '&#9680;'; }
-  return `<span class="hatchhud ${st}${pulse}" role="meter" aria-label="Hatch integrity" aria-valuemin="0" aria-valuemax="${max}" aria-valuenow="${Math.ceil(hp)}" title="Hatch integrity. Repair it at the workshop."><em aria-hidden="true">${mark}</em>Hatch <span class="hbar"><i style="width:${pct}%"></i></span> <b>${Math.ceil(hp)}/${max} &middot; ${pct}%</b>${tag ? ' <u>' + tag + '</u>' : ''}</span><span class="thlvl ${lvl}" title="Threat level"><em aria-hidden="true">${lvlGlyph}</em>${lvlTxt}</span>`;
+  return `<span class="hatchhud ${st}${pulse}"${pulseDelay} role="meter" aria-label="Hatch integrity" aria-valuemin="0" aria-valuemax="${max}" aria-valuenow="${Math.ceil(hp)}" title="Hatch integrity. Repair it at the workshop."><em aria-hidden="true">${mark}</em>Hatch <span class="hbar"><i style="width:${pct}%"></i></span> <b>${Math.ceil(hp)}/${max} &middot; ${pct}%</b>${tag ? ' <u>' + tag + '</u>' : ''}</span><span class="thlvl ${lvl}" title="Threat level"><em aria-hidden="true">${lvlGlyph}</em>${lvlTxt}</span>`;
 }
 // ---- night-warning banner + countdown chip, with a one-shot alarm sting
 const NIGHT_WARN_H = 2;       // game hours before the raid when the banner appears
@@ -5093,7 +5130,7 @@ function buildHTML() {
   else if (S.rooms.workshop) dmgBunks.forEach((i, n) => CATS.crafting.push(item('Repair damaged bunk ' + (n + 1), 'Cracked bunk: its two beds do not count toward capacity until repaired.', { scrap: BED_REPAIR_COST }, 'rep_bed_' + i, true, 'Repair')));
   // furniture bought one piece at a time (auto-placed in the next free spot) and installable buildings
   const own = t => itemList().filter(it => it.type === t).length;
-  const buy = (t, cat, desc, top) => { const T = ITEM_TYPES[t]; const h = item(T.name + ' <span class="tag">' + own(t) + ' built</span>', desc, T.cost, 'buy_' + t, !!ROOMS[T.room], 'Build'); if (top) CATS[cat].unshift(h); else CATS[cat].push(h); };
+  const buy = (t, cat, desc, top) => { const T = ITEM_TYPES[t], on = !!(itemTool && itemSel === t); const h = item(T.name + ' <span class="tag">' + own(t) + ' built</span>' + (on ? ' <span class="tag">PLACING</span>' : ''), desc + ' Pick its spot on the ' + (ROOMS[T.room] ? ROOMS[T.room].name : 'room') + ' grid.', T.cost, 'buy_' + t, !!ROOMS[T.room] && (on || canPay(T.cost)), on ? 'Stop' : 'Place'); if (top) CATS[cat].unshift(h); else CATS[cat].push(h); };
   const beds = bedCount(), crewN = living().length;
   buy('bunk', 'furniture', 'Each bunk gives two crew a bed. Beds: ' + beds + ' for ' + crewN + ' crew (capacity ' + crewCap() + '). People without one sleep on the floor and rest worse.', true);
   buy('cot', 'medical', 'Another cot for the med bay.');
@@ -5103,6 +5140,7 @@ function buildHTML() {
   buy('plant', 'decor', 'A potted plant that somehow survived. Small morale boost for everyone.');
   buy('lantern', 'decor', 'Warm light for the bunks. Small morale boost for everyone.');
   CATS.decor.push(`<p class="note">Decorations raise morale a little for everyone (${decoCount()} placed, up to +${(DECO_CAP).toFixed(1)} an hour).</p>`);
+  CATS.furniture.push('<p class="note">Placing furniture: click a free tile on the room grid. Click a piece you already placed to upgrade it (15 scrap per level, up to 3; each level makes that spot work 25% faster). Shift+click removes it, with no refund. Esc stops placing.</p>');
   buy('console', 'research', 'Another signal console.');
   buy('planter', 'food', 'Another hydroponics planter. More planters, more crew can grow food at once.');
   buy('stove', 'food', 'Another stove for the kitchen.');
@@ -5373,6 +5411,7 @@ function placeItem(w, shift) {
   pay(T.cost);
   S.itemSeq = (S.itemSeq || 0) + 1;
   itemList().push({ id: S.itemSeq, type: itemSel, room: c.k, col: c.col, lvl: 1 });
+  uiSfx('Build'); renderDrawer();
 }
 function drawItemSprite(type, x, yb, w, T) {
   const c = T.color;
@@ -5524,24 +5563,23 @@ function drawItemGhostBox(x, yb, bw, ok, txt, upgrade) {
   g.fillText(label, tx + 6, ty + 13);
   g.restore();
 }
-const itemUI = document.createElement('div');
-itemUI.style.cssText = 'position:fixed;left:10px;bottom:100px;z-index:40;display:none;font:600 12px "Chakra Petch",sans-serif;color:#ffd9a0;background:rgba(20,14,8,.9);border:1px solid #5a4428;padding:6px;border-radius:6px;max-width:220px';
-document.body.appendChild(itemUI);
-function renderItemUI() {
-  itemUI.innerHTML = `<button class="btn ghost" data-it="toggle">Build items: ${itemTool ? 'On' : 'Off'}</button>` + (itemTool ? Object.keys(ITEM_TYPES).map(t => `<div><button class="btn ${t === itemSel ? '' : 'ghost'}" data-it="${t}" style="margin-top:4px;width:100%">${ITEM_TYPES[t].name} · ${fmtCost(ITEM_TYPES[t].cost)}</button></div>`).join('') + '<p style="margin:6px 0 0;font-weight:400">Click a tile in the matching room to place. Click an item to upgrade it. Shift+click removes it (no refund).</p>' : '');
+// Furniture is placed from the Build menu and the build hotbar: picking a piece turns on grid placement for it
+// (room grid + ghost with cost; click a free tile to place, click a placed piece to upgrade, Shift+click removes).
+function renderItemUI() { try { hotbarRender(true); } catch (e) {} }
+function startItemPlace(t) {
+  if (!ITEM_TYPES[t]) return;
+  if (itemTool && itemSel === t) { itemTool = false; renderItemUI(); renderDrawer(); return; }   // pressing it again stops
+  if (digTool) toggleDig();
+  if (placing) { placing = null; if (S) bcam.cy = H / 2; }
+  itemTool = true; itemSel = t;
+  if (S && scene === 'bunker') bcam.follow = null;
+  const b = document.getElementById('tDig'); if (b) b.classList.remove('on');
+  renderDrawer(); renderItemUI();
 }
-itemUI.addEventListener('click', e => {
-  const b = e.target.closest('[data-it]'); if (!b) return;
-  if (b.dataset.it === 'toggle') itemTool = !itemTool; else itemSel = b.dataset.it;
-  if (itemTool) placing = null;
-  renderItemUI();
-});
 setInterval(() => {
-  const show = scene === 'bunker' && !!S && !S.over && (itemTool || hotbarLive());   // only while building
+  const show = scene === 'bunker' && !!S && !S.over;
   if (!show && itemTool) { itemTool = false; renderItemUI(); }
-  itemUI.style.display = show ? 'block' : 'none';
 }, 500);
-renderItemUI();
 function doBuild(a) {
   const rep = s => { const c = { scrap: Math.ceil((s.max - s.hp) / 10) }; if (!canPay(c)) { uiSfx('Error'); return false; } pay(c); s.hp = s.max; return true; };
   if (a === 'repDoor') { if (S.enemies.some(e => e.inside) || !rep(S.door)) return; S.breached = false; if (window.SFX && SFX.repair) { SFX.repair('clank'); } lampEv('door_repair', 'Hatch repaired.', 'good'); }
@@ -5570,7 +5608,7 @@ function doBuild(a) {
     lamp(scarName(sc.room) + ' rebuilt. It works, but not like it used to.', 'good');
   }
   else if (a === 'toggleLadder') { if (placing && placing.kind === 'ladder') cancelPlace(); else startPlace({ kind: 'ladder' }); }
-  else if (/^buy_/.test(a)) buyItem(a.slice(4));
+  else if (/^buy_/.test(a)) startItemPlace(a.slice(4));
   else if (/^bld_/.test(a)) buyBuild(a.slice(4));
   else if (/^rs_/.test(a)) rsAction(a.slice(3));
   else if (/^x_/.test(a)) expAction(a.slice(2));
@@ -5613,7 +5651,7 @@ function interactable() {
     const w = scav.wanderer;
     if (w && !w.gone && Math.abs(w.x - P.x) < 40) {
       if (scav.enemies.some(e => Math.abs(e.x - w.x) < 300)) return { text: 'Clear the hostiles first: the wanderer won’t talk while they’re near' };
-      return { text: `E · Invite ${w.s.name} (${w.s.role.toLowerCase()}) to the bunker`, act: () => { scav.recruit = w.s; w.gone = true; lamp(w.s.name + ' will follow you home. They are bringing nothing but themselves, and maybe trouble.', 'good'); } };
+      return { text: `E · Invite ${w.s.name} (${w.s.role.toLowerCase()}) to the bunker`, act: () => { scav.recruit = w.s; w.gone = true; srSay('Arrival: ' + w.s.name + ' will follow you home.', 'info'); lamp(w.s.name + ' will follow you home. They are bringing nothing but themselves, and maybe trouble.', 'good'); } };
     }
   }
   return null;
@@ -5990,11 +6028,12 @@ function legendChip(label, on) {
 function renderLegend() {
   const active = scene === 'bunker' && !!S && !S.over && (placing || digTool || itemTool);
   if (!active) { if (legendHtml) { legendHtml = ''; legendUI.innerHTML = ''; } legendUI.style.display = 'none'; return; }
+  // only the tool in use: everything else is picked from the Build menu or the hotbar (keys 1-9)
   const parts = [];
-  parts.push(legendChip('<b>X</b> Dig', !!digTool));
-  parts.push(legendChip('<b>L</b> Ladder · pit ' + fmtCost(LADDER_COST.pit) + ' / bunker ' + fmtCost(LADDER_COST.bunker), !!(placing && placing.kind === 'ladder')));
-  for (const k in BUILD_ROOMS) parts.push(legendChip(k + ' · ' + fmtCost(BUILD_ROOMS[k].cost), !!(placing && placing.kind === 'room' && placing.k === k)));
-  for (const t in ITEM_TYPES) parts.push(legendChip(ITEM_TYPES[t].name + ' · ' + fmtCost(ITEM_TYPES[t].cost), !!(itemTool && itemSel === t)));
+  if (digTool) parts.push(legendChip('<b>X</b> Dig', true));
+  else if (placing && placing.kind === 'ladder') parts.push(legendChip('<b>L</b> Ladder · pit ' + fmtCost(LADDER_COST.pit) + ' / bunker ' + fmtCost(LADDER_COST.bunker), true));
+  else if (placing && placing.kind === 'room') parts.push(legendChip(ROOMS[placing.k].name + ' · ' + fmtCost(BUILD_ROOMS[placing.k].cost), true));
+  else if (itemTool && ITEM_TYPES[itemSel]) parts.push(legendChip(ITEM_TYPES[itemSel].name + ' · ' + fmtCost(ITEM_TYPES[itemSel].cost), true));
   let ctx;
   if (digTool) ctx = '<b>Click/drag</b>: dig tiles';
   else if (placing && placing.kind === 'ladder') ctx = '<b>Click</b>: place ladder';
@@ -6002,7 +6041,8 @@ function renderLegend() {
   else if (itemTool) ctx = '<b>Click</b>: place ' + ((ITEM_TYPES[itemSel] || {}).name || 'item') + ' · <b>Click existing</b>: upgrade · <b>Shift+click</b>: remove';
   else ctx = '';
   const undoHint = '<span style="opacity:.7"><b>Undo/Redo</b>: not available, builds are final' + (itemTool ? ' (Shift+click removes an item)' : '') + '</span>';
-  const html = parts.join('') + '<br>' + (ctx ? ctx + ' · ' : '') + '<b>Right-click</b>: cancel · <b>Right-drag</b>: pan · <b>Esc</b>: cancel<br>' + undoHint;
+  void undoHint;   // builds are final; Shift+click removal is in the controls line
+  const html = parts.join('') + '<br>' + (ctx ? ctx + ' · ' : '') + '<b>Right-click</b> or <b>Esc</b>: stop · <b>Right-drag</b>: pan';
   if (html !== legendHtml) { legendHtml = html; legendUI.innerHTML = html; }
   legendUI.style.display = 'block';
 }
@@ -6301,11 +6341,12 @@ function hotbarSlots() {
   }
   for (const [t, ic] of items) {
     const T = ITEM_TYPES[t];
-    out.push({ name: T.name, icon: ic, cost: T.cost, on: false, ok: !!ROOMS[T.room] && canPay(T.cost), act: () => buyItem(t) });
+    const on = !!(itemTool && itemSel === t);
+    out.push({ name: T.name, icon: ic, cost: T.cost, on, ok: on || (!!ROOMS[T.room] && canPay(T.cost)), act: () => startItemPlace(t) });
   }
   return out;
 }
-function hotbarLive() { return scene === 'bunker' && !!S && !S.over && (!!placing || !!digTool || (!$('#drawer').hidden && tab === 'build')); }
+function hotbarLive() { return scene === 'bunker' && !!S && !S.over && (!!placing || !!digTool || !!itemTool || (!$('#drawer').hidden && tab === 'build')); }
 function hotbarUse(i) {
   const s = hotbarSlots()[i]; if (!s) return;
   if (!s.ok) { uiSfx('Error'); return; }
@@ -6435,11 +6476,6 @@ function hotbarRender(force) {
       if (S) activate(tools()[focusI]);
     }
   });
-  window.btoolHotkey = function (k) {
-    if (!S) return;
-    const t = tools().find(x => x.key === k);
-    if (t) { const i = tools().indexOf(t); focusI = i; activate(t); }
-  };
   setInterval(() => refresh(false), 200);
 })();
 function clearInput() { for (const k in keys) keys[k] = false; mouse.down = false; document.querySelectorAll('#touch button.on').forEach(b => b.classList.remove('on')); }
@@ -6452,6 +6488,8 @@ function autoPause() {
 }
 document.addEventListener('visibilitychange', () => { if (document.hidden) autoPause(); else clearInput(); });
 window.addEventListener('pagehide', autoPause);
+window.addEventListener('blur', clearInput);
+window.addEventListener('orientationchange', clearInput);
 window.addEventListener('blur', autoPause);
 
 // gamepad: sticks/buttons drive the same key state as keyboard/touch; right stick = virtual cursor; D-pad navigates overlays
@@ -6808,7 +6846,7 @@ function titleFx() {
   requestAnimationFrame(loop);
 }
 function showMenu() {
-  scene = 'menu'; tutHide(); const sv = loadSave();
+  scene = 'menu'; tutHide(); tourHide(); const sv = loadSave();
   overlay(`<div class="menu title" role="dialog" aria-label="Ashfall Bunker main menu"><canvas class="titlefx" aria-hidden="true"></canvas><canvas class="titlelamp" aria-hidden="true" width="128" height="160" style="opacity:0"></canvas><h1>ASHFALL<br>BUNKER</h1><p class="sub">Twenty years after the bombs. A hole in the ground, a handful of people, and a dead signal tower that might be a way out.</p>
     ${sv ? `<button class="btn" id="mContinue">Continue · Day ${Math.floor(sv.S.t / 1440) + 1}</button>` : ''}<button class="btn ${sv ? 'ghost' : ''}" id="mNew">${sv ? 'New run' : 'Start'}</button><button class="btn ghost" id="mHelp">Controls</button><button class="btn ghost" id="mSet">Settings</button>
     <p class="sub" style="font-size:12.5px">Web prototype · stage 1</p></div>`);

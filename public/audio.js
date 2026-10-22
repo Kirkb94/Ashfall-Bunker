@@ -380,6 +380,15 @@
       if (kind === 'mask') { note(392, 0, 0.18, 0.16); }
       else { note(660, 0, 0.12, 0.14); note(990, 0.07, 0.2, 0.12); }
     },
+    // hatch open/close: metal clang + air hiss; entering=true going topside
+    hatch(entering) {
+      if (!ready()) return;
+      const now = ctx.currentTime; if (now - (this._lastHatch || 0) < 0.4) return; this._lastHatch = now;
+      tone(entering ? 160 : 260, entering ? 260 : 120, 0.35, 0.1, 'sawtooth');
+      tone(85, 45, 0.25, 0.22, 'sine');
+      noise(0.18, 'bandpass', 2400, 900, 0.16, 4);
+      noise(0.5, 'highpass', 3000, 1500, 0.07, 0.8);
+    },
     // speed = downward speed in px/s at impact
     land(speed) {
       if (!ready()) return;
