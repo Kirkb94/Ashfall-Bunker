@@ -1,0 +1,98 @@
+{
+ "format": "renegade-sprite/1",
+ "image": "cooked-meal.png",
+ "scale": 4,
+ "frameWidth": 64,
+ "frameHeight": 48,
+ "size": {
+  "w": 192,
+  "h": 48
+ },
+ "pivot": {
+  "x": 32,
+  "y": 44
+ },
+ "render": "pixel",
+ "source": {
+  "spriteId": "item-meal",
+  "version": 1,
+  "animIds": [
+   "item-meal-idle"
+  ]
+ },
+ "animations": {
+  "idle": {
+   "row": 0,
+   "state": "idle",
+   "loop": true,
+   "frames": [
+    {
+     "name": "idle_00",
+     "x": 0,
+     "y": 0,
+     "w": 64,
+     "h": 48,
+     "duration": 125
+    },
+    {
+     "name": "idle_01",
+     "x": 64,
+     "y": 0,
+     "w": 64,
+     "h": 48,
+     "duration": 125
+    },
+    {
+     "name": "idle_02",
+     "x": 128,
+     "y": 0,
+     "w": 64,
+     "h": 48,
+     "duration": 125
+    }
+   ],
+   "events": []
+  }
+ },
+ "frames": {
+  "idle_00": {
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 64,
+    "h": 48
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 32,
+    "y": 44
+   }
+  },
+  "idle_01": {
+   "frame": {
+    "x": 64,
+    "y": 0,
+    "w": 64,
+    "h": 48
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 32,
+    "y": 44
+   }
+  },
+  "idle_02": {
+   "frame": {
+    "x": 128,
+    "y": 0,
+    "w": 64,
+    "h": 48
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 32,
+    "y": 44
+   }
+  }
+ }
+}

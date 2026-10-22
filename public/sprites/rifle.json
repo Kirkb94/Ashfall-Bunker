@@ -1,0 +1,54 @@
+{
+ "format": "renegade-sprite/1",
+ "image": "rifle.png",
+ "scale": 4,
+ "frameWidth": 96,
+ "frameHeight": 48,
+ "size": {
+  "w": 96,
+  "h": 48
+ },
+ "pivot": {
+  "x": 48,
+  "y": 44
+ },
+ "render": "pixel",
+ "source": {
+  "spriteId": "item-rifle",
+  "version": 1,
+  "animIds": []
+ },
+ "animations": {
+  "static": {
+   "row": 0,
+   "state": "idle",
+   "loop": true,
+   "frames": [
+    {
+     "name": "static_00",
+     "x": 0,
+     "y": 0,
+     "w": 96,
+     "h": 48,
+     "duration": 100
+    }
+   ],
+   "events": []
+  }
+ },
+ "frames": {
+  "static_00": {
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 96,
+    "h": 48
+   },
+   "duration": 100,
+   "pivot": {
+    "x": 48,
+    "y": 44
+   }
+  }
+ }
+}

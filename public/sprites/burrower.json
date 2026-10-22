@@ -1,0 +1,565 @@
+{
+ "format": "renegade-sprite/1",
+ "image": "burrower.png",
+ "scale": 4,
+ "frameWidth": 160,
+ "frameHeight": 96,
+ "size": {
+  "w": 960,
+  "h": 480
+ },
+ "pivot": {
+  "x": 80,
+  "y": 92
+ },
+ "render": "pixel",
+ "source": {
+  "spriteId": "enemy-burrower",
+  "version": 1,
+  "animIds": [
+   "enemy-burrower-attack",
+   "enemy-burrower-death",
+   "enemy-burrower-hurt",
+   "enemy-burrower-idle",
+   "enemy-burrower-walk"
+  ]
+ },
+ "animations": {
+  "attack": {
+   "row": 0,
+   "state": "attack",
+   "loop": false,
+   "frames": [
+    {
+     "name": "attack_00",
+     "x": 0,
+     "y": 0,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "attack_01",
+     "x": 160,
+     "y": 0,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "attack_02",
+     "x": 320,
+     "y": 0,
+     "w": 160,
+     "h": 96,
+     "duration": 125,
+     "hitbox": [
+      88,
+      20,
+      72,
+      48
+     ]
+    },
+    {
+     "name": "attack_03",
+     "x": 480,
+     "y": 0,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "attack_04",
+     "x": 640,
+     "y": 0,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    }
+   ],
+   "events": [
+    {
+     "frame": 2,
+     "name": "hit"
+    }
+   ]
+  },
+  "death": {
+   "row": 1,
+   "state": "death",
+   "loop": false,
+   "frames": [
+    {
+     "name": "death_00",
+     "x": 0,
+     "y": 96,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "death_01",
+     "x": 160,
+     "y": 96,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "death_02",
+     "x": 320,
+     "y": 96,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "death_03",
+     "x": 480,
+     "y": 96,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "death_04",
+     "x": 640,
+     "y": 96,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "death_05",
+     "x": 800,
+     "y": 96,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    }
+   ],
+   "events": []
+  },
+  "hurt": {
+   "row": 2,
+   "state": "hurt",
+   "loop": false,
+   "frames": [
+    {
+     "name": "hurt_00",
+     "x": 0,
+     "y": 192,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "hurt_01",
+     "x": 160,
+     "y": 192,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "hurt_02",
+     "x": 320,
+     "y": 192,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    }
+   ],
+   "events": []
+  },
+  "idle": {
+   "row": 3,
+   "state": "idle",
+   "loop": true,
+   "frames": [
+    {
+     "name": "idle_00",
+     "x": 0,
+     "y": 288,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "idle_01",
+     "x": 160,
+     "y": 288,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "idle_02",
+     "x": 320,
+     "y": 288,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    }
+   ],
+   "events": []
+  },
+  "walk": {
+   "row": 4,
+   "state": "walk",
+   "loop": true,
+   "frames": [
+    {
+     "name": "walk_00",
+     "x": 0,
+     "y": 384,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "walk_01",
+     "x": 160,
+     "y": 384,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "walk_02",
+     "x": 320,
+     "y": 384,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "walk_03",
+     "x": 480,
+     "y": 384,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "walk_04",
+     "x": 640,
+     "y": 384,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    },
+    {
+     "name": "walk_05",
+     "x": 800,
+     "y": 384,
+     "w": 160,
+     "h": 96,
+     "duration": 125
+    }
+   ],
+   "events": []
+  }
+ },
+ "frames": {
+  "attack_00": {
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "attack_01": {
+   "frame": {
+    "x": 160,
+    "y": 0,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "attack_02": {
+   "frame": {
+    "x": 320,
+    "y": 0,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "attack_03": {
+   "frame": {
+    "x": 480,
+    "y": 0,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "attack_04": {
+   "frame": {
+    "x": 640,
+    "y": 0,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "death_00": {
+   "frame": {
+    "x": 0,
+    "y": 96,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "death_01": {
+   "frame": {
+    "x": 160,
+    "y": 96,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "death_02": {
+   "frame": {
+    "x": 320,
+    "y": 96,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "death_03": {
+   "frame": {
+    "x": 480,
+    "y": 96,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "death_04": {
+   "frame": {
+    "x": 640,
+    "y": 96,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "death_05": {
+   "frame": {
+    "x": 800,
+    "y": 96,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "hurt_00": {
+   "frame": {
+    "x": 0,
+    "y": 192,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "hurt_01": {
+   "frame": {
+    "x": 160,
+    "y": 192,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "hurt_02": {
+   "frame": {
+    "x": 320,
+    "y": 192,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "idle_00": {
+   "frame": {
+    "x": 0,
+    "y": 288,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "idle_01": {
+   "frame": {
+    "x": 160,
+    "y": 288,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "idle_02": {
+   "frame": {
+    "x": 320,
+    "y": 288,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "walk_00": {
+   "frame": {
+    "x": 0,
+    "y": 384,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "walk_01": {
+   "frame": {
+    "x": 160,
+    "y": 384,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "walk_02": {
+   "frame": {
+    "x": 320,
+    "y": 384,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "walk_03": {
+   "frame": {
+    "x": 480,
+    "y": 384,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "walk_04": {
+   "frame": {
+    "x": 640,
+    "y": 384,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  },
+  "walk_05": {
+   "frame": {
+    "x": 800,
+    "y": 384,
+    "w": 160,
+    "h": 96
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 80,
+    "y": 92
+   }
+  }
+ }
+}

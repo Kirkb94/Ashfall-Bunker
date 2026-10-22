@@ -49,7 +49,7 @@ function structDmgMul(what) {
 function maintHTML() {
   const rows = condKeys().map(k => {
     const v = Math.round(cond(k));
-    return `<div class="card"><div class="ch"><b>${COND_NAMES[k]}</b><span class="lvl">${v}%</span></div>${bar(v, v < 30 ? '#ff5a4e' : v < 60 ? '#ffb347' : '#7ddc6f')}</div>`;
+    return `<div class="card"><div class="ch"><b>${COND_NAMES[k]}</b><span class="lvl">${v}%</span></div>${bar(v, v < 30 ? '#ff5a4e' : v < 60 ? '#ffb347' : '#7ddc6f', v < 30 ? 'low' : v < 60 ? 'rest' : 'hp', COND_NAMES[k])}${v < 30 ? '<div class="note" style="margin:2px 0 0"><span aria-hidden="true">\u26A0\uFE0E</span> Low</div>' : ''}</div>`;
   }).join('');
   const crew = living().filter(c => c.job === 'workshop').length;
   return `<div class="sec">MAINTENANCE</div><p class="note">Use wears things down. Worn machines work slower, worn turrets fire slower and jam, a worn hatch or wall takes more damage. Workshop crew service the worst one when nothing needs repairing, for a little scrap.${S.rooms.workshop && !crew ? ' <span style="color:var(--red)">Nobody is on the Workshop job.</span>' : ''}</p>${rows}`;
@@ -301,7 +301,7 @@ function turretTick(dt) {
         t.zap = (t.zap || 0) - dt;
         if (t.zap <= 0) {
           const foe = pickFoe(t, i, spec);
-          if (foe) { t.zap = 2.6; hitEnemy(foe, 9, null, 'shock'); foe.stun = Math.max(foe.stun || 0, 0.5); tracer(SLOT_X[i] + 16, FLOORS[0] - 48, foe.x, foe.y - 14, '#7fc8ff'); fxSparks(foe.x, foe.y - 14, 3, 1); }
+          if (foe) { t.zap = 2.6; if (window.SFX) SFX.turret('coil'); hitEnemy(foe, 9, null, 'shock'); foe.stun = Math.max(foe.stun || 0, 0.5); tracer(SLOT_X[i] + 16, FLOORS[0] - 48, foe.x, foe.y - 14, '#7fc8ff'); fxSparks(foe.x, foe.y - 14, 3, 1); }
           else t.zap = 0.5;
         }
       }
@@ -328,15 +328,18 @@ function turretTick(dt) {
     const k = 't' + i;
     if (cond(k) < 30 && Math.random() < 0.12) { t.cd = 0.6; fxSparks(SLOT_X[i] + 16, FLOORS[0] - 30, 2, 1); return; }   // jam
     t.cd = spec.cd / wearF(k); t.flash = 0.08;
-    fxCasing(SLOT_X[i] + 14, FLOORS[0] - 28); if (t.type !== 'rifle') fxCasing(SLOT_X[i] + 14, FLOORS[0] - 28);
+    const fxOn = typeof prefs === 'undefined' || (!prefs.ps && prefs.fx > 0), fxK = typeof prefs === 'undefined' ? 1 : prefs.fx;
+    if (fxOn) { fxCasing(SLOT_X[i] + 14, FLOORS[0] - 28); if (t.type !== 'rifle') fxCasing(SLOT_X[i] + 14, FLOORS[0] - 28); }
     if (window.SFX) SFX.turret(t.type);
-    fxSparks(SLOT_X[i] + 18, FLOORS[0] - 30, 3, 1);
-    fxDust(SLOT_X[i] + 14, FLOORS[0] - 24, 2);
+    if (fxOn && (typeof prefs === 'undefined' || !prefs.rm)) {
+      fxSparks(SLOT_X[i] + 18, FLOORS[0] - 30, Math.max(1, Math.round(3 * Math.min(1, fxK))), 1);
+      fxDust(SLOT_X[i] + 14, FLOORS[0] - 24, 2);
+    }
     if (scene === 'bunker') addShake(t.type === 'rifle' ? 0.05 : 0.09);
     const e = eff(gunner), dtype = t.type === 'rifle' ? 'pierce' : 'blunt';
     for (let p = 0; p < spec.pellets; p++) {
       const ty = target.y - ENEMIES[target.type].h / 2 + rnd(-8, 8);
-      tracer(SLOT_X[i] + 16, FLOORS[0] - 30, target.x + rnd(-6, 6), ty, t.type === 'rifle' ? '#ffe08a' : '#ffb060');
+      if (typeof prefs === 'undefined' || !prefs.rm) tracer(SLOT_X[i] + 16, FLOORS[0] - 30, target.x + rnd(-6, 6), ty, t.type === 'rifle' ? '#ffe08a' : '#ffb060');
       if (Math.random() < (spec.base + spec.accK * gunner.stats.acc) * e) {
         const crit = Math.random() < 0.06 + 0.12 * gunner.stats.acc;
         hitEnemy(target, spec.dmg * (t.lvl > 1 ? 1.4 : 1) * armoryMult() * (crit ? 1.8 : 1), gunner, dtype, crit);

@@ -41,7 +41,8 @@
     defeat: ['vo_defeat', 2],
     pop_50: ['vo_pop_50', 2],
     pop_10: ['vo_pop_10', 2],
-    pop_3: ['vo_pop_03', 2]
+    pop_3: ['vo_pop_03', 2],
+    help_hint: ['vo_help_hint', 2]
   };
   const INTERRUPT = /door_breach|victory|defeat/;
   const COOLDOWN_MS = 8000, VOLUME = 0.9;
@@ -65,14 +66,22 @@
   }
   function hideCap() {
     clearTimeout(capTimer); capTimer = null;
-    if (capEl) { capEl.classList.remove('on'); capEl.textContent = ''; }
+    if (capEl) {
+      capEl.classList.remove('on');
+      const el = capEl;
+      setTimeout(() => { if (!el.classList.contains('on')) el.textContent = ''; }, 300);
+    }
   }
   function showCap(clip) {
     try {
-      if (!capsOn() || typeof narrText !== 'function') return;
-      const t = narrText(clip, null, '');
-      if (!t) return;
-      if (typeof narrPopupShowing === 'function' && narrPopupShowing(t)) return; // popup already shows it
+      if (typeof narrText !== 'function') return;
+      showText(narrText(clip, null, ''));
+    } catch (e) {}
+  }
+  function showText(t) {
+    try {
+      if (!capsOn() || !t) return;
+      t = String(t);
       const el = ensureCap(); if (!el) return;
       el.textContent = t;
       el.classList.add('on');
@@ -80,6 +89,7 @@
       capTimer = setTimeout(hideCap, Math.max(3500, 2000 + t.length * 60));
     } catch (e) {}
   }
+  window.narrShowText = showText; // caption any Lamp line, with or without a voice clip
   window.narrCaptionsOn = capsOn;
   window.narrSetCaptions = function (on) {
     try { localStorage.setItem(CAP_KEY, on ? '1' : '0'); } catch (e) {}
@@ -111,6 +121,7 @@
   function isMuted() {
     try {
       if (window.SFX) {
+        if (typeof SFX.narrMuted === 'function' && SFX.narrMuted()) return true;
         if (typeof SFX.isMuted === 'function') { if (SFX.isMuted()) return true; }
         else if (SFX.muted) return true;
       }
@@ -119,6 +130,16 @@
     } catch (e) {}
     return false;
   }
+
+  // Pick a specific take (1-based) for events whose takes are not interchangeable (e.g. keyboard vs touch hint).
+  window.narrPickTake = function (ev, n) {
+    const t = TAKES[ev];
+    if (!t || !(n >= 1 && n <= t[1])) return null;
+    const now = performance.now();
+    if (last[ev] && now - last[ev] < COOLDOWN_MS && !INTERRUPT.test(ev)) return null;
+    last[ev] = now; lastTake[ev] = n;
+    return DIR + t[0] + '_' + String(n).padStart(2, '0') + '.mp3';
+  };
 
   window.narrPick = function (ev) {
     const t = TAKES[ev];
@@ -134,7 +155,7 @@
 
   function narrVol() {
     let v = 1;
-    try { if (window.SFX && SFX.getVol) v = SFX.getVol('narr') * SFX.getVol('master'); } catch (e) {}
+    try { if (window.SFX && SFX.getVol) v = (SFX.effVol ? SFX.effVol('narr') * SFX.effVol('master') : SFX.getVol('narr') * SFX.getVol('master')); } catch (e) {}
     return VOLUME * v;
   }
   window.narrApplyVolume = function () {
@@ -145,7 +166,7 @@
 
   window.narrPlay = function (clip) {
     if (!clip) return;
-    if (isMuted() || narrVol() <= 0) { if (!/door_attack/.test(String(clip)) || true) showCap(clip); return; } // muted: still caption the line
+    if (isMuted() || narrVol() <= 0) { showCap(clip); return; } // muted: still caption every line (captions also serve deaf and hard-of-hearing players)
     const m = String(clip).match(/vo_[a-z0-9_]+?_\d+/i);
     const urgent = m ? INTERRUPT.test(m[0]) : false;
     const ambient = m ? /door_attack/.test(m[0]) : false; // low priority: never queued, never displaces a pending line
@@ -154,6 +175,15 @@
       audio.addEventListener('ended', () => { clearTimeout(wd); playingUntilEnd = false; hideCap(); playPending(); });
       audio.addEventListener('error', () => { clearTimeout(wd); playingUntilEnd = false; hideCap(); playPending(); });
       audio.addEventListener('loadedmetadata', () => { if (playingUntilEnd) armWd((isFinite(audio.duration) ? audio.duration : 10) * 1000 + 3000); });
+      // duck music/ambience while the voice is audible; short release hold so queued lines don't pump the mix
+      let duckT = null;
+      const duck = on => { try { if (window.SFX && SFX.duck) SFX.duck(on); } catch (e) {} };
+      audio.addEventListener('playing', () => { clearTimeout(duckT); duckT = null; duck(true); });
+      // keep the duck failsafe armed while the line is genuinely playing
+      audio.addEventListener('timeupdate', () => { if (!audio.paused && !audio.ended) duck(true); });
+      ['pause', 'ended', 'error'].forEach(ev => audio.addEventListener(ev, () => {
+        clearTimeout(duckT); duckT = setTimeout(() => { duckT = null; duck(false); }, 250);
+      }));
     }
     if (playingUntilEnd && !audio.paused && !audio.ended) {
       if (ambient) return;

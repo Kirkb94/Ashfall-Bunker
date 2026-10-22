@@ -30,7 +30,10 @@
   .res .lowico{font-style:normal;color:var(--red);font-weight:700}
   .res .lowtag{font-style:normal;font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--red)}
   @keyframes lowflash{0%,100%{background-color:transparent}50%{background-color:#ff5a4e44}}
-  body.hc .res .lowres{outline:2px solid #fff;background:repeating-linear-gradient(135deg,#fff3 0 4px,#000 4px 8px)}
+  body.hc .res .lowres{outline:2px solid #fff;background:repeating-linear-gradient(135deg,#fff3 0 4px,#000 4px 8px);animation:lowflashHc 1.1s steps(2,jump-none) infinite}
+  @keyframes lowflashHc{0%{background-color:#000}100%{background-color:#b00020}}
+  body.hc .res .lowres .low::before,body.cb .res .lowres .low::before{content:none}
+  body.hc .res .lowres .low,body.hc .res .lowres .lowico,body.hc .res .lowres .lowtag{color:#fff}
   body.hc .res .low{color:#fff}
   .spd{display:flex;gap:2px;margin-left:auto}
   .spd button{background:#1d160e;border:1px solid var(--line);border-radius:5px;padding:2px 8px;font-size:12.5px}
@@ -117,6 +120,9 @@
   .menu{width:560px;display:flex;flex-direction:column;align-items:center;gap:14px}
   .menu h1{margin:0;font:700 64px/1 var(--disp);letter-spacing:.08em;color:var(--amber);text-shadow:0 0 30px rgba(255,140,42,.35)}
   .menu .sub{margin:0;color:var(--muted);font-size:16px;max-width:520px}
+  .menu .summary{text-align:left;margin:10px auto;max-width:520px;font-size:15px;line-height:1.5}
+  .menu .summary-title{margin-top:8px}
+  .menu .summary-moments{max-height:140px;overflow:auto;margin:4px 0 0;padding-left:20px}
   .menu .btn{font-size:16px;padding:11px 26px;min-width:240px}
   .menu .btn.ghost{font-size:15px}
   .help{text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 20px;max-height:430px;overflow:auto;font-size:14px}
@@ -131,16 +137,24 @@
   #touch{display:none}
   body.touch #touch{display:block}
   #touch[hidden]{display:none!important}
-  #touch .pad{position:absolute;bottom:14px;display:grid;gap:8px}
-  #touch .pl{left:14px;grid-template-columns:repeat(3,88px);grid-template-rows:repeat(2,88px)}
-  #touch .pr{right:14px;grid-template-columns:repeat(3,92px);grid-template-rows:92px}
+  #touch .pad{position:absolute;bottom:max(14px,env(safe-area-inset-bottom));display:grid;gap:8px}
+  #touch button[data-act].idle{opacity:.45}
+  #touch .pl{left:max(14px,env(safe-area-inset-left));grid-template-columns:repeat(3,88px);grid-template-rows:repeat(2,88px)}
+  #touch .pr{right:max(14px,env(safe-area-inset-right));grid-template-columns:repeat(3,92px);grid-template-rows:92px}
   #touch button{border-radius:50%;border:2px solid var(--line);background:rgba(20,16,12,.62);color:var(--fg);font:700 22px var(--disp);touch-action:none;padding:0}
   #touch button.on{background:rgba(255,179,71,.75);color:#1a0f02;border-color:var(--amber)}
+  #touch button.rdy{border-color:var(--amber);box-shadow:0 0 0 3px rgba(255,179,71,.45)}
   #touch .up{grid-column:2;grid-row:1}
   #touch .lf{grid-column:1;grid-row:2}
   #touch .dn{grid-column:2;grid-row:2}
   #touch .rt{grid-column:3;grid-row:2}
   #touch .shoot{border-color:var(--red)}
+  #touch .tpause{position:absolute;left:50%;transform:translateX(-50%);bottom:max(14px,var(--sab,0px));width:var(--tap,44px);height:var(--tap,44px);padding:0;font-size:14px;letter-spacing:-2px;opacity:.85}
+  @media (max-height:430px),(max-width:700px){
+    #touch .pl{grid-template-columns:repeat(3,62px);grid-template-rows:repeat(2,62px);gap:6px}
+    #touch .pr{grid-template-columns:repeat(3,66px);grid-template-rows:66px;gap:6px}
+    #touch button{font-size:16px}
+  }
   #rotate{display:none;position:fixed;left:0;right:0;top:0;padding:8px;text-align:center;background:var(--amber);color:#1a0f02;font:700 14px var(--disp);z-index:9;pointer-events:none}
   @media (orientation:portrait){body.touch #rotate{display:block}}
   body.touch .tools{bottom:auto;top:44px;left:12px}
@@ -163,6 +177,18 @@
   body.touch .btn{padding:10px 16px;font-size:15px}
   body.touch .dbody{font-size:15px}
   body.touch .prompt{bottom:118px;font-size:15px}
+  body.touch #touch .pl{left:max(14px,env(safe-area-inset-left,0px));bottom:max(14px,env(safe-area-inset-bottom,0px))}
+  body.touch #touch .pr{right:max(14px,env(safe-area-inset-right,0px));bottom:max(14px,env(safe-area-inset-bottom,0px))}
+  @media (max-height:480px),(max-width:760px){
+    #touch .pl{grid-template-columns:repeat(3,64px);grid-template-rows:repeat(2,64px);gap:6px}
+    #touch .pr{grid-template-columns:repeat(3,68px);grid-template-rows:68px;gap:6px}
+    #touch button{font-size:18px}
+    body.touch .drawer{width:min(470px,calc(100vw - 24px));bottom:92px}
+    body.touch .dopen .log{right:calc(min(470px,100vw - 24px) + 16px)}
+    body.touch .prompt{bottom:92px}
+    body.touch .hint{bottom:100px;max-width:calc(100% - 300px)}
+    body.touch .tools{max-width:calc(100% - 24px)}
+  }
   .hint{position:absolute;left:50%;bottom:calc(12px + 2 * 36px + 14px);max-width:calc(100% - 24px);transform:translateX(-50%);background:var(--panel);border:1px solid var(--amber);border-radius:8px;padding:7px 8px 7px 14px;font-weight:600;display:flex;gap:10px;align-items:center;white-space:normal;animation:fade .3s ease}
   .hint[hidden]{display:none}
   .hint kbd{font:600 12px var(--disp);background:#2d2215;border-radius:4px;padding:1px 5px}
@@ -190,11 +216,15 @@
   body.touch .chip{font-size:calc(14px*var(--u,1))}
   body.touch .btn{font-size:calc(15px*var(--u,1))}
   body.touch .prompt{bottom:calc(88px*var(--u,1) + 22px);font-size:calc(15px*var(--u,1))}
-  #touch .pl{left:max(14px,env(safe-area-inset-left));bottom:max(14px,env(safe-area-inset-bottom));grid-template-columns:repeat(3,calc(80px*var(--u,1)));grid-template-rows:repeat(2,calc(80px*var(--u,1)))}
-  #touch .pr{right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));grid-template-columns:repeat(3,calc(84px*var(--u,1)));grid-template-rows:calc(84px*var(--u,1))}
+  #touch .pl{left:max(14px,var(--sal,0px));bottom:max(14px,var(--sab,0px));grid-template-columns:repeat(3,calc(80px*var(--u,1)));grid-template-rows:repeat(2,calc(80px*var(--u,1)))}
+  #touch .pr{right:max(14px,var(--sar,0px));bottom:max(14px,var(--sab,0px));grid-template-columns:repeat(3,calc(84px*var(--u,1)));grid-template-rows:calc(84px*var(--u,1))}
   #touch button{font-size:calc(20px*var(--u,1))}
   body.touch .menu{max-width:92%}
   body.touch .help{max-height:calc(430px*var(--u,1))}
+  /* safe-area insets + minimum tap size (vars set by fit() in game.js) */
+  body.touch .hud{padding-left:max(12px,var(--sal,0px));padding-right:max(12px,var(--sar,0px))}
+  body.touch .tools{left:max(12px,var(--sal,0px))}
+  body.touch .tools button,body.touch .chip,body.touch .tabs button,body.touch .btn,body.touch .spd button{min-height:var(--tap,44px)}
   /* accessibility: reduced motion */
   body.rm *,body.rm *::before,body.rm *::after{animation:none!important;transition:none!important}
   /* accessibility: colorblind (icons + patterns instead of color alone) */
@@ -206,6 +236,14 @@
   body.hc .res i{outline:1px solid #fff}
   body.hc .tools button,body.hc .btn,body.hc .tabs button{border:2px solid #fff;background:#000;color:#fff}
   body.hc .log div{background:#000;color:#fff}
+  body.hc .overlay{background:#000!important}
+  body.hc .menu,body.hc .menu .sub,body.hc .menu h1,body.hc .setp,body.hc .setp h3,body.hc .help{color:#fff!important;text-shadow:none!important}
+  body.hc .setp,body.hc .drawer{background:#000!important;border:2px solid #fff!important}
+  body.hc .setp h3{color:var(--amber)!important}
+  body.hc .drawer,body.hc .drawer *{color:#fff}
+  body.hc .tsrow .btn[aria-pressed="true"]{background:#fff!important;color:#000!important;border-color:#fff!important}
+  body.hc input[type=range]{accent-color:#fff;outline:1px solid #fff}
+  body.hc .btn:focus-visible,body.hc button:focus-visible,body.hc input:focus-visible{outline:3px solid #ffd24a!important;outline-offset:2px}
   body.hc .prompt,body.hc .hint{background:#000;color:#fff;border:2px solid #fff}
   body.cb .res .low{text-decoration:underline}
   body.cb .res .low::before{content:'\26A0\FE0E ';text-decoration:none;display:inline-block}
@@ -213,7 +251,7 @@
   body.cb .log div.warn::before{content:'\26A0\FE0E ';color:#fff}
   body.cb .log div.good::before{content:'\2714\FE0E ';color:#fff}
   body.cb .log div.warn{border-left-style:dashed}
-  body.cb .bar i.p-hp{background:#56B4E9!important}
+  body.cb .bar i.p-hp{background:#56B4E9!important;box-shadow:inset 0 2px 0 #fff}
   body.cb .bar i.p-food{background:repeating-linear-gradient(45deg,#F0E442 0 4px,#7a7000 4px 7px)!important}
   body.cb .bar i.p-rest{background:repeating-linear-gradient(90deg,#E69F00 0 3px,#4a3200 3px 6px)!important}
   body.cb .bar i.p-low{background:repeating-linear-gradient(-45deg,#D55E00 0 3px,#fff 3px 6px)!important}
@@ -229,7 +267,7 @@
   .setp h3{margin:10px 0 6px;font:600 14px var(--disp);letter-spacing:.1em;color:var(--amber)}
   .setp h3:first-child{margin-top:0}
   :root{--ts:1}
-  .hud,.tools,.log,.prompt,.hint,.dbody,.setp{zoom:var(--ts)}
+  .hud,.tools,.log,.prompt,.hint,.dbody,.setp,#narrCaption{zoom:var(--ts)}
   .setp{max-height:calc(430px / var(--ts))}
   .tsrow{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
   .tsrow .btn{min-width:0!important;padding:8px 14px}
@@ -270,19 +308,64 @@
   body.touch .drawer.collapsed .dbody,body.touch .drawer.collapsed .scrollcue,body.touch .drawer.collapsed .tabs [data-tab]{display:none}
   body.touch .drawer.collapsed .tabs{border-bottom:0}
   body.touch .dopen.dcol .log{right:calc(var(--tap,44px)*2 + 24px + var(--sar,0px))}
+  /* portrait phones: wrapping HUD, panels pushed below it, bigger text (fit() raises --u) */
+  @media (orientation:portrait){
+    body.touch #wrap{--hudh:calc(var(--tap,44px)*1.9)}
+    body.touch #rotate{top:auto;bottom:0;pointer-events:auto;font-size:13px;cursor:pointer}
+    body.touch .hud{flex-wrap:wrap;align-content:flex-start;height:auto;min-height:var(--hudh);overflow:visible;font-size:calc(15px*var(--u,1)*.7);gap:calc(4px*var(--u,1)) calc(10px*var(--u,1));padding-top:max(4px,var(--sat,0px));padding-bottom:4px}
+    body.touch .hud .clock{order:1}
+    body.touch .hud .spd{order:2;margin-left:auto}
+    body.touch .hud .res{order:3;flex:1 1 auto;overflow:visible;-webkit-mask-image:none;mask-image:none;flex-wrap:wrap;font-size:1em}
+    body.touch .hud .threat{order:4;white-space:nowrap}
+    body.touch .spd button{font-size:calc(15px*var(--u,1)*.7)}
+    body.touch .tools{top:calc(var(--hudh) + 6px);max-width:calc(100% - 24px)}
+    body.touch .tools button{font-size:calc(15px*var(--u,1)*.6)}
+    body.touch .log,body.touch .scavhud,body.touch #goals{top:calc(var(--hudh) + 6px)}
+    body.touch .drawer{top:calc(var(--hudh) + 6px);bottom:8px;width:62%;max-width:none}
+    body.touch .drawer.collapsed{bottom:auto;width:auto}
+    body.touch .dbody{font-size:calc(15px*var(--u,1)*.7)}
+    body.touch .tabs button{font-size:calc(15px*var(--u,1)*.6)}
+    body.touch .dopen .log{right:calc(62% + 16px + var(--sar,0px))}
+    body.touch .dopen.dcol .log{right:calc(var(--tap,44px)*2 + 24px + var(--sar,0px))}
+  }
+  /* narrow windows (set by fit(): stage scale < 0.7): same collapsible panels as touch, without touch-only controls */
+  body.narrow .tabs{overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+  body.narrow .tabs::-webkit-scrollbar{display:none}
+  body.narrow .tabs button{flex:1 0 auto;min-height:var(--tap,44px)}
+  body.narrow .tabs .dcollapse{display:inline-flex;align-items:center;justify-content:center;flex:0 0 var(--tap,44px);min-width:var(--tap,44px);font:700 20px var(--disp);letter-spacing:0;padding:0}
+  body.narrow .tabs .x{flex:0 0 var(--tap,44px);min-width:var(--tap,44px)}
+  body.narrow:not(.touch) .drawer{top:calc(50px*var(--u,1));bottom:8px;width:calc(470px*var(--u,1));max-width:58%}
+  body.narrow:not(.touch) .dopen .log{right:calc(470px*var(--u,1) + 16px)}
+  body.narrow:not(.touch) .log{width:calc(470px*var(--u,1));max-width:45%}
+  body.narrow .drawer.collapsed{bottom:auto;width:auto;max-width:none}
+  body.narrow .drawer.collapsed .dbody,body.narrow .drawer.collapsed .scrollcue,body.narrow .drawer.collapsed .tabs [data-tab]{display:none}
+  body.narrow .drawer.collapsed .tabs{border-bottom:0}
+  body.narrow .dopen.dcol .log{right:calc(var(--tap,44px)*2 + 24px)}
+  body.narrow .tools button{min-height:var(--tap,44px)}
+  body.narrow .chip,body.narrow .btn{min-height:calc(var(--tap,44px)*.8)}
+  body.narrow .hud{overflow:hidden}
+  body.narrow .res{min-width:0;overflow:hidden}
+  body.narrow .clock{min-width:0;white-space:nowrap}
+  body.narrow .spd{flex:none}
 </style>
-<link rel="stylesheet" href="ui.css?v=6">
+<link rel="stylesheet" href="ui.css?v=8">
+<link rel="stylesheet" href="toastfeed.css?v=1">
 </head>
 <body>
+<a class="skip-link" href="#c">Skip to game</a>
 <div id="stage"><div id="wrap">
   <canvas id="c" width="1280" height="720" aria-label="Ashfall Bunker game view"></canvas>
   <div class="hud" id="hud"></div>
+  <div id="nightWarn" class="nightwarn" hidden><b id="nwTitle">NIGHT RAID</b><span class="nwchip" id="nwChip"></span></div>
   <div id="topstack" style="position:absolute;left:12px;top:46px;max-width:min(380px,calc(55% - 24px));display:flex;flex-direction:column;align-items:flex-start;gap:8px;pointer-events:none;z-index:6">
     <div id="goals" style="max-width:230px;padding:6px 10px;background:#120d08cc;border:1px solid var(--line);font-size:12px;line-height:1.5;pointer-events:none" hidden></div>
   </div>
   <div class="scavhud" id="scavhud" hidden></div>
   <div class="log" id="log" aria-live="off"></div>
-  <div class="tools" id="tools">
+  <div id="srPolite" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div id="srAlert" class="sr-only" role="alert" aria-live="assertive" aria-atomic="true"></div>
+  <div id="btools" role="toolbar" aria-label="Build tools. Arrow keys move, Enter selects, Escape cancels." hidden></div>
+  <div class="tools" id="tools" role="group" aria-label="Game tools">
     <div class="grp">
     <button id="tCrew" data-tip="Crew: assign jobs, shifts and gear to each survivor">Crew<kbd>C</kbd></button>
     <button id="tBuild" data-tip="Build: add rooms, ladders and upgrades to the bunker">Build<kbd>B</kbd></button>
@@ -293,6 +376,7 @@
     <button id="tAlarm" data-tip="Battle stations: everyone drops what they're doing and defends. Turrets first, then the door.">Battle stations<kbd>G</kbd></button>
     </div>
     <div class="grp">
+    <button id="tPause" data-tip="Pause menu: resume, settings, restart">Menu<kbd>Esc</kbd></button>
     <button id="tHelp" data-tip="Help: controls and tips">Help<kbd>H</kbd></button>
     <button id="tMute" data-tip="Turn sound on or off">Sound on<kbd>M</kbd></button>
     <button id="tMore" aria-pressed="false" data-tip="Settings: accessibility and debug options">Settings</button>
@@ -303,6 +387,7 @@
     <button id="tRm" aria-pressed="false">Reduced motion: off</button>
     <button id="tLe" aria-pressed="false" title="Turns off ambient dust, drips and sparks in the bunker">Low effects: off</button>
     <button id="tNl" aria-pressed="true" title="Subtle dark tint at night in the bunker and topside">Night lighting: on</button>
+    <button id="tSr" aria-pressed="true" title="Announce Lamp hints, wave starts and low-resource warnings to screen readers">Screen reader: on</button>
     <button id="tTa" aria-pressed="false" title="Scavenging: tap or drag on the screen to aim and shoot">Touch aim: off</button>
     <button id="tDbg" aria-pressed="false" title="Show each survivor's food, rest, health and state">Crew debug<kbd>V</kbd></button>
     <button id="tPathStress" hidden aria-pressed="false" title="Dev: re-path 100 crew every frame on a synthetic graph and show timings">Path stress</button>
@@ -310,13 +395,14 @@
   </div>
   <div class="prompt" id="prompt"></div>
   <div class="hint" id="hint" role="status" hidden></div>
-  <div id="touch" aria-hidden="true">
+  <div id="touch" role="group" aria-label="Touch controls">
     <div class="pad pl">
-      <button class="up" data-k="w">▲</button><button class="lf" data-k="a">◀</button><button class="dn" data-k="s">▼</button><button class="rt" data-k="d">▶</button>
+      <button type="button" class="up" data-k="w" aria-label="Climb up">▲</button><button type="button" class="lf" data-k="a" aria-label="Move left">◀</button><button type="button" class="dn" data-k="s" aria-label="Climb down">▼</button><button type="button" class="rt" data-k="d" aria-label="Move right">▶</button>
     </div>
     <div class="pad pr">
-      <button data-k=" ">JUMP</button><button class="shoot" data-k="j">FIRE</button><button data-act="interact">E</button>
+      <button type="button" data-k=" " aria-label="Jump">JUMP</button><button type="button" class="shoot" data-k="j" aria-label="Fire">FIRE</button><button type="button" data-act="interact" aria-label="Interact">E</button>
     </div>
+    <button class="tpause" data-act="pause" aria-label="Pause">❚❚</button>
   </div>
   <aside class="drawer" id="drawer" hidden>
     <div class="tabs" role="tablist">
@@ -324,6 +410,7 @@
     </div>
     <div class="dbody" id="dbody"></div>
   </aside>
+  <div class="kbhelp" id="kbHelp" hidden><div class="kbbox" role="dialog" aria-modal="true" aria-labelledby="kbTitle"><h2 id="kbTitle">Keyboard shortcuts</h2><div class="kbbody" id="kbBody" tabindex="0"></div><div class="kbfoot"><span>Press <kbd>?</kbd> or <kbd>Esc</kbd> to close</span><button class="btn ghost" id="kbClose" type="button">Close</button></div></div></div>
   <div class="overlay" id="overlay"><div role="status" style="color:#e8d9b8;font-family:inherit;padding:16px"><noscript><div style="color:#ffb347;margin-bottom:10px">JavaScript is required to play Ashfall Bunker.</div></noscript><div style="font-size:22px;letter-spacing:.04em">Ashfall Bunker – loading…</div><div style="margin-top:10px;font-size:14px;opacity:.8">Stuck on this screen? <a href="" onclick="location.reload();return false" style="color:#ffb347">Reload</a> the page (Ctrl+R / pull to refresh).</div></div></div>
 </div></div>
 <div id="rotate">Rotate your device to landscape to play</div>
@@ -360,6 +447,39 @@
   setInterval(scan,300);
 })();
 </script>
+<script>
+/* Boot screen: preloads sprite sheets, shows progress + tips only if loading is slow (>250ms). */
+(function(){
+  var files=['mara-voss','doc-tobias-reed','juno-park','old-bram','cinder','wren','the-warden-unit-9','sister-odalys-crane','tick','dr','sergeant-hale-dorrow','fenn-whitlock','vesper','maw','lamp','reverend-calloway-finch','pike','echo','rook','marguerite-mags-oyelaran','nell'];
+  var tips=['Everyone in here is a person. Lamp suggests remembering that.','Beds set your capacity. Nobody leaves, but some will sleep on the floor.','The night is coming. It always is.','Scavenging topside is dangerous, and the bunker keeps running without you.','Hold the hatch.','Scrap fixes a cracked bunk. Hope is not accepted as payment.'];
+  var total=files.length*2,done=0,loaded=document.readyState==='complete',shown=false,hidden=false,el=null,bar=null,tipEl=null,tipI=0,tipT=0;
+  function build(){
+    el=document.createElement('div');el.id='boot';
+    el.innerHTML='<div class="boot-in"><div class="boot-title">ASHFALL BUNKER</div><div class="boot-bar" role="progressbar" aria-label="Loading" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="boot-tip" role="status" aria-live="polite"></div></div>';
+    document.body.appendChild(el);
+    bar=el.querySelector('.boot-bar');tipEl=el.querySelector('.boot-tip');
+    tipI=Math.floor(Math.random()*tips.length);tipEl.textContent=tips[tipI];
+    tipT=setInterval(function(){tipI=(tipI+1)%tips.length;tipEl.textContent=tips[tipI];},2800);
+  }
+  function pct(){return loaded?Math.min(100,Math.round(done/total*100)):Math.min(95,Math.round(done/total*100));}
+  function paint(){if(!el)return;var p=pct();bar.firstChild.style.width=p+'%';bar.setAttribute('aria-valuenow',p);}
+  function hide(){
+    if(hidden)return;hidden=true;clearInterval(tipT);clearTimeout(showT);
+    if(!el)return;
+    el.classList.add('out');
+    setTimeout(function(){if(el&&el.parentNode)el.parentNode.removeChild(el);},400);
+  }
+  function check(){paint();if(loaded&&done>=total)hide();}
+  function tick(){done++;check();}
+  var showT=setTimeout(function(){if(hidden)return;shown=true;build();paint();},250);
+  setTimeout(hide,8000);
+  window.addEventListener('load',function(){loaded=true;check();});
+  files.forEach(function(f){
+    var img=new Image();img.onload=img.onerror=tick;img.src='sprites/'+f+'.png';
+    try{fetch('sprites/'+f+'.json').then(function(r){return r.text();}).then(tick,tick);}catch(e){tick();}
+  });
+})();
+</script>
 <script src="narrator.js"></script>
 <script src="audio.js"></script>
 <script src="sprites.js"></script>
@@ -367,7 +487,6 @@
 <script src="vector.js"></script>
 <script src="bunkergraph.js"></script>
 <script src="pathservice.js"></script>
-<script src="pathstress.js"></script>
 <script src="pathstress.js"></script>
 <script src="physics.js"></script>
 <script src="crewgen.js"></script>

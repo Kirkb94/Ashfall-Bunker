@@ -1,0 +1,398 @@
+{
+ "format": "renegade-sprite/1",
+ "image": "pike-s-ram-rig.png",
+ "scale": 3,
+ "frameWidth": 288,
+ "frameHeight": 168,
+ "size": {
+  "w": 1728,
+  "h": 672
+ },
+ "pivot": {
+  "x": 144,
+  "y": 165
+ },
+ "render": "pixel",
+ "source": {
+  "spriteId": "enemy-ramrig",
+  "version": 1,
+  "animIds": [
+   "enemy-ramrig-death",
+   "enemy-ramrig-hurt",
+   "enemy-ramrig-idle",
+   "enemy-ramrig-interact"
+  ]
+ },
+ "animations": {
+  "death": {
+   "row": 0,
+   "state": "death",
+   "loop": false,
+   "frames": [
+    {
+     "name": "death_00",
+     "x": 0,
+     "y": 0,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    },
+    {
+     "name": "death_01",
+     "x": 288,
+     "y": 0,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    },
+    {
+     "name": "death_02",
+     "x": 576,
+     "y": 0,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    },
+    {
+     "name": "death_03",
+     "x": 864,
+     "y": 0,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    },
+    {
+     "name": "death_04",
+     "x": 1152,
+     "y": 0,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    },
+    {
+     "name": "death_05",
+     "x": 1440,
+     "y": 0,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    }
+   ],
+   "events": []
+  },
+  "hurt": {
+   "row": 1,
+   "state": "hurt",
+   "loop": false,
+   "frames": [
+    {
+     "name": "hurt_00",
+     "x": 0,
+     "y": 168,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    },
+    {
+     "name": "hurt_01",
+     "x": 288,
+     "y": 168,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    },
+    {
+     "name": "hurt_02",
+     "x": 576,
+     "y": 168,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    }
+   ],
+   "events": []
+  },
+  "idle": {
+   "row": 2,
+   "state": "idle",
+   "loop": true,
+   "frames": [
+    {
+     "name": "idle_00",
+     "x": 0,
+     "y": 336,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    },
+    {
+     "name": "idle_01",
+     "x": 288,
+     "y": 336,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    },
+    {
+     "name": "idle_02",
+     "x": 576,
+     "y": 336,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    }
+   ],
+   "events": []
+  },
+  "interact": {
+   "row": 3,
+   "state": "interact",
+   "loop": false,
+   "frames": [
+    {
+     "name": "interact_00",
+     "x": 0,
+     "y": 504,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    },
+    {
+     "name": "interact_01",
+     "x": 288,
+     "y": 504,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    },
+    {
+     "name": "interact_02",
+     "x": 576,
+     "y": 504,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    },
+    {
+     "name": "interact_03",
+     "x": 864,
+     "y": 504,
+     "w": 288,
+     "h": 168,
+     "duration": 125
+    }
+   ],
+   "events": []
+  }
+ },
+ "frames": {
+  "death_00": {
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  },
+  "death_01": {
+   "frame": {
+    "x": 288,
+    "y": 0,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  },
+  "death_02": {
+   "frame": {
+    "x": 576,
+    "y": 0,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  },
+  "death_03": {
+   "frame": {
+    "x": 864,
+    "y": 0,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  },
+  "death_04": {
+   "frame": {
+    "x": 1152,
+    "y": 0,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  },
+  "death_05": {
+   "frame": {
+    "x": 1440,
+    "y": 0,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  },
+  "hurt_00": {
+   "frame": {
+    "x": 0,
+    "y": 168,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  },
+  "hurt_01": {
+   "frame": {
+    "x": 288,
+    "y": 168,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  },
+  "hurt_02": {
+   "frame": {
+    "x": 576,
+    "y": 168,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  },
+  "idle_00": {
+   "frame": {
+    "x": 0,
+    "y": 336,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  },
+  "idle_01": {
+   "frame": {
+    "x": 288,
+    "y": 336,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  },
+  "idle_02": {
+   "frame": {
+    "x": 576,
+    "y": 336,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  },
+  "interact_00": {
+   "frame": {
+    "x": 0,
+    "y": 504,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  },
+  "interact_01": {
+   "frame": {
+    "x": 288,
+    "y": 504,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  },
+  "interact_02": {
+   "frame": {
+    "x": 576,
+    "y": 504,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  },
+  "interact_03": {
+   "frame": {
+    "x": 864,
+    "y": 504,
+    "w": 288,
+    "h": 168
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 144,
+    "y": 165
+   }
+  }
+ }
+}

@@ -38,7 +38,10 @@ const SECURITY = {
 };
 
 function send(res, status, headers, body) {
-  res.writeHead(status, Object.assign({}, SECURITY, headers));
+  // Headers with no value are left out: Node throws (and the server dies) on an undefined header.
+  const h = Object.assign({}, SECURITY, headers);
+  for (const k of Object.keys(h)) if (h[k] === undefined || h[k] === null) delete h[k];
+  res.writeHead(status, h);
   res.end(body);
 }
 
@@ -104,8 +107,11 @@ http.createServer((req, res) => {
 
     // Conditional request
     const inm = req.headers['if-none-match'];
-    if (inm && inm.split(',').some((t) => t.trim().replace(/^W\//, '') === etag || t.trim() === '*')) {
-      return send(res, 304, { etag, 'cache-control': cache, vary: base.vary || undefined });
+    // Compressed responses carry their own ETag ("…-br" / "…-gzip"), so those count as a match too.
+    const tags = [etag, etag.slice(0, -1) + '-br"', etag.slice(0, -1) + '-gzip"'];
+    const hit = inm && inm.split(',').map((t) => t.trim().replace(/^W\//, '')).find((t) => t === '*' || tags.includes(t));
+    if (hit) {
+      return send(res, 304, { etag: hit === '*' ? etag : hit, 'cache-control': cache, vary: base.vary });
     }
 
     const fail = () => { if (!res.headersSent) res.writeHead(500); res.end(); };

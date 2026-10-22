@@ -1,0 +1,5 @@
+#toastFeed{position:absolute;right:12px;top:46px;width:min(320px,45%);display:flex;flex-direction:column;gap:6px;z-index:7;pointer-events:none}
+#toastFeed .toast{pointer-events:auto;padding:7px 10px;background:#120d08ee;border:1px solid var(--line,#5a4a3a);border-left:4px solid #c9a24a;color:#eadfcb;font-size:12px;line-height:1.4;opacity:1;transform:none;transition:opacity .35s,transform .35s}
+#toastFeed .toast.lost{border-left-color:#c33}
+#toastFeed .toast.down{border-left-color:#e08a2e}
+#toastFeed .toast.out{opacity:0;transform:translateX(16px)}
