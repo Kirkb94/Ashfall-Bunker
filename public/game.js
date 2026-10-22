@@ -1691,6 +1691,12 @@ function hitEnemy(e, dmg, by, dtype, crit) {
     burst(e.x, e.y - 10, '#5a3', 12);
   }
 }
+// 'none' = nobody holds the job, 'walking' = assigned but not at the gun yet, 'manned' = gun is staffed
+function turretStatus(t) {
+  if (!t || t.type === 'coil') return 'manned';
+  if (!turretCrewed(t)) return 'none';
+  return t.manned ? 'manned' : 'walking';
+}
 function turretCrewed(t) {
   if (!t) return false;
   if (t.type === 'coil') return !!t.manned;
@@ -2562,7 +2568,14 @@ function drawSurface(sky) {
     if (t.flash > 0) { t.flash -= 1 / 60; g.fillStyle = '#ffe08a'; g.beginPath(); g.arc(x + (t.type === 'rifle' ? 36 : 26), y - 26, 5, 0, 7); g.fill(); }
     if (!_v && t.lvl > 1) { g.fillStyle = '#ffb347'; g.fillRect(x - 12, y - 16, 4, 4); }
     hpBar(x - 16, y - 44, 32, t.hp / t.max, '#ffb347');
-    if (!turretCrewed(t)) { g.fillStyle = 'rgba(255,90,78,.9)'; g.font = '600 10px "IBM Plex Sans"'; g.fillText(t.type === 'coil' ? 'NO POWER' : 'EMPTY', x - 15, y - 48); }
+    const ts = t.type === 'coil' ? (turretCrewed(t) ? 'manned' : 'nopower') : turretStatus(t);
+    if (ts !== 'manned') {
+      g.fillStyle = ts === 'walking' ? 'rgba(255,200,120,.95)' : 'rgba(255,90,78,.9)';
+      g.font = '600 10px "IBM Plex Sans"';
+      g.textAlign = 'center';
+      g.fillText(ts === 'nopower' ? 'NO POWER' : ts === 'walking' ? 'Manning...' : 'NO GUNNER - press C', x, y - 48);
+      g.textAlign = 'left';
+    }
   });
   // wall
   if (S.wall.hp > 0) {
@@ -2794,12 +2807,23 @@ function sickEvent(c) { atLoc({ x: c.x, y: c.y }); lamp(c.name + ' has fallen si
 // Single source of truth for 'low' so the HUD and the one-time Lamp warning agree.
 function resLim(k) { return k === 'food' ? living().length * 2 : 5; }
 function resLow(k) { return S.res[k] < resLim(k); }
+function elecHint(full) {
+  const have = Math.floor(S.res.elec);
+  let t = null;
+  for (let i = S.tower.paid ? S.tower.done + 1 : S.tower.done; i < TOWER.length; i++) if (TOWER[i].cost.elec) { t = TOWER[i]; break; }
+  const need = t ? t.cost.elec : 0;
+  let raid;
+  if (S.enemies.length || S.spawns.length) raid = 'A raid is underway now.';
+  else { const m = Math.round(((RAID_HOUR - hourF() + 24) % 24) * 60); raid = 'Next raid in ' + (m >= 60 ? Math.floor(m / 60) + 'h ' : '') + (m % 60) + 'm.'; }
+  const tower = t ? ' The ' + t.name + ' needs ' + need + ' electronics; you have ' + have + (have >= need ? ' (enough).' : ' (' + (need - have) + ' short).') : ' The tower needs no more electronics.';
+  return (full ? 'Electronics are running low. ' : '') + 'Electronics only come from scavenging topside.' + tower + ' ' + raid;
+}
 function lowResCheck() {
   S.lowFlag = S.lowFlag || {};
   for (const r of RES) {
     const lim = r.k === 'food' ? living().length * 2 : 5;
     const low = S.res[r.k] < lim;
-    if (low && !S.lowFlag[r.k]) { S.lowFlag[r.k] = true; atLoc({ reset: true }); lamp('Low on ' + r.name.toLowerCase() + ': ' + Math.floor(S.res[r.k]) + ' left.', 'warn'); }
+    if (low && !S.lowFlag[r.k]) { S.lowFlag[r.k] = true; atLoc({ reset: true }); lamp(r.k === 'elec' ? elecHint(true) : 'Low on ' + r.name.toLowerCase() + ': ' + Math.floor(S.res[r.k]) + ' left.', 'warn'); }
     else if (!low && S.lowFlag[r.k] && S.res[r.k] >= lim * 1.25) S.lowFlag[r.k] = false;
   }
 }
@@ -2919,7 +2943,7 @@ function renderHud() {
   const th = nextThreat(), pl = S.player;
   requestAnimationFrame(raidPopUpdate);
   $('#hud').innerHTML = `<span class="clock">${clockText()}</span>
-    <span class="res">${RES.map(r => { const v = Math.floor(S.res[r.k]); const low = resLow(r.k); return `<span class="${low ? 'lowres' : ''}" title="${r.name}${low ? ' (low)' : ''}"><i style="background:${r.color}"></i>${low ? '<em class="lowico" aria-hidden="true">&#9888;</em>' : ''}${({ elec: 'Elec', mat: 'Mat' })[r.k] || r.name} <b class="${low ? 'low' : ''}">${v}</b>${low ? '<em class="lowtag">LOW</em>' : ''}</span>`; }).join('')}</span>
+    <span class="res">${RES.map(r => { const v = Math.floor(S.res[r.k]); const low = resLow(r.k); return `<span class="${low ? 'lowres' : ''}" title="${r.k === 'elec' ? esc(elecHint()) : r.name + (low ? ' (low)' : '')}"><i style="background:${r.color}"></i>${low ? '<em class="lowico" aria-hidden="true">&#9888;</em>' : ''}${({ elec: 'Elec', mat: 'Mat' })[r.k] || r.name} <b class="${low ? 'low' : ''}">${v}</b>${low ? '<em class="lowtag">LOW</em>' : ''}</span>`; }).join('')}</span>
     <span class="res"><span class="${kit().cooked < 2 ? 'lowres' : ''}" title="Prepared meals at the serving station${kit().cooked < 2 ? ' (low)' : ''}"><i style="background:#e8b86a"></i>${kit().cooked < 2 ? '<em class="lowico" aria-hidden="true">&#9888;</em>' : ''}Meals <b class="${kit().cooked < 2 ? 'low' : ''}">${Math.floor(kit().cooked)}</b></span></span>
     <span class="threat ${th.hot ? 'hot' : ''}" data-raid="1" style="cursor:pointer" title="Click for raid details">${esc(th.text)} ${raidOpen ? '&#9662;' : '&#9656;'}</span>
     <span class="threat" title="Mara">Mara ${Math.ceil(pl.hp)}/${pl.maxHp}${pl.down ? ' · down' : ''}</span>
@@ -3021,7 +3045,7 @@ function crewHTML() {
   return `<p class="note" style="margin:0">Jobs decide where people go when they are awake. Shifts decide when they sleep: after about 16 hours awake they slow down fast. Turrets only fire with someone on them. Click a person to find them in the bunker.</p>
   ${crewControls()}<button class="chip ${compactOn() ? 'on' : ''}" data-act="compact" title="One-line rows for big crews">Compact</button> <button class="chip" data-act="resetcam" title="Zoom out and stop following">Reset view</button><p class="note" style="margin:0">Showing ${shown} of ${total}</p>${shown === 0 && total > 0 ? '<p class="note">Nobody matches these filters.</p>' : ''}
   ${maraCard()}
-  ${[0, 1].map(i => !S.turrets[i] || S.turrets[i].type === 'coil' ? '' : !turretCrewed(S.turrets[i]) ? `<p class="note bad" style="margin:0">Turret ${i + 1} has nobody assigned.</p>` : '').join('')}
+  ${[0, 1].map(i => !S.turrets[i] || S.turrets[i].type === 'coil' ? '' : turretStatus(S.turrets[i]) === 'none' ? `<p class="note bad" style="margin:0">Turret ${i + 1}: NO GUNNER - press C.</p>` : turretStatus(S.turrets[i]) === 'walking' ? `<p class="note" style="margin:0">Turret ${i + 1}: Manning...</p>` : '').join('')}
   ${list.map(c => {
     if (!c.alive) return `<div class="card dead"><div class="ch"><span class="sw" style="background:${c.color}"></span><b>${esc(c.name)}</b><span class="tag">${c.left ? 'left the bunker' : 'lost'}</span></div></div>`;
     if (compactOn() && sel !== c.id) {
