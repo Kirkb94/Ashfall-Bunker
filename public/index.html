@@ -16,7 +16,7 @@
   html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:14px/1.4 var(--font);overflow:hidden}
   #stage{position:fixed;inset:0;display:grid;place-items:center}
   #wrap{position:relative;width:1280px;height:720px;transform-origin:center center;background:#000;box-shadow:0 0 60px rgba(255,140,42,.08)}
-  canvas{display:block;width:1280px;height:720px;image-rendering:pixelated;cursor:crosshair}
+  canvas{display:block;width:1280px;height:720px;image-rendering:auto;cursor:crosshair}
   button{font:inherit;color:inherit;cursor:pointer}
   .hud{position:absolute;left:0;right:0;top:0;height:38px;display:flex;align-items:center;gap:14px;padding:0 12px;background:linear-gradient(#120d08ee,#120d08aa);border-bottom:1px solid var(--line);font-size:13.5px;pointer-events:none}
   .hud *{pointer-events:auto}
@@ -50,10 +50,12 @@
   .log b{color:var(--amber);font-family:var(--disp);letter-spacing:.06em;font-size:11.5px;margin-right:6px}
   @keyframes fade{from{opacity:0;transform:translateY(4px)}}
   .tools{position:absolute;left:12px;bottom:12px;display:flex;gap:6px}
-  .tools button{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 12px;font-size:13px}
-  .tools button:hover{border-color:var(--amber)}
+  .tools button{background:rgba(34,27,19,.98);border:1px solid #7a6238;border-radius:8px;padding:7px 12px;font-size:13px;color:var(--fg);transition:background .12s,border-color .12s,color .12s}
+  .tools button:hover{border-color:var(--amber);background:rgba(58,44,26,.98);color:#fff}
+  .tools button:active{background:rgba(26,19,10,.98);border-color:var(--amber2);transform:translateY(1px)}
+  .tools button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
   .tools button.on{border-color:var(--red);color:var(--red);font-weight:600}
-  .tools kbd{font:600 11px var(--disp);opacity:.7;margin-left:5px}
+  .tools kbd{font:600 11px var(--disp);opacity:.85;margin-left:5px}
   .prompt{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--amber);border-radius:8px;padding:7px 14px;font-weight:600;pointer-events:none;white-space:nowrap}
   .prompt:empty{display:none}
   .drawer{position:absolute;top:46px;right:8px;bottom:8px;width:388px;background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
@@ -62,7 +64,11 @@
   .tabs button{flex:1;background:none;border:0;padding:10px 6px;font:600 13px var(--disp);letter-spacing:.08em;color:var(--muted)}
   .tabs button.on{color:var(--amber);box-shadow:inset 0 -2px var(--amber)}
   .tabs .x{flex:0 0 40px}
-  .dbody{overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:9px}
+  .dbody{overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:9px;flex:1;min-height:0}
+  .scrollcue{flex:none;display:block;box-sizing:border-box;width:100%;text-align:center;padding:4px 0;font:600 11px var(--disp);letter-spacing:.1em;color:var(--amber);background:linear-gradient(to bottom,rgba(255,179,71,.14),transparent);border-top:1px solid var(--line);pointer-events:none;visibility:hidden}
+  .scrollcue.show{visibility:visible}
+  @media (prefers-reduced-motion:no-preference){.scrollcue.show span{display:inline-block;animation:scrollcueBob 1.4s ease-in-out infinite}}
+  @keyframes scrollcueBob{0%,100%{transform:translateY(0)}50%{transform:translateY(2px)}}
   .card{background:#1b140c;border:1px solid #3a2c18;border-radius:9px;padding:9px 10px}
   .card.sel{border-color:var(--amber)}
   .card.dead{opacity:.5}
@@ -203,6 +209,13 @@
   body.cb .bar i.p-rest{background:repeating-linear-gradient(90deg,#E69F00 0 3px,#4a3200 3px 6px)!important}
   body.cb .bar i.p-low{background:repeating-linear-gradient(-45deg,#D55E00 0 3px,#fff 3px 6px)!important}
   .tools button[aria-pressed="true"]{border-color:var(--amber);color:var(--amber);font-weight:600}
+  .tools button.on,.tools button[aria-pressed="true"]{background:var(--amber);border-color:var(--amber);color:#1a0f02;font-weight:700;box-shadow:0 0 10px rgba(255,179,71,.45)}
+  .tools button.on:hover,.tools button[aria-pressed="true"]:hover{background:#ffc56e;border-color:#ffd9a0;color:#1a0f02}
+  .tools button.on:active,.tools button[aria-pressed="true"]:active{background:var(--amber2)}
+  .tools #tAlarm.on{background:var(--red);border-color:var(--red);color:#1a0300;box-shadow:0 0 10px rgba(255,90,78,.5)}
+  .tools #tAlarm.on:hover{background:#ff7a70;border-color:#ffa59e;color:#1a0300}
+  body.hc .tools button:focus-visible{outline:3px solid #fff;outline-offset:2px}
+  body.hc .tools button.on,body.hc .tools button[aria-pressed="true"]{background:#fff;color:#000;border-color:#fff;box-shadow:none}
   .setp{text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 20px;max-height:430px;overflow:auto;font-size:14px;width:100%;box-sizing:border-box}
   .setp h3{margin:10px 0 6px;font:600 14px var(--disp);letter-spacing:.1em;color:var(--amber)}
   .setp h3:first-child{margin-top:0}
@@ -215,6 +228,18 @@
   .srow{display:grid;grid-template-columns:90px 1fr 48px;gap:10px;align-items:center;margin:8px 0}
   .srow input{width:100%;accent-color:var(--amber)}
   .srow b{text-align:right}
+  /* touch tuning: minimum 44 screen px targets (--tap set by fit()), compact HUD */
+  body.touch .tools button{min-height:var(--tap,44px);min-width:calc(var(--tap,44px)*1.1)}
+  body.touch #tDbg,body.touch #tPathStress{display:none}
+  body.touch .tools{gap:calc(6px*var(--u,1))}
+  body.touch .hud{min-height:calc(var(--tap,44px)*.75);height:max(calc(42px*var(--u,1)),calc(var(--tap,44px)*.75))}
+  body.touch .spd button{min-height:calc(var(--tap,44px)*.6);min-width:calc(var(--tap,44px)*.8)}
+  body.touch .res{font-size:.88em;gap:calc(5px*var(--u,1));flex:1 1 0;-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 26px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 26px),transparent)}
+  body.touch .res i{display:none}
+  body.touch .tabs button{min-height:var(--tap,44px)}
+  body.touch .chip,body.touch .btn{min-height:calc(var(--tap,44px)*.8)}
+  #touch .pl{grid-template-columns:repeat(3,max(calc(80px*var(--u,1)),var(--tap,44px)));grid-template-rows:repeat(2,max(calc(80px*var(--u,1)),var(--tap,44px)))}
+  #touch .pr{grid-template-columns:repeat(3,max(calc(84px*var(--u,1)),var(--tap,44px)));grid-template-rows:max(calc(84px*var(--u,1)),var(--tap,44px))}
   .keys{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;margin:0}
   .keys dt{white-space:nowrap}
   .keys dd{margin:0;color:var(--muted)}
@@ -241,7 +266,10 @@
     <button id="tCb" aria-pressed="false">Colorblind: off</button>
     <button id="tHc" aria-pressed="false">High contrast: off</button>
     <button id="tRm" aria-pressed="false">Reduced motion: off</button>
+    <button id="tTa" aria-pressed="false" title="Scavenging: tap or drag on the screen to aim and shoot">Touch aim: off</button>
     <button id="tDbg" aria-pressed="false" title="Show each survivor's food, rest, health and state">Crew debug<kbd>V</kbd></button>
+    <button id="tPathStress" aria-pressed="false" title="Dev: re-path 100 crew every frame on a synthetic graph and show timings">Path stress</button>
+    <button id="tPathStress" aria-pressed="false" title="Dev: re-path 100 crew every frame on a synthetic graph and show timings">Path stress</button>
   </div>
   <div class="prompt" id="prompt"></div>
   <div class="hint" id="hint" role="status" hidden></div>
@@ -259,12 +287,53 @@
     </div>
     <div class="dbody" id="dbody"></div>
   </aside>
-  <div class="overlay" id="overlay"></div>
+  <div class="overlay" id="overlay"><div style="color:#e8d9b8;font-family:inherit;padding:16px"><div style="font-size:22px;letter-spacing:.04em">Ashfall Bunker – loading…</div><div style="margin-top:10px;font-size:14px;opacity:.8">Stuck on this screen? <a href="" onclick="location.reload();return false" style="color:#ffb347">Reload</a> the page (Ctrl+R / pull to refresh).</div></div></div>
 </div></div>
 <div id="rotate">Rotate your device to landscape to play</div>
+<script>
+/* 'Scroll for more' cue: an in-flow row after each scrollable panel, so it never covers content or buttons. */
+(function(){
+  var SEL='.dbody,.help,.setp,[data-scrollcue]';
+  function cueFor(el){
+    var n=el.nextElementSibling;
+    if(n&&n.classList.contains('scrollcue'))return n;
+    if(!el.parentNode)return null;
+    n=document.createElement('div');
+    n.className='scrollcue';
+    n.setAttribute('aria-hidden','true');
+    n.innerHTML='<span>\u25BC Scroll for more</span>';
+    el.insertAdjacentElement('afterend',n);
+    return n;
+  }
+  function update(el){
+    var c=cueFor(el);
+    if(!c)return;
+    var more=el.offsetParent!==null&&el.scrollHeight-el.clientHeight>4&&el.scrollTop+el.clientHeight<el.scrollHeight-4;
+    c.classList.toggle('show',!!more);
+  }
+  function scan(){
+    var els=document.querySelectorAll(SEL);
+    for(var i=0;i<els.length;i++)update(els[i]);
+  }
+  document.addEventListener('scroll',function(e){
+    var t=e.target;
+    if(t&&t.matches&&t.matches(SEL))update(t);
+  },true);
+  window.addEventListener('resize',scan);
+  setInterval(scan,300);
+})();
+</script>
 <script src="narrator.js"></script>
 <script src="audio.js"></script>
 <script src="sprites.js"></script>
-<script src="game.js"></script>
+<script src="vector-models.js"></script>
+<script src="vector.js"></script>
+<script src="bunkergraph.js"></script>
+<script src="pathservice.js"></script>
+<script src="pathstress.js"></script>
+<script src="pathstress.js"></script>
+<script src="physics.js"></script>
+<script src="crewgen.js"></script>
+  <script src="game.js"></script>
 </body>
 </html>

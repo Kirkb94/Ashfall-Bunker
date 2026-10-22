@@ -1,0 +1,120 @@
+{
+ "style": "2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background",
+ "animations": [
+  {
+   "name": "idle",
+   "motion": "idle breathing loop"
+  },
+  {
+   "name": "walk",
+   "motion": "walk cycle"
+  }
+ ],
+ "characters": [
+  {
+   "id": "mara",
+   "name": "Mara Voss",
+   "prompt": "Mid-30s bunker leader, patched utility jacket, welding goggles on her forehead, worn toolbelt, practical and steady. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "bram",
+   "name": "Old Bram",
+   "prompt": "Large grey-bearded engineer, mechanical arm brace, covered in grease, grey coverall with tool pockets. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "juno",
+   "name": "Juno Park",
+   "prompt": "Young woman sharpshooter, shaved side of her head, scoped rifle, ear protection, cocky stance. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "reed",
+   "name": "Doc Tobias Reed",
+   "prompt": "Older thin man, round glasses, stained lab coat over armor plates, bandage pack, gentle. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "tick",
+   "name": "Tick",
+   "prompt": "Wiry 14-year-old runner, goggles too big for his face, spiky teal hair, rust jacket, rope coil, bag of rattling salvage. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "odalys",
+   "name": "Sister Odalys Crane",
+   "prompt": "Broad-shouldered woman in her 50s, flour-dusted apron over a patched flak vest, ring of keys at her belt, warm. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "anand",
+   "name": "Dr. Priya Anand",
+   "prompt": "Slim woman in her 40s, cropped hair, magnifier visor, tool roll full of tiny screwdrivers. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "dorrow",
+   "name": "Sergeant Hale Dorrow",
+   "prompt": "Tall stiff-backed man, faded armor vest, salt-and-pepper mustache, dented riot shield. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "rook",
+   "name": "Rook",
+   "prompt": "Muscular young man, half-burned raider banner worn like a scarf, mismatched pauldrons, cracked bone-handled cleaver. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "mags",
+   "name": "Marguerite Mags Oyelaran",
+   "prompt": "Heavyset woman in her 60s, clipboard, reading glasses on a chain, bandolier of labeled pouches. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "nell",
+   "name": "Nell",
+   "prompt": "Small girl about 9, hand-me-down jumpsuit with rolled sleeves, drawing of the sun pinned to her collar. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "wren",
+   "name": "Wren",
+   "prompt": "Teenager in an oversized coat, scavenged satellite-dish backpack, quiet and observant. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "cinder",
+   "name": "Cinder",
+   "prompt": "Scarred raider warlord in scrap plate armor, gas mask painted like a grin, ruthless. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "vesper",
+   "name": "Vesper",
+   "prompt": "Lean figure in a hooded cloak of stitched tarps, respirator with cracked green lenses, hooked blade. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "pike",
+   "name": "Pike",
+   "prompt": "Stocky man in a welded armored truck cab helmet, loud and greedy, spiked battering ram. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "fenn",
+   "name": "Fenn Whitlock",
+   "prompt": "Lanky trader in a patchwork duster hung with tin cups and trinkets, pulling a rusted cart. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "finch",
+   "name": "Reverend Calloway Finch",
+   "prompt": "Gaunt older man in a scorched coat and bent preacher's collar, lantern and battered book. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "hound",
+   "name": "Mutant hound",
+   "prompt": "Lean feral mutant hound, patchy fur, glowing red eyes, running, low and fast. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "ghoul",
+   "name": "Ash ghoul",
+   "prompt": "Pale ash-grey shambling ghoul, hunched, long arms, hollow eyes. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "raider",
+   "name": "Raider",
+   "prompt": "Scavenger gunman with a red mohawk, scrap armor, face mask, rifle. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  },
+  {
+   "id": "brute",
+   "name": "Brute",
+   "prompt": "Huge hulking raider brute, heavy scrap armor, giant fists, door-breaker. 2D side-view game character sprite, facing right, full body, hand-painted look with clean dark outlines, strong readable silhouette, warm amber and rust palette with cold teal accents, post-apocalyptic bunker setting, plain background"
+  }
+ ]
+}
