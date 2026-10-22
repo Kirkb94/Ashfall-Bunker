@@ -134,7 +134,7 @@
 
   function narrVol() {
     let v = 1;
-    try { if (window.SFX && SFX.getVol) v = SFX.getVol('narr'); } catch (e) {}
+    try { if (window.SFX && SFX.getVol) v = SFX.getVol('narr') * SFX.getVol('master'); } catch (e) {}
     return VOLUME * v;
   }
   window.narrApplyVolume = function () {

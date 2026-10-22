@@ -3,13 +3,13 @@
 (function () {
   const MASTER = 0.6, MUSIC = 0.05, HUM = 0.035, SIREN = 0.07, SIREN_SECS = 9;
   let ctx = null, master, musicBus, sfxBus, uiBus, ambBus, humGain, sirenGain, sirenOsc, noiseBuf;
-  let windFade = null, subFade = null, windBuf = null, rumbleT = 12;
-  let droneGain, droneFilt, droneK = 0;
+  let windFade = null, subFade = null, windBuf = null, rumbleT = 12, thudT = 8, wasNight = false;
+  let droneGain, droneFilt, droneK = 0, stingBus = null;
   const DRONE = 0.05;
   let muted = false;
   try { muted = localStorage.getItem('ab_mute') === '1'; } catch (e) {}
-  const vol = { music: 1, narr: 1, fx: 1, ui: 1 };
-  try { const p = JSON.parse(localStorage.getItem('ab_vol') || '{}') || {}; for (const k in vol) if (typeof p[k] === 'number' && isFinite(p[k])) vol[k] = Math.min(1, Math.max(0, p[k])); } catch (e) {}
+  const vol = { master: 1, music: 1, amb: 1, narr: 1, fx: 1, ui: 1 };
+  try { const p = JSON.parse(localStorage.getItem('ab_vol') || '{}') || {}; for (const k in vol) if (typeof p[k] === 'number' && isFinite(p[k])) vol[k] = Math.min(1, Math.max(0, p[k])); if (typeof p.amb !== 'number' && typeof p.music === 'number') vol.amb = vol.music; } catch (e) {}
   let chordT = 0, chordI = 0, sirenT = 0, wasAlarm = false, lastShot = 0, lastHit = 0, lastRumble = 0, lastDoorWarn = 0, lastRepair = 0, lastClick = 0, lastDeath = 0, lastStep = 0, lastJump = 0, lastLand = 0, stepAlt = false;
 
   function init() {
@@ -17,11 +17,11 @@
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     ctx = new AC();
-    master = ctx.createGain(); master.gain.value = muted ? 0 : MASTER; master.connect(ctx.destination);
+    master = ctx.createGain(); master.gain.value = muted ? 0 : MASTER * vol.master; master.connect(ctx.destination);
     musicBus = ctx.createGain(); musicBus.gain.value = MUSIC * vol.music;
     sfxBus = ctx.createGain(); sfxBus.gain.value = vol.fx; sfxBus.connect(master);
     uiBus = ctx.createGain(); uiBus.gain.value = vol.ui; uiBus.connect(master);
-    ambBus = ctx.createGain(); ambBus.gain.value = vol.music; ambBus.connect(master);
+    ambBus = ctx.createGain(); ambBus.gain.value = vol.amb; ambBus.connect(master);
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
     musicBus.connect(lp); lp.connect(master);
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
@@ -85,6 +85,24 @@
     g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(peak, t + 0.8); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     s.connect(f); f.connect(g); g.connect(ambBus);
     s.start(t, Math.random() * 3); s.stop(t + dur + 0.05);
+  }
+  // one muffled distant thud (night, bunker): low sine drop + lowpassed noise, quiet, on the ambient bus; sometimes a softer echo thud follows
+  function distantThud(soft, delay) {
+    const t = ctx.currentTime + (delay || 0), k = soft ? 0.55 : 1;
+    const o = ctx.createOscillator(), og = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(52 + Math.random() * 10, t); o.frequency.exponentialRampToValueAtTime(26, t + 0.7);
+    og.gain.setValueAtTime(0.0001, t); og.gain.linearRampToValueAtTime(0.22 * k, t + 0.05); og.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+    o.connect(og); og.connect(ambBus); o.start(t); o.stop(t + 1);
+    if (noiseBuf) {
+      const s = ctx.createBufferSource(); s.buffer = noiseBuf;
+      const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.Q.value = 0.7;
+      f.frequency.setValueAtTime(150, t); f.frequency.exponentialRampToValueAtTime(45, t + 0.6);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.18 * k, t + 0.04); g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      s.connect(f); f.connect(g); g.connect(ambBus);
+      s.start(t, Math.random() * 0.5); s.stop(t + 0.75);
+    }
   }
   ['pointerdown', 'keydown', 'click', 'touchend'].forEach(ev => window.addEventListener(ev, init));
 
@@ -239,10 +257,55 @@
       tone(55 + 15 * k, 26, dur, 0.25 + 0.55 * k, 'sine');
       noise(dur, 'lowpass', 140 + 100 * k, 40, 0.15 + 0.35 * k);
     },
+    // end-screen stings (procedural, on the music/ambience bus so mute and Music volume apply)
+    sting(won) {
+      if (!ready() || !ambBus) return;
+      this.stingStop(true);
+      const t0 = ctx.currentTime + 0.15;
+      const bus = ctx.createGain(); bus.gain.value = 1; bus.connect(ambBus);
+      stingBus = bus;
+      const note = (f, at, dur, v, type, detune, wob) => {
+        const o = ctx.createOscillator(), g = ctx.createGain(), t = t0 + at;
+        o.type = type; o.frequency.value = f; if (detune) o.detune.value = detune;
+        if (wob) { const l = ctx.createOscillator(), lg = ctx.createGain(); l.frequency.value = wob; lg.gain.value = f * 0.004; l.connect(lg); lg.connect(o.frequency); l.start(t); l.stop(t + dur + 0.1); }
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.linearRampToValueAtTime(v, t + Math.min(0.9, dur * 0.25));
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        o.connect(g); g.connect(bus); o.start(t); o.stop(t + dur + 0.05);
+      };
+      if (!won) {
+        // slow descending A minor, last note sags and never resolves
+        note(220, 0, 4.5, 0.12, 'sine');
+        note(164.8, 2.6, 5, 0.12, 'triangle');
+        note(130.8, 5.4, 5.5, 0.11, 'sine');
+        note(110, 8.2, 6, 0.1, 'triangle');
+        note(55, 0.5, 12, 0.1, 'sine');
+        const o = ctx.createOscillator(), g = ctx.createGain(), t = t0 + 8.2;
+        o.type = 'sine'; o.frequency.setValueAtTime(98, t); o.frequency.exponentialRampToValueAtTime(70, t + 6);
+        g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.06, t + 1.5); g.gain.exponentialRampToValueAtTime(0.0001, t + 6);
+        o.connect(g); g.connect(bus); o.start(t); o.stop(t + 6.1);
+      } else {
+        // sparse rising Cmaj9, soft bell-like pairs with a faint wobble; ends thin and unresolved-feeling
+        const seq = [[261.6, 0], [329.6, 1.5], [392, 3], [493.9, 4.6], [587.3, 6.4]];
+        seq.forEach(([f, at], i) => {
+          const d = 4.5 + i * 0.4;
+          note(f, at, d, 0.1, 'sine', 0, 5.5);
+          note(f * 2, at, d * 0.7, 0.03, 'sine', 6, 0);
+        });
+        note(130.8, 0, 11, 0.07, 'triangle');
+        note(783.99, 8.4, 5, 0.04, 'sine', 0, 6);
+      }
+    },
+    stingStop(quick) {
+      if (!stingBus || !ctx) return;
+      const b = stingBus; stingBus = null;
+      try { b.gain.cancelScheduledValues(ctx.currentTime); b.gain.setTargetAtTime(0, ctx.currentTime, quick ? 0.05 : 0.3); } catch (e) {}
+      setTimeout(() => { try { b.disconnect(); } catch (e) {} }, 1500);
+    },
     toggleMute() {
       muted = !muted;
       try { localStorage.setItem('ab_mute', muted ? '1' : '0'); } catch (e) {}
-      if (master) master.gain.setTargetAtTime(muted ? 0 : MASTER, ctx.currentTime, 0.05);
+      if (master) master.gain.setTargetAtTime(muted ? 0 : MASTER * vol.master, ctx.currentTime, 0.05);
       if (window.narrApplyVolume) window.narrApplyVolume();
       const b = document.getElementById('tMute'); if (b) b.firstChild.nodeValue = muted ? 'Sound off' : 'Sound on';
       return muted;
@@ -255,7 +318,8 @@
       try { localStorage.setItem('ab_vol', JSON.stringify(vol)); } catch (e) {}
       if (ctx) {
         if (musicBus) musicBus.gain.setTargetAtTime(MUSIC * vol.music, ctx.currentTime, 0.03);
-        if (ambBus) ambBus.gain.setTargetAtTime(vol.music, ctx.currentTime, 0.03);
+        if (ambBus) ambBus.gain.setTargetAtTime(vol.amb, ctx.currentTime, 0.03);
+        if (master) master.gain.setTargetAtTime(muted ? 0 : MASTER * vol.master, ctx.currentTime, 0.03);
         if (sfxBus) sfxBus.gain.setTargetAtTime(vol.fx, ctx.currentTime, 0.03);
         if (uiBus) uiBus.gain.setTargetAtTime(vol.ui, ctx.currentTime, 0.03);
       }
@@ -290,6 +354,17 @@
         rumbleT -= dt;
         if (rumbleT <= 0) { rumbleT = 14 + Math.random() * 20; if (!muted && windBuf) distantRumble(); }
       } else rumbleT = Math.max(rumbleT, 8);
+      // bunker night ambience: sparse muffled thuds from far above (skipped while muted)
+      const night = !!(st && st.scene === 'bunker' && st.night);
+      if (night) {
+        if (!wasNight) thudT = 5 + Math.random() * 8;
+        thudT -= dt;
+        if (thudT <= 0) {
+          thudT = 11 + Math.random() * 20;
+          if (!muted) { distantThud(false, 0); if (Math.random() < 0.35) distantThud(true, 0.35 + Math.random() * 0.45); }
+        }
+      }
+      wasNight = night;
       // siren: sounds when the alarm goes on, fades after SIREN_SECS
       const alarm = !!(st && st.alarm);
       if (alarm && !wasAlarm) sirenT = SIREN_SECS;
