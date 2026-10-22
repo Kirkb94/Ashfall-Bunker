@@ -42,7 +42,37 @@
     pop_50: ['vo_pop_50', 2],
     pop_10: ['vo_pop_10', 2],
     pop_3: ['vo_pop_03', 2],
-    help_hint: ['vo_help_hint', 2]
+    help_hint: ['vo_help_hint', 2],
+    maw_tremor: ['vo_maw_tremor', 2],
+    maw_burst: ['vo_maw_burst', 2],
+    maw_down: ['vo_maw_down', 2],
+    sabotage: ['vo_sabotage', 2],
+    night_attack: ['vo_night_attack', 2],
+    revolt_hint: ['vo_revolt_hint', 2],
+    wanderer_lost: ['vo_wanderer_lost', 2],
+    workshop_done: ['vo_workshop_done', 2],
+    level_up: ['vo_level_up', 2],
+    grief: ['vo_grief', 2],
+    sick: ['vo_sick', 2],
+    sick_recover: ['vo_sick_recover', 2],
+    burrower_inside: ['vo_burrower_inside', 2],
+    rook: ['vo_rook', 2],
+    tip_night: ['vo_tip_night', 2],
+    pack_full: ['vo_pack_full', 2],
+    topside_empty: ['vo_topside_empty', 2],
+    topside_gas_warn: ['vo_topside_gas_warn', 1],
+    topside_mask_on: ['vo_topside_mask_on', 1],
+    topside_mask_off: ['vo_topside_mask_off', 2],
+    debris_warn: ['vo_debris_warn', 2],
+    topside_ram_spotted: ['vo_topside_ram_spotted', 2],
+    topside_ram_down: ['vo_topside_ram_down', 2],
+    alarm_on: ['vo_alarm_on', 2],
+    room_built: ['vo_room_built', 2],
+    floorsleep: ['vo_floor_sleep', 2],
+    scar: ['vo_scar', 2],
+    peace: ['vo_peace', 2],
+    resume: ['vo_resume', 2],
+    goal_choice: ['vo_goal_choice', 1]
   };
   const INTERRUPT = /door_breach|victory|defeat/;
   const COOLDOWN_MS = 8000, VOLUME = 0.9;
@@ -83,7 +113,10 @@
       if (!capsOn() || !t) return;
       t = String(t);
       const el = ensureCap(); if (!el) return;
-      el.textContent = t;
+      el.textContent = '';
+      const tag = document.createElement('span'); tag.className = 'ncTag'; tag.textContent = 'LAMP';
+      const tx = document.createElement('span'); tx.className = 'ncTxt'; tx.textContent = t;
+      el.appendChild(tag); el.appendChild(tx);
       void el.offsetWidth; // reflow: leave display:none (:empty) before .on so the fade runs
       el.classList.add('on');
       clearTimeout(capTimer);

@@ -275,6 +275,20 @@
   .srow{display:grid;grid-template-columns:90px 1fr 48px;gap:10px;align-items:center;margin:8px 0}
   .srow input{width:100%;accent-color:var(--amber)}
   .srow b{text-align:right}
+  /* pause menu: actions on the left, settings panels on the right, so it fits the 720 px stage */
+  .menu.pause{width:min(1060px,calc(100% - 40px));max-height:calc(100% - 32px);overflow:auto;display:grid;grid-template-columns:260px minmax(0,1fr);gap:24px;align-items:start;padding:4px;box-sizing:border-box}
+  .menu.pause .pcol{display:flex;flex-direction:column;align-items:stretch;gap:10px}
+  .menu.pause .pcol h1{text-align:center;margin-bottom:6px}
+  .menu.pause .pcol .btn{min-width:0;width:100%;min-height:46px}
+  .menu.pause .pset{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start;min-width:0}
+  .menu.pause .pset .setp{margin:0!important;flex:1 1 300px;width:auto;min-width:0;max-height:none;overflow:visible;padding:14px 16px}
+  .menu.pause .pset .setp:first-child{flex-grow:1.4}
+  .menu.pause .pset > .scrollcue{display:none}
+  .menu.pause .setp .btn{min-height:36px;min-width:0;padding:6px 14px;font-size:14px}
+  .menu.pause .srow .btn{min-height:0;padding:3px 8px;font-size:12px}
+  .menu.pause .srow{grid-template-columns:78px minmax(0,1fr) 42px auto;gap:8px;margin:6px 0}
+  .menu.pause .srow .chm{margin-left:0!important}
+  body.narrow .menu.pause,body.small .menu.pause{grid-template-columns:minmax(0,1fr)}
   /* touch tuning: minimum 44 screen px targets (--tap set by fit()), compact HUD */
   body.touch .tools button{min-height:var(--tap,44px);min-width:calc(var(--tap,44px)*1.1)}
   body.touch #tDbg,body.touch #tPathStress{display:none}

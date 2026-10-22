@@ -315,6 +315,11 @@ body.rm #dayCard .dcBox{transform:none}
 #narrCaption{font-size:17px;line-height:1.45;text-shadow:0 1px 2px #000,0 0 6px #000;background:rgba(0,0,0,.92)}
 body.hc #narrCaption{text-shadow:none;font-size:18px}
 #narrCaption:empty{visibility:hidden}
+#narrCaption{border-left:4px solid #e0a040;text-align:left}
+#narrCaption .ncTag{display:inline-block;margin-right:10px;padding:1px 6px;border-radius:3px;background:#e0a040;color:#1a1208;font:700 11px/1.4 "Chakra Petch",sans-serif;letter-spacing:.14em;vertical-align:middle}
+#narrCaption .ncTxt{vertical-align:middle}
+body.hc #narrCaption{border-left:6px solid #fff}
+body.hc #narrCaption .ncTag{background:#fff;color:#000}
 #toasts{position:fixed;right:12px;top:46px;z-index:46;display:flex;flex-direction:column;gap:6px;width:min(320px,calc(100vw - 24px));pointer-events:none}
 .toast{pointer-events:auto;display:flex;align-items:flex-start;gap:8px;padding:6px 8px;background:rgba(18,13,8,.92);border:1px solid #6b5230;border-left-width:4px;color:#eee;font:600 13px/1.4 "Chakra Petch",sans-serif;font-size:calc(13px * var(--ts,1));opacity:1;transition:opacity .25s ease}
 .toast.good{border-left-color:#7fb069}
