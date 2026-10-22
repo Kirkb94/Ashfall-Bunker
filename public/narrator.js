@@ -235,9 +235,9 @@
       const p = audio.play();
       if (p && p.catch) p.catch(err => {
         if (my !== token) return; // superseded by a newer clip: ignore the AbortError
-        playingUntilEnd = false; clearTimeout(wd); hideCap();
+        playingUntilEnd = false; clearTimeout(wd);
         if (err && err.name === 'NotAllowedError') { blocked = clip; blockedAt = performance.now(); }
-        else playPending();
+        else { hideCap(); playPending(); }
       });
     } catch (e) { playingUntilEnd = false; clearTimeout(wd); }
   };

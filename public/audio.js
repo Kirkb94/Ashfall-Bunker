@@ -524,9 +524,8 @@
       noise(dur, 'lowpass', 380 + 250 * k, 90, 0.2 + 0.3 * k);
       if (k < 0.6) tone(420 + Math.random() * 80, 230, 0.16, 0.1 * (1 - k), 'square');
       if (final) {
-        noise(0.22, 'bandpass', 3000, 700, 0.4, 3);
-        tone(340, 60, 0.35, 0.25, 'sawtooth');
-        noise(0.5, 'lowpass', 700, 70, 0.3);
+        // short snap only: breach() supplies the boom, tear and groan
+        noise(0.12, 'bandpass', 3000, 900, 0.3, 3);
       }
     },
     // door torn open: deep boom, metal tear, descending groan

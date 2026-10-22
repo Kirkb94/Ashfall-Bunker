@@ -1944,7 +1944,13 @@ function drawBuildGrid() {
   for (let c = 0; c <= DIG.cols; c++) { const x = DIG.x0 + c * cs + 0.5; g.moveTo(x, DIG.y0); g.lineTo(x, y1); }
   for (let r = 0; r <= DIG.rows; r++) { const y = DIG.y0 + r * cs + 0.5; g.moveTo(DIG.x0, y); g.lineTo(x1, y); }
   g.stroke();
-  const cc = dCellAt(bcamToWorld({ x: mouse.x, y: mouse.y }));
+  if (hc) {
+    g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 2; g.beginPath();
+    for (let c = 0; c <= DIG.cols; c += 5) { const x = DIG.x0 + c * cs + 0.5; g.moveTo(x, DIG.y0); g.lineTo(x, y1); }
+    for (let r = 0; r <= DIG.rows; r += 5) { const y = DIG.y0 + r * cs + 0.5; g.moveTo(DIG.x0, y); g.lineTo(x1, y); }
+    g.stroke(); g.lineWidth = 1;
+  }
+  const cc = placing ? null : dCellAt(bcamToWorld({ x: mouse.x, y: mouse.y }));   // placement ghost draws its own validity
   if (cc) {
     let ok = true;
     if (placing && placing.kind === 'ladder') { const l = ladderCheck({ x: DIG.x0 + (cc.c + 0.5) * cs, y: DIG.y0 + (cc.r + 0.5) * cs }); ok = !!(l && l.ok); }
@@ -1956,6 +1962,7 @@ function drawBuildGrid() {
     g.strokeStyle = hc ? '#fff' : 'rgba(' + (ok ? good : bad) + ',.95)'; g.lineWidth = 2;
     if (hc && !ok) g.setLineDash([5, 3]);
     g.strokeRect(x + 1, y + 1, cs - 2, cs - 2); g.setLineDash([]);
+    if (!ok) { g.beginPath(); g.moveTo(x + 6, y + 6); g.lineTo(x + cs - 6, y + cs - 6); g.moveTo(x + cs - 6, y + 6); g.lineTo(x + 6, y + cs - 6); g.strokeStyle = hc ? '#fff' : 'rgba(' + bad + ',.9)'; g.lineWidth = 2; g.stroke(); }
   }
   g.restore();
 }
@@ -2248,6 +2255,7 @@ function hitEnemy(e, dmg, by, dtype, crit) {
     if (e.type === 'cinder') { lampEv('boss_down', 'Cinder is down. His raiders scatter into the ash. Rook will want to hear about this.', 'good'); S.res.parts += 8; S.res.elec += 3; }
     if (e.type === 'maw') { lampEv('maw_down', 'The Maw is dead. Its tunnel is full of salvage.', 'good'); S.res.parts += 12; S.res.elec += 5; S.res.mat += 10; }
     burst(e.x, e.y - 10, '#5a3', 12);
+    fxDeathPuff(e.x, e.y - ENEMIES[e.type].h / 2, Math.max(ENEMIES[e.type].w, ENEMIES[e.type].h));
     if (window.SFX && SFX.death) SFX.death(e.type === 'cinder' || e.type === 'maw' || e.type === 'ram' ? 'big' : '');
   }
 }
@@ -3241,7 +3249,7 @@ const prefs = (() => {
   try { p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}; } catch (e) { p = {}; }
   let osRm = false; try { osRm = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) {}
   let osHc = false; try { osHc = !!(window.matchMedia && matchMedia('(prefers-contrast: more)').matches); } catch (e) {}
-  return { cb: !!p.cb, hc: typeof p.hc === 'boolean' ? p.hc : osHc, rm: typeof p.rm === 'boolean' ? p.rm : osRm, ta: !!p.ta, nl: p.nl !== false, le: !!p.le, sr: p.sr !== false, fx: (typeof p.fx === 'number' && p.fx >= 0 && p.fx <= 1) ? p.fx : 1, ps: !!p.ps };
+  return { cb: !!p.cb, hc: typeof p.hc === 'boolean' ? p.hc : osHc, rm: typeof p.rm === 'boolean' ? p.rm : osRm, ta: !!p.ta, nl: p.nl !== false, le: !!p.le, sr: p.sr !== false, fx: (typeof p.fx === 'number' && p.fx >= 0 && p.fx <= 1) ? p.fx : 1, ps: !!p.ps, sk: (p.sk === 'off' || p.sk === 'low' || p.sk === 'normal') ? p.sk : 'normal' };
 })();
 let shakeT = 0;
 let heartT = 0;
@@ -3279,7 +3287,7 @@ function drawDoorHitVignette() {
   g.fillStyle = rg; g.fillRect(0, 0, w, h);
   g.restore();
 }
-function addShake(s) { if (!prefs.rm && !prefs.ps && prefs.fx > 0) shakeT = Math.max(shakeT, s * prefs.fx); }
+function addShake(s) { const skMul = prefs.sk === 'off' ? 0 : prefs.sk === 'low' ? 0.5 : 1; if (!prefs.rm && !prefs.ps && prefs.fx > 0 && skMul > 0) shakeT = Math.max(shakeT, s * prefs.fx * skMul); }
 // Brief full-screen flash for breaches and large attack arrivals (bunker view). Skipped under reduced motion / photosensitive mode.
 let scrFlashAt = -9999, scrFlashK = 0, scrFlashCol = '255,150,90';
 function screenFlash(k, col) { if (prefs.rm || prefs.ps || !(prefs.fx > 0)) return; scrFlashAt = performance.now(); scrFlashK = k; scrFlashCol = col || '255,150,90'; }
@@ -3321,7 +3329,7 @@ function applyPrefs() {
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
 }
-function savePrefs() { try { localStorage.setItem(PREF_KEY, JSON.stringify({ cb: prefs.cb, hc: prefs.hc, rm: rmChosen ? prefs.rm : undefined, ta: prefs.ta, nl: prefs.nl, le: prefs.le, sr: prefs.sr, fx: prefs.fx, ps: prefs.ps })); } catch (e) {} applyPrefs(); if (typeof renderHud === 'function') { renderHud(); renderDrawer(); } }
+function savePrefs() { try { localStorage.setItem(PREF_KEY, JSON.stringify({ cb: prefs.cb, hc: prefs.hc, rm: rmChosen ? prefs.rm : undefined, ta: prefs.ta, nl: prefs.nl, le: prefs.le, sr: prefs.sr, fx: prefs.fx, ps: prefs.ps, sk: prefs.sk })); } catch (e) {} applyPrefs(); if (typeof renderHud === 'function') { renderHud(); renderDrawer(); } }
 { const a = document.getElementById('tCb'), b = document.getElementById('tRm');
   const prefLamp = (name, on) => { try { lamp(name + ' mode ' + (on ? 'on' : 'off')); } catch (err) {} };
   if (a) a.onclick = e => { prefs.cb = !prefs.cb; savePrefs(); prefLamp('Colorblind', prefs.cb); e.currentTarget.blur(); };
@@ -4558,6 +4566,17 @@ function fxCasing(x, y) {
   if (fx.casings.length >= 40) fx.casings.shift();
   fx.casings.push({ x, y, vx: rnd(-70, -20), vy: rnd(-150, -80), r: rnd(0, 6), vr: rnd(-12, 12), t: rnd(1.2, 2), b: 0 });
 }
+// Enemy death puff: grey smoke cloud with a few embers; skipped under reduced motion / photosensitive / 0% flash intensity
+function fxDeathPuff(x, y, size) {
+  if (prefs.rm || prefs.ps || prefs.fx <= 0 || scene !== 'bunker' || fx.parts.length > 250) return;
+  let n = partRoom(Math.max(6, Math.min(14, Math.round(size / 5))));
+  for (let i = 0; i < n; i++) {
+    const t = rnd(0.45, 0.8);
+    fx.parts.push({ x: x + rnd(-size / 4, size / 4), y: y + rnd(-size / 4, size / 4), vx: rnd(-50, 50), vy: rnd(-70, -10), g: -20, t, t0: t, a: 0.55 * Math.min(1, prefs.fx), s: rnd(5, 9), c: i % 3 ? '#8a8478' : '#5e5a52', sc: false });
+  }
+  const m = partRoom(4);
+  for (let i = 0; i < m; i++) fx.parts.push({ x, y, vx: rnd(-90, 90), vy: rnd(-140, -40), t: rnd(0.2, 0.4), c: i % 2 ? '#ffd27a' : '#ff8a3a', sc: false });
+}
 // Enemy hit sparks: fly back toward the turrets; more on a crit; skipped if the particle list is busy
 function fxHit(x, y, crit) {
   if (prefs.rm || prefs.ps || prefs.fx <= 0 || scene !== 'bunker' || fx.parts.length > 250) return;
@@ -4577,7 +4596,7 @@ function drawFx(ox, scOnly) {
   }
   for (const t of fx.tracers) if (t.sc === sc) { g.strokeStyle = t.c; g.globalAlpha = clamp(t.t / 0.09, 0, 1); g.lineWidth = 1.5; g.beginPath(); g.moveTo(t.x1 - ox, t.y1); g.lineTo(t.x2 - ox, t.y2); g.stroke(); }
   g.globalAlpha = 1;
-  for (const p of fx.parts) if (p.sc === sc) { g.fillStyle = p.c; const ps = p.s || 3; g.fillRect(p.x - ox, p.y, ps, ps); }
+  for (const p of fx.parts) if (p.sc === sc) { g.fillStyle = p.c; const ps = p.s || 3; if (p.a) g.globalAlpha = p.a * clamp(p.t / (p.t0 || 0.5), 0, 1); g.fillRect(p.x - ox, p.y, ps, ps); if (p.a) g.globalAlpha = 1; }
   if (!sc) for (const c of fx.casings) { g.save(); g.translate(c.x - ox, c.y); g.rotate(c.r); g.globalAlpha = clamp(c.t / 0.5, 0, 1); g.fillStyle = '#d9a441'; g.fillRect(-2, -1, 4, 2); g.restore(); }
   g.globalAlpha = 1;
   for (const b of fx.bullets) if ((b.world === 'scav') === sc) { const sp = Math.hypot(b.vx, b.vy || 0) || 1, ux = b.vx / sp, uy = (b.vy || 0) / sp; g.strokeStyle = '#ffe08a'; g.lineWidth = 2; g.beginPath(); g.moveTo(b.x - ox - ux * 5, b.y - uy * 5); g.lineTo(b.x - ox + ux * 5, b.y + uy * 5); g.stroke(); }
@@ -4596,7 +4615,7 @@ function drawFx(ox, scOnly) {
 function fxTick(dt) {
   for (const t of fx.tracers) t.t -= dt; fx.tracers = fx.tracers.filter(t => t.t > 0);
   if (fx.muz) { for (const m of fx.muz) m.t -= dt; fx.muz = fx.muz.filter(m => m.t > 0); }
-  for (const p of fx.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 400 * dt; p.t -= dt; if (p.fl !== undefined && p.y >= p.fl) { p.y = p.fl; p.vy = 0; p.vx *= 0.5; if (p.t > 0.3) p.t = 0.3; } } fx.parts = fx.parts.filter(p => p.t > 0);
+  for (const p of fx.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += (p.g === undefined ? 400 : p.g) * dt; p.t -= dt; if (p.fl !== undefined && p.y >= p.fl) { p.y = p.fl; p.vy = 0; p.vx *= 0.5; if (p.t > 0.3) p.t = 0.3; } } fx.parts = fx.parts.filter(p => p.t > 0);
   for (const c of fx.casings) {
     c.x += c.vx * dt; c.y += c.vy * dt; c.vy += 600 * dt; c.r += c.vr * dt; c.t -= dt;
     const fl = FLOORS[0] - 2;
@@ -6213,7 +6232,7 @@ function doBuild(a) {
     if (!S.rooms.workshop || !it || it.type !== 'bunk' || !it.damaged) return;
     const c = { scrap: BED_REPAIR_COST };
     if (!canPay(c)) { uiSfx('Error'); lamp('Repairing a bunk needs ' + fmtCost(c) + '.', 'warn'); return; }
-    pay(c); it.damaged = false;
+    pay(c); it.damaged = false; bedSfx('bunkRepair');
     lamp('Bunk repaired. Its two beds count toward capacity again.', 'good');
   }
   else if (/^rescar_/.test(a)) {
@@ -6309,7 +6328,7 @@ function tipInfo(t) {
     const c = S.crew.find(x => x.id === t.id);
     if (!c || !c.alive || c.left || c.exp) return null;
     const n = crewNeeds(c);
-    return { box: { x: c.x - 12, y: c.y - 42, w: 24, h: 44 }, ax: c.x, ay: c.y - 46, lines: [String(c.name), (JOBS[c.job] ? JOBS[c.job].label : '-') + ' · ' + c.state + (c.sick ? ' · sick' : ''), 'HP ' + Math.round(n.hp) + '  Food ' + Math.round(n.food) + '  Rest ' + Math.round(n.rest)] };
+    return { box: { x: c.x - 12, y: c.y - 42, w: 24, h: 44 }, ax: c.x, ay: c.y - 46, lines: [String(c.name), (JOBS[c.job] ? JOBS[c.job].label : '-') + ' · ' + c.state + (c.sick ? ' · sick' : ''), 'HP ' + Math.round(n.hp) + '  Food ' + Math.round(n.food) + '  Rest ' + Math.round(n.rest)], bars: [['HP', n.hp, '#d9503f'], ['Food', n.food, '#e0a030'], ['Rest', n.rest, '#5f9fd8']] };
   }
   if (t.type === 'item') {
     const it = itemList().find(x => x.id === t.id), T = it && ITEM_TYPES[it.type], rm = it && ROOMS[it.room];
@@ -6383,14 +6402,27 @@ function drawInfoTip() {
   const v = bcamView();
   const hcT = !!prefs.hc, fs = hcT ? 14 : 12;
   g.save(); g.font = (hcT ? 'bold ' : '') + fs + 'px sans-serif'; g.textBaseline = 'top';
-  const pad = hcT ? 8 : 6, lh = hcT ? 18 : 15, w = Math.max(...i.lines.map(s => g.measureText(s).width)) + pad * 2, h = i.lines.length * lh + pad * 2;
+  const pad = hcT ? 8 : 6, lh = hcT ? 18 : 15, tl = i.bars ? i.lines.slice(0, -1) : i.lines, nb = i.bars ? i.bars.length : 0, w = Math.max(nb ? 150 : 0, ...tl.map(s => g.measureText(s).width)) + pad * 2, h = (tl.length + nb) * lh + pad * 2;
   let x = (i.ax - v.ox) * v.z - w / 2, y = (i.ay - v.oy) * v.z - h - 6;
   if (y < 4) y = (i.ay - v.oy) * v.z + 24;
   x = clamp(x, 4, W - w - 4); y = clamp(y, 4, H - h - 4);
   g.fillStyle = hcT ? '#000' : 'rgba(14,10,7,.92)'; g.fillRect(x, y, w, h);
   g.strokeStyle = hcT ? '#fff' : '#ffc857'; g.lineWidth = hcT ? 3 : 1; if (prefs.cb) g.setLineDash([5, 3]); g.strokeRect(x + .5, y + .5, w - 1, h - 1); g.setLineDash([]);
   g.fillStyle = hcT ? '#fff' : '#f2e6d0';
-  i.lines.forEach((s, n) => { g.font = ((n === 0 || hcT) ? 'bold ' : '') + fs + 'px sans-serif'; g.fillText(s, x + pad, y + pad + n * lh); });
+  tl.forEach((s, n) => { g.font = ((n === 0 || hcT) ? 'bold ' : '') + fs + 'px sans-serif'; g.fillText(s, x + pad, y + pad + n * lh); });
+  if (i.bars) {
+    i.bars.forEach((b, n) => {
+      const by = y + pad + (tl.length + n) * lh, v = Math.max(0, Math.min(100, +b[1] || 0)), low = v < 30;
+      g.font = (hcT ? 'bold ' : '') + fs + 'px sans-serif'; g.fillStyle = hcT ? '#fff' : '#f2e6d0';
+      g.fillText(b[0], x + pad, by);
+      const bx = x + pad + 40, bw = 66, bhh = lh - 6;
+      g.fillStyle = hcT ? '#222' : 'rgba(255,255,255,.12)'; g.fillRect(bx, by + 2, bw, bhh);
+      g.fillStyle = hcT ? '#fff' : b[2]; g.fillRect(bx, by + 2, bw * v / 100, bhh);
+      g.strokeStyle = hcT ? '#fff' : 'rgba(255,255,255,.35)'; g.lineWidth = 1; g.strokeRect(bx + .5, by + 2.5, bw - 1, bhh - 1);
+      g.fillStyle = hcT ? '#fff' : '#f2e6d0';
+      g.fillText(Math.round(v) + (low ? ' !' : ''), bx + bw + 6, by);
+    });
+  }
   g.restore();
 }
 function lpCancel() { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } lpStart = null; }
@@ -6973,6 +7005,7 @@ function hotbarSlots() {
     const on = !!(itemTool && itemSel === t);
     out.push({ name: T.name, icon: ic, cost: T.cost, on, ok: on || (!!ROOMS[T.room] && canPay(T.cost)), act: () => startItemPlace(t) });
   }
+  out.forEach((s, i) => { s.cat = i < 2 ? 'Tools' : i < 6 ? 'Rooms' : 'Furnishings'; });
   return out;
 }
 function hotbarLive() { return scene === 'bunker' && !!S && !S.over && (!!placing || !!digTool || !!itemTool || !!tTool || (!$('#drawer').hidden && tab === 'build')); }
@@ -6996,15 +7029,18 @@ function hotbarRender(force) {
   if (!force && sig === hotbarSig) return;
   hotbarSig = sig;
   el.classList.toggle('live', hotbarLive());
-  el.innerHTML = slots.map((s, i) => {
+  const hbBtn = (s, i) => {
     const cost = s.cost ? fmtCost(s.cost) : 'free';
-    const tip = s.name + ' [' + (i + 1) + (s.key ? ' / ' + s.key : '') + '] \u2014 ' + cost + (s.ok ? '' : (s.why ? ' (' + s.why + ')' : ' (cannot afford)'));
+    const tip = s.cat + ': ' + s.name + ' [' + (i + 1) + (s.key ? ' / ' + s.key : '') + '] \u2014 ' + cost + (s.ok ? '' : (s.why ? ' (' + s.why + ')' : ' (cannot afford)'));
     return '<button type="button" class="hb' + (s.on ? ' on' : '') + (s.ok ? '' : ' off') + '" data-hb="' + i + '" title="' + tip + '" aria-label="' + tip + '" aria-disabled="' + (s.ok ? 'false' : 'true') + '"><kbd>' + (i + 1) + '</kbd><span class="hbi" aria-hidden="true">' + s.icon + '</span><span class="hbn">' + s.name + '</span><span class="hbc">' + (s.why || cost) + '</span></button>';
-  }).join('');
+  };
+  const hbCats = [];
+  slots.forEach((s, i) => { let g = hbCats.find(c => c.n === s.cat); if (!g) hbCats.push(g = { n: s.cat, h: '' }); g.h += hbBtn(s, i); });
+  el.innerHTML = hbCats.map(g => '<div class="hbg" role="group" aria-label="' + g.n + '"><span class="hbgl">' + g.n + '</span>' + g.h + '</div>').join('');
 }
 (function hotbarInit() {
   const st = document.createElement('style');
-  st.textContent = '#hotbar{position:absolute;left:50%;bottom:80px;transform:translateX(-50%);display:flex;gap:4px;padding:4px;background:#120d08dd;border:1px solid var(--line);z-index:4}#hotbar[hidden]{display:none}#hotbar .hb{position:relative;width:62px;padding:2px 2px 3px;background:#2a2016;border:1px solid var(--line);color:#e8d9b8;font:inherit;font-size:10px;line-height:1.2;cursor:pointer;text-align:center}#hotbar .hb kbd{position:absolute;left:2px;top:1px;font-size:10px;opacity:.8}#hotbar .hbi{display:block;font-size:20px;line-height:24px}#hotbar .hbn,#hotbar .hbc{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#hotbar .hbc{color:#cdb99a;font-size:9px}#hotbar .hb:hover,#hotbar .hb:focus-visible{border-color:#ffb347}#hotbar .hb.on{background:#5a3f1c;border-color:#ffb347}#hotbar .hb.off{opacity:.4;filter:grayscale(1);cursor:not-allowed}#hotbar .hb.off .hbc{color:#e07a5f}#hotbar:not(.live) kbd{opacity:.35}body.touch #hotbar{bottom:4px}@media (max-width:700px){#hotbar .hb{width:44px;min-height:44px}#hotbar .hbn{display:none}}';
+  st.textContent = '#hotbar{position:absolute;left:50%;bottom:80px;transform:translateX(-50%);display:flex;gap:4px;padding:4px;background:#120d08dd;border:1px solid var(--line);z-index:4}#hotbar[hidden]{display:none}#hotbar .hb{position:relative;width:62px;padding:2px 2px 3px;background:#2a2016;border:1px solid var(--line);color:#e8d9b8;font:inherit;font-size:10px;line-height:1.2;cursor:pointer;text-align:center}#hotbar .hb kbd{position:absolute;left:2px;top:1px;font-size:10px;opacity:.8}#hotbar .hbi{display:block;font-size:20px;line-height:24px}#hotbar .hbn,#hotbar .hbc{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#hotbar .hbc{color:#cdb99a;font-size:9px}#hotbar .hb:hover,#hotbar .hb:focus-visible{border-color:#ffb347}#hotbar .hb.on{background:#5a3f1c;border-color:#ffb347}#hotbar .hb.off{opacity:.4;filter:grayscale(1);cursor:not-allowed}#hotbar .hb.off .hbc{color:#e07a5f}#hotbar:not(.live) kbd{opacity:.35}#hotbar .hbg{position:relative;display:flex;gap:4px;padding-top:12px}#hotbar .hbg+.hbg{border-left:1px solid var(--line);padding-left:4px}#hotbar .hbgl{position:absolute;top:0;left:4px;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#cdb99a}body.touch #hotbar{bottom:4px}@media (max-width:700px){#hotbar .hb{width:44px;min-height:44px}#hotbar .hbn{display:none}}';
   document.head.appendChild(st);
   const el = document.createElement('div');
   el.id = 'hotbar'; el.hidden = true; el.setAttribute('role', 'toolbar'); el.setAttribute('aria-label', 'Build hotbar. Number keys 1 to 9 select a slot while build mode is open.');
@@ -7670,9 +7706,9 @@ function showSettings(from) {
   const curTs = getTextSize();
   const tmBtns = '<div class="tsrow">' + TOUCH_MODES.map(([k, label]) => `<button class="btn ghost" data-touch="${k}" aria-pressed="${k === touchMode}">${label}</button>`).join('') + '</div>';
   const curPct = Math.round(getTextScale() * 100);
-  const tsBtns = `<label class="srow"><span>Text scale</span><input type="range" id="sTs" min="85" max="160" step="5" value="${curPct}" aria-label="UI text size" aria-valuetext="${curPct} percent"><b>${curPct}%</b></label><button class="btn ghost" id="sTsReset" style="min-width:0">Reset text size</button><div class="tsrow" role="group" aria-label="Text size presets">${[['Small', 85], ['Normal', 100], ['Large', 125]].map(([l, p]) => `<button class="btn ghost" data-tspreset="${p}" aria-pressed="${curPct === p}">${l} (${p}%)</button>`).join('')}</div>`;
+  const tsBtns = `<label class="srow"><span>Text scale</span><input type="range" id="sTs" min="85" max="160" step="5" value="${curPct}" aria-label="UI text size" aria-valuetext="${curPct} percent"><b>${curPct}%</b></label><button class="btn ghost" id="sTsReset" style="min-width:0">Reset text size</button><div class="tsrow" role="group" aria-label="Text size presets">${[['Small', 85], ['Normal', 100], ['Large', 125], ['X-Large', 150]].map(([l, p]) => `<button class="btn ghost" data-tspreset="${p}" aria-pressed="${curPct === p}">${l} (${p}%)</button>`).join('')}</div>`;
   const muted = !!(window.SFX && SFX.muted);
-  overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="sTitle" style="width:640px"><h1 id="sTitle" style="font-size:36px">SETTINGS</h1><div class="setp"><h3>VOLUME</h3>${rows}<button class="btn ghost" id="sMute" style="min-width:0">${muted ? 'Sound: off' : 'Sound: on'}</button><button class="btn ghost" id="sNarrMute" style="min-width:0" aria-pressed="${!!(window.SFX && SFX.narrMuted && SFX.narrMuted())}">${(window.SFX && SFX.narrMuted && SFX.narrMuted()) ? 'Narrator: muted' : 'Narrator: on'}</button><button class="btn ghost" id="sVolReset" style="min-width:0">Reset audio</button><h3>DISPLAY</h3><div class="tsrow"><button class="btn ghost" data-pref="cb" aria-pressed="false">Colorblind: off</button><button class="btn ghost" data-pref="hc" aria-pressed="false">High contrast: off</button><button class="btn ghost" id="sCap" aria-pressed="${window.narrCaptionsOn ? narrCaptionsOn() : true}">Captions: ${(window.narrCaptionsOn ? narrCaptionsOn() : true) ? 'on' : 'off'}</button></div><h3>FLASH &amp; SHAKE</h3><label class="srow"><span>Effects intensity</span><input type="range" min="0" max="100" step="5" value="${Math.round(prefs.fx * 100)}" id="sFx" aria-label="Screen shake and flash intensity"><b>${Math.round(prefs.fx * 100)}%</b></label><div class="tsrow"><button class="btn ghost" id="sPs" aria-pressed="${prefs.ps}">Photosensitive-safe: ${prefs.ps ? 'on' : 'off'}</button><button class="btn ghost" id="sTips" aria-pressed="${!tutDone()}">Tutorial hints: ${tutDone() ? 'off' : 'on'}</button></div><h3>SCREEN READER</h3><div class="tsrow"><button class="btn ghost" id="sSrAlert" aria-pressed="${srAlertsOn()}">Critical alerts: ${srAlertsOn() ? 'on' : 'off'}</button></div><h3>HELP</h3><div class="tsrow"><button class="btn ghost" id="sReplay">Replay tips</button></div><label class=\"srow\" style=\"cursor:pointer\"><input type=\"checkbox\" id=\"sRm\" ${prefs.rm ? 'checked' : ''}><span>Reduced motion (no screen shake, still ash and bobbing)</span></label><h3>TEXT SIZE</h3>${tsBtns}<h3>TOUCH CONTROLS</h3>${tmBtns}<h3>MOVEMENT &amp; ACTION KEYS</h3><div class="binds">${bindRows}</div><div id="bindNote" role="status" aria-live="polite" style="min-height:1.4em;margin-top:6px;color:#e8b84a">${bindNote}</div><h3>OTHER KEYS</h3><dl class="keys">${keys}</dl></div><button class="btn" id="sBack">Back</button></div>`);
+  overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="sTitle" style="width:640px"><h1 id="sTitle" style="font-size:36px">SETTINGS</h1><div class="setp"><h3>VOLUME</h3>${rows}<button class="btn ghost" id="sMute" style="min-width:0">${muted ? 'Sound: off' : 'Sound: on'}</button><button class="btn ghost" id="sNarrMute" style="min-width:0" aria-pressed="${!!(window.SFX && SFX.narrMuted && SFX.narrMuted())}">${(window.SFX && SFX.narrMuted && SFX.narrMuted()) ? 'Narrator: muted' : 'Narrator: on'}</button><button class="btn ghost" id="sVolReset" style="min-width:0">Reset audio</button><h3>DISPLAY</h3><div class="tsrow"><button class="btn ghost" data-pref="cb" aria-pressed="false">Colorblind: off</button><button class="btn ghost" data-pref="hc" aria-pressed="false">High contrast: off</button><button class="btn ghost" id="sCap" aria-pressed="${window.narrCaptionsOn ? narrCaptionsOn() : true}">Captions: ${(window.narrCaptionsOn ? narrCaptionsOn() : true) ? 'on' : 'off'}</button></div><h3>FLASH &amp; SHAKE</h3><div class="tsrow"><button class="btn ghost" id="sSk" aria-label="Screen shake intensity">Screen shake: ${prefs.sk === 'off' ? 'Off' : prefs.sk === 'low' ? 'Low' : 'Normal'}</button></div><label class="srow"><span>Effects intensity</span><input type="range" min="0" max="100" step="5" value="${Math.round(prefs.fx * 100)}" id="sFx" aria-label="Screen shake and flash intensity"><b>${Math.round(prefs.fx * 100)}%</b></label><div class="tsrow"><button class="btn ghost" id="sPs" aria-pressed="${prefs.ps}">Photosensitive-safe: ${prefs.ps ? 'on' : 'off'}</button><button class="btn ghost" id="sTips" aria-pressed="${!tutDone()}">Tutorial hints: ${tutDone() ? 'off' : 'on'}</button></div><h3>SCREEN READER</h3><div class="tsrow"><button class="btn ghost" id="sSrAlert" aria-pressed="${srAlertsOn()}">Critical alerts: ${srAlertsOn() ? 'on' : 'off'}</button></div><h3>HELP</h3><div class="tsrow"><button class="btn ghost" id="sReplay">Replay tips</button></div><label class=\"srow\" style=\"cursor:pointer\"><input type=\"checkbox\" id=\"sRm\" ${prefs.rm ? 'checked' : ''}><span>Reduced motion (no screen shake, still ash and bobbing)</span></label><h3>TEXT SIZE</h3>${tsBtns}<h3>TOUCH CONTROLS</h3>${tmBtns}<h3>MOVEMENT &amp; ACTION KEYS</h3><div class="binds">${bindRows}</div><div id="bindNote" role="status" aria-live="polite" style="min-height:1.4em;margin-top:6px;color:#e8b84a">${bindNote}</div><h3>OTHER KEYS</h3><dl class="keys">${keys}</dl></div><button class="btn" id="sBack">Back</button></div>`);
   document.querySelectorAll('#overlay input[data-vol]').forEach(inp => {
     const out = inp.parentNode.querySelector('b');
     inp.oninput = () => { if (window.SFX && SFX.setVol) SFX.setVol(inp.dataset.vol, inp.value / 100); out.textContent = inp.value + '%'; volPreview(inp.dataset.vol); };
@@ -7703,6 +7739,13 @@ function showSettings(from) {
     fxIn.oninput = () => { prefs.fx = fxIn.value / 100; fxOut.textContent = fxIn.value + '%'; };
     fxIn.onchange = () => { prefs.fx = fxIn.value / 100; savePrefs(); };
   }
+  const skBtn = $('#sSk');
+  if (skBtn) skBtn.onclick = () => {
+    prefs.sk = prefs.sk === 'off' ? 'low' : prefs.sk === 'low' ? 'normal' : 'off';
+    if (prefs.sk === 'off') shakeT = 0;
+    savePrefs();
+    skBtn.textContent = 'Screen shake: ' + (prefs.sk === 'off' ? 'Off' : prefs.sk === 'low' ? 'Low' : 'Normal');
+  };
   const psBtn = $('#sPs');
   if (psBtn) psBtn.onclick = () => {
     prefs.ps = !prefs.ps; if (prefs.ps) shakeT = 0; savePrefs();
@@ -7846,11 +7889,13 @@ function tourSteps() {
     { hatch: true, text: '<b>The hatch</b> · Everything out there wants in through this door. Hold it. If it breaks, the bunker follows.' }
   ];
 }
+function tourResize() { if (tour) tourShow(); }
 function tourEsc(e) { if (tour && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); tourFinish(); } }
 function tourHide() {
   const a = document.getElementById('tour'), b = document.getElementById('tourRing');
   if (a) a.remove(); if (b) b.remove();
   window.removeEventListener('keydown', tourEsc, true);
+  window.removeEventListener('resize', tourResize);
   tour = null; tutHl([]);
   for (const id of ['hud']) { const e = document.getElementById(id); if (e) e.style.outline = ''; }
 }
@@ -7890,6 +7935,7 @@ function tourStart() {
   if (tourDone()) return;
   tour = { i: 0 };
   window.addEventListener('keydown', tourEsc, true);
+  window.addEventListener('resize', tourResize);
   tourShow();
 }
 function tutStart() {
