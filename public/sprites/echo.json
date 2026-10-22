@@ -1,0 +1,398 @@
+{
+ "format": "renegade-sprite/1",
+ "image": "echo.png",
+ "scale": 2,
+ "frameWidth": 128,
+ "frameHeight": 256,
+ "size": {
+  "w": 768,
+  "h": 1024
+ },
+ "pivot": {
+  "x": 64,
+  "y": 253
+ },
+ "render": "pixel",
+ "source": {
+  "spriteId": "cast-echo",
+  "version": 1,
+  "animIds": [
+   "cast-echo-death",
+   "cast-echo-hurt",
+   "cast-echo-idle",
+   "cast-echo-interact"
+  ]
+ },
+ "animations": {
+  "death": {
+   "row": 0,
+   "state": "death",
+   "loop": false,
+   "frames": [
+    {
+     "name": "death_00",
+     "x": 0,
+     "y": 0,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    },
+    {
+     "name": "death_01",
+     "x": 128,
+     "y": 0,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    },
+    {
+     "name": "death_02",
+     "x": 256,
+     "y": 0,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    },
+    {
+     "name": "death_03",
+     "x": 384,
+     "y": 0,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    },
+    {
+     "name": "death_04",
+     "x": 512,
+     "y": 0,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    },
+    {
+     "name": "death_05",
+     "x": 640,
+     "y": 0,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    }
+   ],
+   "events": []
+  },
+  "hurt": {
+   "row": 1,
+   "state": "hurt",
+   "loop": false,
+   "frames": [
+    {
+     "name": "hurt_00",
+     "x": 0,
+     "y": 256,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    },
+    {
+     "name": "hurt_01",
+     "x": 128,
+     "y": 256,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    },
+    {
+     "name": "hurt_02",
+     "x": 256,
+     "y": 256,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    }
+   ],
+   "events": []
+  },
+  "idle": {
+   "row": 2,
+   "state": "idle",
+   "loop": true,
+   "frames": [
+    {
+     "name": "idle_00",
+     "x": 0,
+     "y": 512,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    },
+    {
+     "name": "idle_01",
+     "x": 128,
+     "y": 512,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    },
+    {
+     "name": "idle_02",
+     "x": 256,
+     "y": 512,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    }
+   ],
+   "events": []
+  },
+  "interact": {
+   "row": 3,
+   "state": "interact",
+   "loop": false,
+   "frames": [
+    {
+     "name": "interact_00",
+     "x": 0,
+     "y": 768,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    },
+    {
+     "name": "interact_01",
+     "x": 128,
+     "y": 768,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    },
+    {
+     "name": "interact_02",
+     "x": 256,
+     "y": 768,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    },
+    {
+     "name": "interact_03",
+     "x": 384,
+     "y": 768,
+     "w": 128,
+     "h": 256,
+     "duration": 125
+    }
+   ],
+   "events": []
+  }
+ },
+ "frames": {
+  "death_00": {
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  },
+  "death_01": {
+   "frame": {
+    "x": 128,
+    "y": 0,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  },
+  "death_02": {
+   "frame": {
+    "x": 256,
+    "y": 0,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  },
+  "death_03": {
+   "frame": {
+    "x": 384,
+    "y": 0,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  },
+  "death_04": {
+   "frame": {
+    "x": 512,
+    "y": 0,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  },
+  "death_05": {
+   "frame": {
+    "x": 640,
+    "y": 0,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  },
+  "hurt_00": {
+   "frame": {
+    "x": 0,
+    "y": 256,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  },
+  "hurt_01": {
+   "frame": {
+    "x": 128,
+    "y": 256,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  },
+  "hurt_02": {
+   "frame": {
+    "x": 256,
+    "y": 256,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  },
+  "idle_00": {
+   "frame": {
+    "x": 0,
+    "y": 512,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  },
+  "idle_01": {
+   "frame": {
+    "x": 128,
+    "y": 512,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  },
+  "idle_02": {
+   "frame": {
+    "x": 256,
+    "y": 512,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  },
+  "interact_00": {
+   "frame": {
+    "x": 0,
+    "y": 768,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  },
+  "interact_01": {
+   "frame": {
+    "x": 128,
+    "y": 768,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  },
+  "interact_02": {
+   "frame": {
+    "x": 256,
+    "y": 768,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  },
+  "interact_03": {
+   "frame": {
+    "x": 384,
+    "y": 768,
+    "w": 128,
+    "h": 256
+   },
+   "duration": 125,
+   "pivot": {
+    "x": 64,
+    "y": 253
+   }
+  }
+ }
+}

@@ -144,6 +144,9 @@
     }
   }
 
+  // per-sound loudness multipliers for Mara's topside foley (final level still follows the Effects slider and mute)
+  const FOLEY = { step: 1.3, jump: 1.15, land: 1 };
+
   window.SFX = {
     // for narrator.js: the shared AudioContext (created and resumed on the first click or key press)
     unlock() { init(); return ctx; },
@@ -174,22 +177,22 @@
       if (!ready()) return;
       const now = ctx.currentTime; if (now - lastStep < 0.12) return; lastStep = now;
       stepAlt = !stepAlt;
-      noise(0.07, 'bandpass', (stepAlt ? 700 : 560) + Math.random() * 200, 220, stepAlt ? 0.16 : 0.11, 1.2);
-      tone(stepAlt ? 90 : 75, 45, 0.06, stepAlt ? 0.1 : 0.07, 'sine');
+      noise(0.07, 'bandpass', (stepAlt ? 700 : 560) + Math.random() * 200, 220, (stepAlt ? 0.16 : 0.11) * FOLEY.step, 1.2);
+      tone(stepAlt ? 90 : 75, 45, 0.06, (stepAlt ? 0.1 : 0.07) * FOLEY.step, 'sine');
     },
     jump() {
       if (!ready()) return;
       const now = ctx.currentTime; if (now - lastJump < 0.08) return; lastJump = now;
-      tone(220, 420, 0.1, 0.1, 'triangle');
-      noise(0.09, 'bandpass', 900, 1800, 0.1, 1);
+      tone(220, 420, 0.1, 0.1 * FOLEY.jump, 'triangle');
+      noise(0.09, 'bandpass', 900, 1800, 0.1 * FOLEY.jump, 1);
     },
     // speed = downward speed in px/s at impact
     land(speed) {
       if (!ready()) return;
       const now = ctx.currentTime; if (now - lastLand < 0.1) return; lastLand = now;
       const k = Math.min(1, Math.max(0.15, (+speed || 0) / 700));
-      noise(0.1 + 0.12 * k, 'lowpass', 900 + 400 * k, 120, 0.15 + 0.3 * k);
-      tone(110 - 30 * k, 40, 0.1 + 0.1 * k, 0.12 + 0.35 * k, 'sine');
+      noise(0.1 + 0.12 * k, 'lowpass', 900 + 400 * k, 120, (0.15 + 0.3 * k) * FOLEY.land);
+      tone(110 - 30 * k, 40, 0.1 + 0.1 * k, (0.12 + 0.35 * k) * FOLEY.land, 'sine');
     },
     // ---- UI sounds (all on the UI bus) ----
     uiHover(force) {

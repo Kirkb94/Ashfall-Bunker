@@ -494,7 +494,7 @@ function newRun(goal) {
     rooms: { kitchen: 1, hydro: 1, med: 1, bunks: 1 }, makeParts: true, ladders: [], builds: {}, batt: 0, cond: {}, rsch: { done: {}, cur: null, prog: {} }, exp: { teams: [], log: [], seq: 0 },
     goalKind: GOAL_KIND, tower: { done: 0, paid: false, work: 0 }, kit: { cooked: 8, cap: 16, prog: 0, raw: 6 }, stock: { pipe: 1, pistol: 1 }, craft: [],
     crew: [], enemies: [], spawns: [], alarm: false, stats: { kills: 0, trips: 0, raids: 0, lost: [], repelled: 0, scav: {}, moments: [] }, won: false, hint: 0,
-    player: { hp: 100, maxHp: 100, food: 80, xp: 0, lvl: 1, down: 0 },
+    player: { hp: 100, maxHp: 100, food: 80, xp: 0, lvl: 1, down: 0, revives: maxRevives() },
   };
   ensurePair(S);
   for (const n of NAMED) if (!n.arrives) S.crew.push(makeCrew({ ...n, named: true }));
@@ -531,6 +531,7 @@ function migrateSave(sv) {
   if (!st.scav || typeof st.scav !== 'object') st.scav = {};
   if (!s.player || typeof s.player !== 'object') s.player = { hp: 100, maxHp: 100, food: 80, xp: 0, lvl: 1, down: 0 };
   if (!s.player.carried || typeof s.player.carried !== 'object') delete s.player.carried;
+  if (typeof s.player.revives !== 'number') s.player.revives = maxRevives();
   if (typeof s.player.packLvl !== 'number') s.player.packLvl = 0;
   for (const k of ['food', 'scrap', 'parts', 'elec', 'mat']) if (typeof s.res[k] !== 'number') s.res[k] = 0;
   // the dig grid is rebuilt on first use when missing; drop anything malformed
@@ -645,7 +646,7 @@ function moraleTick(c, h) {
   if (c.sick) d -= 3;
   if (restPct(c) < 30) d -= 2;
   if (c.grief > 0) d -= 2;
-  if (c.state === 'sleep') d += c.bed === false ? FLOOR_MORALE : 3;
+  if (c.state === 'sleep') d += c.bed === false ? floorPenalty(c) : 3;
   if (restActive(c)) d += 6;
   d += Math.min(DECO_CAP, decoCount() * 0.25);
   if (d === 0 && c.food > 50 && restPct(c) > 50) d += 1;
@@ -820,9 +821,46 @@ function moveTo(m, floor, x, dt, spd) {
   return false;
 }
 
+// ---- Boss-failure scars ----
+const SCAR_MAX = 3, SCAR_PENALTY = 0.15, WORSE_MUL = 0.85;
+const isBoss = e => e.type === 'cinder' || e.type === 'maw';
+function bossReachTick() {
+  for (const e of S.enemies) if (e.hp > 0 && isBoss(e) && e.inside) e.reach = Math.max(e.reach || 0, e.floor || 0);
+}
+function scarName(k) { return k === 'door' ? 'Hatch' : ROOMS[k].name; }
+function scarCost(sc) { return { scrap: 15 * sc.severity, parts: 4 * sc.severity, mat: 8 * sc.severity }; }
+function roomMul(job) {
+  const k = Object.keys(ROOMS).find(r => ROOMS[r].job === job);
+  if (!k) return 1;
+  let m = Math.pow(WORSE_MUL, (S.worse && S.worse[k]) || 0);
+  for (const sc of (S.scars || [])) if (sc.room === k) m *= Math.max(0.3, 1 - SCAR_PENALTY * sc.severity);
+  return m;
+}
+function bossFailCheck() {
+  for (const e of S.enemies) {
+    if (e.hp <= 0 || !isBoss(e) || e.scarred) continue;
+    if (!e.inside && !S.breached) continue;
+    const reach = e.reach || 0;
+    const cand = Object.keys(ROOMS).filter(k => S.rooms[k] && ROOMS[k].floor >= 1 && ROOMS[k].floor <= reach);
+    const sev = Math.max(1, Math.min(SCAR_MAX, cand.length));
+    let room = 'door';
+    if (cand.length) {
+      const deep = Math.max(...cand.map(k => ROOMS[k].floor));
+      const pool = cand.filter(k => ROOMS[k].floor === deep);
+      const fresh = pool.filter(k => !(S.scars || []).some(s => s.room === k));
+      room = pick(fresh.length ? fresh : pool);
+    }
+    if (!S.scars) S.scars = [];
+    S.scars.push({ room, severity: sev, d: day() - 1 });
+    e.scarred = true;
+    moment('The bunker was scarred');
+    lampEv('scar_' + e.id, 'The ' + e.type[0].toUpperCase() + e.type.slice(1) + ' reached ' + sev + (sev === 1 ? ' room' : ' rooms') + ' deep. ' + scarName(room) + ' is scarred. It can be rebuilt, at a cost, and it will not be as good as it was.', 'warn');
+  }
+}
 function hourEvents(h) {
   const d = day();
   meal(h);
+  if (h === 8) bossFailCheck();
   if (h === 8) { if (S.alarm) toggleAlarm(); S.alarmAuto = false; if (d > 1) lampEv('new_day', 'Day ' + d + '. ' + summaryLine()); }
   if (h === 20) { if (d === 3) lampEv('boss_warn', 'Long-range scanner: a convoy with a painted-grin banner. That is Cinder. Raid in one hour.', 'warn'); else lampSay('raidWarn', 'warn'); }
   if (h === 8 && S.tower && !S.tower.paid && TOWER[S.tower.done] && !canPay(TOWER[S.tower.done].cost)) lampEv('exit_resources', 'Not enough materials for the next tower stage. Someone should scavenge topside.', 'warn');
@@ -889,7 +927,7 @@ function spawnEnemy(type) {
 }
 function spawnMaw() {
   const b = ENEMIES.maw, scale = 1 + (day() - 1) * 0.1;
-  S.enemies.push({ id: uid++, type: 'maw', enemy: true, burrow: true, x: LADDER_X + rnd(-60, 60), y: FLOORS[3], floor: 3, climbing: false, hp: Math.round(b.hp * scale), max: Math.round(b.hp * scale), cd: 1, facing: -1, anim: 0, inside: true });
+  S.enemies.push({ id: uid++, type: 'maw', enemy: true, burrow: true, reach: { 3: true }, x: LADDER_X + rnd(-60, 60), y: FLOORS[3], floor: 3, climbing: false, hp: Math.round(b.hp * scale), max: Math.round(b.hp * scale), cd: 1, facing: -1, anim: 0, inside: true });
   if (!S.alarm && !S.alarmAuto) { S.alarmAuto = true; toggleAlarm(); }
   addShake(0.6); if (window.SFX && SFX.rumble) SFX.rumble(1);
   burst(LADDER_X, FLOORS[3] - 10, '#8a7a66', 24);
@@ -905,15 +943,15 @@ function mawTick(dt) {
   } else { m.done = true; spawnMaw(); }
 }
 const REVOLT_MORALE = 38, REVOLT_CAP_STEP = 4, REVOLT_CAP_CEIL = 60;
+const REVOLT_SPREAD_P = 0.5, REVOLT_SPREAD_DECAY = 0.5;   // spread chance per attempt: 0.5, 0.25, 0.125...
 function revoltThreshold(c, capLoss) {
   if (c.bed !== false) return REVOLT_MORALE;   // uncapped: unchanged
   return Math.min(REVOLT_CAP_CEIL, REVOLT_MORALE + REVOLT_CAP_STEP * capLoss);
 }
 function revoltCheck() {
-  const capLoss = living().filter(o => o.bed === false).length;
-  for (const c of living()) {
-    if (c.named || c.loyalty >= 1) continue;
-    if (morale(c) < revoltThreshold(c, capLoss) && Math.random() > c.loyalty) {
+  const capLoss = living().filter(o => o.bed === false).length + capLostToDeaths();   // total cap lost: bed shortfall + deaths
+  const act = (c) => {
+    {
       const turs = S.turrets.filter(t => t && t.hp > 0);
       const victims = living().filter(o => o !== c && !o.down);
       const roll = Math.random();
@@ -934,7 +972,30 @@ function revoltCheck() {
         S.res[k] -= took; c.alive = false; c.left = true; leaveState(c, 'left');
         lampEv('deserter', c.name + ' slipped out in the night with ' + took + ' ' + RES.find(r => r.k === k).name.toLowerCase() + '. Morale was too low to hold them.', 'warn');
       }
-      break; // at most one revolt per night
+    }
+  };
+  const d = day();
+  if (!S.revoltNight || S.revoltNight.night !== d) S.revoltNight = { night: d, started: false, spreads: 0 };
+  const R = S.revoltNight;
+  let startedNow = false;
+  if (!R.started) {
+    for (const c of living()) {
+      if (c.named || c.loyalty >= 1) continue;
+      if (morale(c) < revoltThreshold(c, capLoss) && Math.random() > c.loyalty) {
+        R.started = true; startedNow = true;
+        act(c);
+        break; // only one independent revolt per night
+      }
+    }
+  }
+  if (startedNow) {
+    let p = REVOLT_SPREAD_P;
+    while (Math.random() < p) {
+      const cands = living().filter(o => !o.named && o.loyalty < 1 && !o.left);
+      if (!cands.length) break;
+      act(pick(cands));
+      R.spreads++;
+      p *= REVOLT_SPREAD_DECAY;
     }
   }
   revoltHints();
@@ -943,30 +1004,35 @@ function revoltCheck() {
 const HINT_MORALE = 50;
 function revoltHints() {
   const n = day();
-  S.revoltHints = S.revoltHints || { night: n, done: {}, lvl: {} };
+  S.revoltHints = S.revoltHints || { night: n, hinted: {}, lvl: {} };
   const H = S.revoltHints;
-  if (H.night !== n) { H.night = n; H.done = {}; }   // new night: hint counter resets (escalation level persists)
+  if (!H.hinted) H.hinted = {};
+  if (!H.crew) H.crew = {};
+  if (H.night !== n) { H.night = n; H.hinted = {}; H.crew = {}; }   // new night: every crew member is hint-eligible again (escalation level persists)
   const groups = {};
   for (const c of living()) {
     if (c.named || c.loyalty >= 1 || morale(c) >= HINT_MORALE) continue;
+    if (H.hinted[c.id]) continue;   // already hinted this night: skip, no text or audio
     const g = c.job || 'none';
     (groups[g] = groups[g] || []).push(c);
   }
-  for (const g of Object.keys(groups)) {
-    if (H.done[g]) continue;
-    H.done[g] = true;
-    const lvl = H.lvl[g] || 0; H.lvl[g] = lvl + 1;
+  const lowMor = g => Math.min(...groups[g].map(c => morale(c)));
+  const open = Object.keys(groups).filter(g => !H.crew[g]).sort((a, z) => lowMor(a) - lowMor(z));
+  for (const g of open.slice(0, 1)) {   // one crew per night: the one with the lowest-morale member
+    H.crew[g] = true;   // at most one hint per crew per night
+    for (const c of groups[g]) H.hinted[c.id] = true;   // each member gets at most one hint per night
+    const lvl = Math.min(H.lvl[g] || 0, 2); H.lvl[g] = lvl + 1;   // 0 vague, 1 crew, 2+ crew and names; never goes back down
     const risk = groups[g], names = risk.map(c => c.name);
     const shift = (JOBS[g] && JOBS[g].label ? JOBS[g].label : 'unassigned').toLowerCase();
     const list = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0];
     if (lvl === 0) lamp('Some of the crew are restless. Nothing I would call dangerous. Yet.', 'warn');
+    else if (lvl === 1) lamp('The ' + shift + ' shift is fraying at the edges. I would keep an eye on it.', 'warn');
     else lamp('The ' + shift + ' shift: ' + list + (names.length > 1 ? ' are' : ' is') + ' close to walking out. Morale is the only thing holding ' + (names.length > 1 ? 'them' : 'them') + '.', 'warn');
   }
 }
 function wandererAtDoor() {
-  if (living().length >= crewCap()) return;
   const w = makeCrew(randomSurvivor()); w.x = 300; w.floor = 0; w.y = FLOORS[0];
-  if (living().length >= bedCount()) {
+  if (living().length >= bedCount() || living().length >= crewCap()) {
     // bed capacity full: not admitted, left waiting outside the hatch where raids can kill them
     S.waiting = S.waiting || [];
     w.x = DOOR_X + 50 + S.waiting.length * 22;
@@ -979,10 +1045,21 @@ function wandererAtDoor() {
 }
 
 // Wanderers left outside the hatch (no bed free). Enemies near them hurt them; they die at 0 HP.
+const WAIT_RAID_DEATH = 0.008;   // per-second chance a wanderer left outside dies while a raid is active
 function waitingTick(dt) {
   if (!S.waiting || !S.waiting.length) return;
+  // admit the first waiting wanderer when a bed is free (not mid-raid)
+  if (!S.raidActive && living().length < bedCount() && living().length < crewCap()) {
+    const a = S.waiting.shift();
+    a.x = 300; a.floor = 0; a.y = FLOORS[0];
+    S.crew.push(a);
+    lampEv('newcomer', a.name + ' (' + a.role.toLowerCase() + ') was waiting outside the hatch. A bed has opened up, so I let them in.', 'good');
+    S.waiting.forEach((q, i) => { q.x = DOOR_X + 50 + i * 22; });
+    if (!S.waiting.length) return;
+  }
   for (const w of S.waiting) {
     w.anim += dt * 2;
+    if (S.raidActive && Math.random() < WAIT_RAID_DEATH * dt) w.hp = 0;   // raid exposure
     for (const e of S.enemies) if (e.hp > 0 && !e.inside && !e.hidden && Math.abs(e.x - w.x) < 40) w.hp -= 15 * dt;
     if (w.hp <= 0) {
       w.dead = true; burst(w.x, w.y - 14, '#a33', 14);
@@ -991,7 +1068,24 @@ function waitingTick(dt) {
   }
   S.waiting = S.waiting.filter(w => !w.dead);
 }
+// Keeps bed assignments in line with the actual bed count. Never removes crew: the excess floor-sleeps.
+let bedSyncT = null;
+function reconcileBeds() {
+  if (bedSyncT === S.t) return;
+  bedSyncT = S.t;
+  const n = bedCount(), all = living();
+  const holders = all.filter(o => o.bed === true);
+  if (holders.length > n) {
+    for (let i = n; i < holders.length; i++) holders[i].bed = false;   // lost bed: floor-sleep, stay in the bunker
+    const day = Math.floor(S.t / 1440);
+    if (S.floorNoteDay !== day) { S.floorNoteDay = day; lampEv('floorsleep', 'Not enough beds. Some of the crew are sleeping on the floor and resting worse. Upgrade the bunks or thin the crew.', 'warn'); }
+  } else if (holders.length < n) {
+    let free = n - holders.length;
+    for (const o of all) { if (free <= 0) break; if (o.bed === false) { o.bed = true; free--; } }   // restored/free bed goes to a floor-sleeper
+  }
+}
 function crewTick(c, dt, mins) {
+  reconcileBeds();
   const h = mins / 60;
   c.anim += dt * 6;
   if (c.cd > 0) c.cd -= dt;
@@ -1000,7 +1094,7 @@ function crewTick(c, dt, mins) {
   // needs
   c.food = Math.max(0, c.food - foodDrain() * h);
   if (c.food <= 0) { c.hp -= 3 * h; if (c.hp <= 0) return kill(c, 'starved'); }
-  if (c.state === 'sleep') c.awake = Math.max(0, c.awake - h * (16 / (S.rooms.bunks > 1 ? 5 : 7)) * (c.bed === false ? FLOOR_REST_MULT : 1));
+  if (c.state === 'sleep') { trackFloorNights(c); c.awake = Math.max(0, c.awake - h * (16 / (S.rooms.bunks > 1 ? 5 : 7)) * (c.bed === false ? FLOOR_REST_MULT : 1)); }
   else c.awake += h;
   // illness: infected wounds, slow HP drain (never lethal on its own), forces a med bay visit
   if (!c.sick && c.hp < c.maxHp * 0.5 && Math.random() < 0.08 * h) sicken(c, 'an infected wound');
@@ -1050,7 +1144,7 @@ function crewTick(c, dt, mins) {
   if (!arrived) { c.state = 'walk'; return; }
   c.state = job === 'sleep' ? 'sleep' : c.patient ? 'patient' : (c.wait && job === 'idle') ? 'waiting' : 'work';
   if (c.state !== 'work') return;
-  const e = eff(c) * (S.powered && POWERED_JOBS.includes(job) ? ROOM_FX.powerBoost : 1);
+  const e = eff(c) * (S.powered && POWERED_JOBS.includes(job) ? ROOM_FX.powerBoost : 1) * roomMul(job);
   const gain = x => { c.xp += x * h; const need = 60 * c.lvl; if (c.xp >= need) { c.xp -= need; levelUp(c); } };
   switch (job) {
     case 'hydro': S.res.food += 1.3 * c.stats.cook * e * h * (S.rooms.hydro > 1 ? 1.5 : 1) * (hasB('rain') ? 1.25 : 1) * wearF('planter') * hydroMul(); wearBy('planter', 0.4 * h); gain(3); break;   // hydroponics: raw food into the pantry
@@ -1127,12 +1221,22 @@ function mealTick(c, dt, mins) {
 }
 // ---- beds: limited; people without one sleep on the floor (slower rest, morale loss) ----
 const FLOOR_REST_MULT = 0.6, FLOOR_MORALE = -1;
+const FLOOR_PENALTY_MAX_NIGHTS = 5;   // floor-sleep morale penalty grows each consecutive night, then plateaus here
+function floorPenalty(c) { return FLOOR_MORALE * Math.min(Math.max(c.floorNights || 0, 1), FLOOR_PENALTY_MAX_NIGHTS); }
+// call while sleeping: counts one floor night per night, resets once they sleep in a bed
+function trackFloorNights(c) {
+  if (c.bed === true) { c.floorNights = 0; c.floorNightKey = null; return; }
+  if (c.bed !== false) return;
+  const key = Math.floor((S.t + 60) / 1440);   // a night runs from 23:00 to the next 22:59
+  if (c.floorNightKey !== key) { c.floorNightKey = key; c.floorNights = (c.floorNights || 0) + 1; }
+}
 function bedCount() { return itemList().filter(it => it.type === 'bunk').length * 2; }
 // crew capacity is exactly the number of beds; every 'can we take more survivors' check uses this
 const CREW_CAP_FLOOR = 4;   // minimum crew cap; deaths can never push the cap below this
+const CREW_CAP_MAX = 100;   // hard ceiling on survivors, however many beds exist
 const CAP_LOSS_PER_DEATH = 1;   // cap lost per crew death; stacks across the run
 function capLostToDeaths() { return ((S.stats && S.stats.lost) || []).length * CAP_LOSS_PER_DEATH; }
-function crewCap() { return Math.max(CREW_CAP_FLOOR, bedCount() - capLostToDeaths()); }   // each bunk is two beds, bought one at a time
+function crewCap() { return Math.min(CREW_CAP_MAX, Math.max(CREW_CAP_FLOOR, bedCount() - capLostToDeaths())); }   // each bunk is two beds, bought one at a time
 function claimBed(c) {
   if (c.bed === true || c.bed === false) return;
   const used = living().filter(o => o !== c && o.bed === true).length;
@@ -1732,19 +1836,26 @@ function enemyTick(e, dt) {
     return;
   }
   // inside the bunker: go for the nearest person
+  if (e.type === 'maw' && !e.climbing) { if (!e.reach) e.reach = {}; e.reach[e.floor] = true; }   // rooms the breach has reached
   const people = [...living(), ...(scene === 'bunker' && !S.player.down ? [P] : [])];
   const t = people.sort((a, z) => (Math.abs(a.floor - e.floor) * 500 + Math.abs(a.x - e.x)) - (Math.abs(z.floor - e.floor) * 500 + Math.abs(z.x - e.x)))[0];
   if (!t) { moveTo(e, 3, 900, dt, b.spd); return; }
   if (t.floor === e.floor && !e.climbing && Math.abs(t.x - e.x) < (b.ranged ? 160 : 22)) return attack(e, b, t, t.x);
   moveTo(e, t.climbing ? e.floor : t.floor, t.x, dt, b.spd);
 }
+const MAW_ROOM_DMG_STEP = 0.5;   // +50% Maw damage per extra room reached
+function mawDmgMul(e) {
+  if (e.type !== 'maw') return 1;
+  const rooms = Math.max(1, e.reach ? Object.keys(e.reach).length : 1);
+  return 1 + MAW_ROOM_DMG_STEP * (rooms - 1);
+}
 function attack(e, b, target, tx, what) {
   e.facing = Math.sign(tx - e.x) || -1;
   if (e.cd > 0) return;
   e.cd = b.rate;
   if (b.ranged) { tracer(e.x - 6, e.y - b.h + 8, tx, (target.y || FLOORS[0]) - 16, '#ff7a5a'); if (Math.random() > 0.65) return; }
-  if (target === P) return hurtPlayer(b.dmg);
-  if (target.stats) { target.hp -= b.dmg * coverMul(target); burst(target.x, target.y - 16, '#c33', 4); if (target.hp <= 0) kill(target); return; }
+  if (target === P) return hurtPlayer(b.dmg * mawDmgMul(e));
+  if (target.stats) { target.hp -= b.dmg * mawDmgMul(e) * coverMul(target); burst(target.x, target.y - 16, '#c33', 4); if (target.hp <= 0) kill(target); return; }
   target.hp = Math.max(0, target.hp - b.dmg * structDmgMul(what)); burst(tx + 6, FLOORS[0] - 20, '#bbb', 3);
   if (window.SFX) SFX.hit(what);
   if (what === 'door') {
@@ -1853,6 +1964,7 @@ function simTick(dt) {
   medTick(mins / 60);
   turretTick(dt);
   for (const e of S.enemies) if (e.hp > 0) enemyTick(e, dt);
+  bossReachTick();
   S.enemies = S.enemies.filter(e => e.hp > 0);
   waitingTick(dt);
   if (S.raidActive && !S.spawns.length && !S.enemies.length) { S.raidActive = false; S.stats.repelled = (S.stats.repelled || 0) + 1; moment('Raid repelled'); lampEv('wave_clear', 'Wave cleared.', 'good');
@@ -1912,12 +2024,15 @@ function placePlayer(where) {
   P = P || {};
   Object.assign(P, { x: where === 'surface-right' ? W - 50 : 600, y: where === 'surface-right' ? FLOORS[0] : FLOORS[1], vx: 0, vy: 0, floor: where === 'surface-right' ? 0 : 1, climbing: false, onLadder: false, facing: -1, cd: 0, anim: 0, inMed: false, grounded: true });
 }
+function maxRevives() { return 2; } // starting revive count for each run
 function hurtPlayer(d, quiet) {
   const pl = S.player; if (pl.down) return;
   pl.hp -= d; if (!quiet) { burst(P.x, P.y - 18, '#c33', 5); P.hurt = 0.2; if (d > 0 && scene === 'scav') addShake(Math.min(0.3, 0.12 + d * 0.01)); if (d > 0) hurtVig = Math.max(hurtVig, Math.min(0.45, 0.25 + d * 0.01)); }
   if (scene === 'scav' && pl.hp > 0 && pl.hp < pl.maxHp * 0.3 && pl.hp + d >= pl.maxHp * 0.3) lampEv('topside_danger', 'Mara is in trouble on the surface. Run first, loot later.', 'warn');
   if (pl.hp <= 0) {
-    pl.hp = 0; pl.down = 8;
+    pl.hp = 0;
+    if (!(pl.revives > 0)) { pl.revives = 0; pl.down = 0; lampEv('survivor_down', 'Mara is down, and nobody is coming to get her up.', 'warn'); gameOver(false); return; }
+    pl.down = 8;
     if (scene === 'scav') { lampEv('survivor_down', 'Mara is down out there. Tick dragged you home, but the pack was lost.', 'warn'); endScav(false); }
     else lampEv('survivor_down', 'Mara is down! Doc will patch you up in the med bay.', 'warn');
     if (!anyoneAlive()) gameOver(false);
@@ -1927,7 +2042,7 @@ function playerTick(dt) {
   const pl = S.player;
   if (pl.down) {
     pl.down -= dt;
-    if (pl.down <= 0) { lampEv('survivor_revive', 'Mara is back on her feet.', 'good'); pl.down = 0; pl.hp = Math.round(pl.maxHp * 0.5); scene = 'bunker'; P.x = 900; P.y = FLOORS[2]; P.floor = 2; P.climbing = P.onLadder = false; P.vy = 0; }
+    if (pl.down <= 0) { pl.revives = Math.max(0, (pl.revives || 0) - 1); lampEv('survivor_revive', 'Mara is back on her feet. Revives left: ' + pl.revives + '.', 'good'); pl.down = 0; pl.hp = Math.round(pl.maxHp * 0.5); scene = 'bunker'; P.x = 900; P.y = FLOORS[2]; P.floor = 2; P.climbing = P.onLadder = false; P.vy = 0; }
     return;
   }
   if (scene === 'scav') { P.auto = false; return scavPlayerTick(dt); }
@@ -2834,13 +2949,15 @@ function hpBar(x, y, w, pct, c) { g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(x,
 function drawPerson(x, y, color, accent, c, anim, facing, sleeping, climbing) {
   g.save(); g.translate(Math.round(x), Math.round(y));
   if (sleeping) {
-    box(-12, -10, 24, 8, color); g.fillStyle = '#e2c29a'; g.fillRect(-16, -12, 7, 7);
+    let lay = false;
+    if (c && c.id && SHEET_FILES[c.id]) { g.save(); g.translate(0, -8); g.rotate(-Math.PI / 2); try { lay = sheetDraw(c.id, 'idle', 1, 0); } catch (e) { lay = false; } g.restore(); }
+    if (!lay) { box(-12, -10, 24, 8, color); g.fillStyle = '#e2c29a'; g.fillRect(-16, -12, 7, 7); }
     g.fillStyle = 'rgba(220,220,255,.8)'; g.font = '600 10px "IBM Plex Sans"'; g.fillText('z', 6, -16 - (Math.floor(anim) % 3) * 3);
   } else {
     const step = Math.sin(anim) * 3;
-    (typeof VEC !== 'undefined' ? VEC : SPR).person(g, color, accent, (climbing || Math.abs(step) < 0.8) ? 0 : (step > 0 ? 1 : 2), facing < 0);
+    if (!(c && c.id && sheetDrawCrew(c, anim, facing, climbing))) (typeof VEC !== 'undefined' ? VEC : SPR).person(g, color, accent, (climbing || Math.abs(step) < 0.8) ? 0 : (step > 0 ? 1 : 2), facing < 0);
     if (typeof VEC === 'undefined' && c && c.id === 'bram') { g.fillStyle = '#c9c4b8'; g.fillRect(-4, -28, 8, 3); }
-    if (c && c.id === 'juno' && !c.held) { g.fillStyle = '#222'; g.fillRect(facing > 0 ? 2 : -18, typeof VEC !== 'undefined' ? -17 : -22, 16, 3); }
+    if (c && c.id === 'juno' && !c.held && !sheetDrawn('juno')) { g.fillStyle = '#222'; g.fillRect(facing > 0 ? 2 : -18, typeof VEC !== 'undefined' ? -17 : -22, 16, 3); }
     if (typeof VEC === 'undefined' && c && c.id === 'reed') { g.fillStyle = '#b0b8c0'; g.fillRect(-4, -31, 8, 2); }
     if (typeof VEC === 'undefined' && c && c.id === 'tick') { g.fillStyle = '#59d0c4'; g.fillRect(-5, -33, 10, 3); }
     if (c && c.state === 'patient') { g.fillStyle = '#e04848'; g.fillRect(-2, -44, 4, 10); g.fillRect(-5, -41, 10, 4); }
@@ -2873,12 +2990,128 @@ function enemyGearDraw(e, b) {
   const f = e.facing < 0 ? -1 : 1;
   heldAt('g_' + e.gear, f, 9 * f, -b.h + 14);
 }
+// ---- Generic Sprite Forge sheet registry (renegade-sprite/1) ----
+const SHEET_FILES = { mara: 'mara-voss', reed: 'doc-tobias-reed', juno: 'juno-park', bram: 'old-bram', cinder: 'cinder', wren: 'wren', warden: 'the-warden-unit-9', odalys: 'sister-odalys-crane', tick: 'tick', anand: 'dr', dorrow: 'sergeant-hale-dorrow', fenn: 'fenn-whitlock', vesper: 'vesper', maw: 'maw', lamp: 'lamp', finch: 'reverend-calloway-finch', pike: 'pike', echo: 'echo', rook: 'rook', mags: 'marguerite-mags-oyelaran', nell: 'nell' };
+const SHEETS = {};
+const SHEET_MOVE = {};
+function sheetGet(id) {
+  const file = SHEET_FILES[id]; if (!file) return null;
+  let s = SHEETS[id];
+  if (!s) {
+    s = SHEETS[id] = { meta: null, img: null, ready: false };
+    try {
+      const img = new Image();
+      img.onload = () => { s.img = img; s.ready = !!s.meta; };
+      img.onerror = () => { s.ready = false; s.failed = true; };
+      img.src = 'sprites/' + file + '.png';
+      fetch('sprites/' + file + '.json').then(r => r.json()).then(m => {
+        if (m && m.format === 'renegade-sprite/1' && m.animations && m.pivot) { s.meta = m; s.ready = !!s.img; }
+      }).catch(() => { s.failed = true; });
+    } catch (e) { s.failed = true; }
+  }
+  return s;
+}
+function sheetDrawn(id) { const s = SHEETS[id]; return !!(s && s.ready); }
+// draws sheet `id` at the current origin (feet). want: idle|walk|attack|hurt|death|interact. Returns false if not ready.
+function sheetDraw(id, want, facing, seed) {
+  const s = sheetGet(id);
+  if (!s || !s.ready) return false;
+  const m = s.meta, A = m.animations;
+  const an = A[want] || (want === 'walk' ? A.idle : null) || A.idle || A.walk;
+  if (!an || !an.frames || !an.frames.length) return false;
+  const fr = an.frames;
+  const total = fr.reduce((a, f) => a + (f.duration || 100), 0) || 1;
+  let t = (performance.now() + (seed || 0)) % total;
+  let f = fr[fr.length - 1];
+  for (let i = 0; i < fr.length; i++) { const d = fr[i].duration || 100; if (t < d) { f = fr[i]; break; } t -= d; }
+  const k = 1 / (m.scale || 1);
+  const smooth = g.imageSmoothingEnabled;
+  g.imageSmoothingEnabled = false;
+  g.save();
+  if (facing < 0) g.scale(-1, 1);
+  g.drawImage(s.img, f.x, f.y, f.w, f.h, -m.pivot.x * k, -m.pivot.y * k, f.w * k, f.h * k);
+  g.restore();
+  g.imageSmoothingEnabled = smooth;
+  return true;
+}
+function sheetMoving(key, val) {
+  const r = SHEET_MOVE[key] || (SHEET_MOVE[key] = { v: val, until: 0 });
+  const now = performance.now();
+  if (r.v !== val) { r.v = val; r.until = now + 150; }
+  return now < r.until;
+}
+function sheetDrawCrew(c, anim, facing, climbing) {
+  try {
+    if (!SHEET_FILES[c.id]) return false;
+    const moving = sheetMoving('c:' + c.id, anim) && !climbing;
+    return sheetDraw(c.id, (c.hurt > 0 ? 'hurt' : moving ? 'walk' : 'idle'), facing, (c.id.length * 97) % 400);
+  } catch (e) { return false; }
+}
+function sheetDrawEnemy(e) {
+  try {
+    const moving = sheetMoving('e:' + e.type + ':' + (e.id != null ? e.id : ''), Math.round(e.x * 4));
+    return sheetDraw(e.type, moving ? 'walk' : 'idle', e.facing, 0);
+  } catch (err) { return false; }
+}
+// ---- Mara Voss sprite sheet (Sprite Forge, renegade-sprite/1) ----
+const MARA_SHEET = { meta: null, img: null, started: false, ready: false, lastAnim: null };
+function maraSheetLoad() {
+  if (MARA_SHEET.started) return;
+  MARA_SHEET.started = true;
+  try {
+    const img = new Image();
+    img.onload = () => { MARA_SHEET.img = img; MARA_SHEET.ready = !!MARA_SHEET.meta; };
+    img.onerror = () => { MARA_SHEET.ready = false; };
+    img.src = 'sprites/mara-voss.png';
+    fetch('sprites/mara-voss.json').then(r => r.json()).then(m => {
+      if (m && m.format === 'renegade-sprite/1' && m.animations) { MARA_SHEET.meta = m; MARA_SHEET.ready = !!MARA_SHEET.img; }
+    }).catch(() => {});
+  } catch (e) { /* keep vector fallback */ }
+}
+// pick a frame: looping anims use wall-clock time, one-shot anims use progress 0..1
+function maraSheetFrame(an, progress) {
+  const fr = an.frames; if (!fr || !fr.length) return null;
+  const durs = fr.map(f => f.duration || 100);
+  const total = durs.reduce((a, b) => a + b, 0);
+  let t = progress == null ? (performance.now() % total) : Math.max(0, Math.min(0.999, progress)) * total;
+  for (let i = 0; i < fr.length; i++) { if (t < durs[i]) return fr[i]; t -= durs[i]; }
+  return fr[fr.length - 1];
+}
+function drawMaraSheet() {
+  maraSheetLoad();
+  if (!MARA_SHEET.ready) return false;
+  const m = MARA_SHEET.meta, A = m.animations;
+  const moving = MARA_SHEET.lastAnim !== null && P.anim !== MARA_SHEET.lastAnim;
+  MARA_SHEET.lastAnim = P.anim;
+  let an, prog = null;
+  if (P.hurt > 0 && A.hurt) { an = A.hurt; prog = (0.2 - P.hurt) / 0.2; }
+  else if (P.cd > 0 && A.attack) { an = A.attack; prog = (0.34 - P.cd) / 0.34; }
+  else if (moving && A.walk) an = A.walk;
+  else an = A.idle || A.walk;
+  if (!an) return false;
+  const f = maraSheetFrame(an, prog);
+  if (!f) return false;
+  const k = 1 / (m.scale || 1);
+  const px = m.pivot.x, py = m.pivot.y;
+  const smooth = g.imageSmoothingEnabled;
+  g.imageSmoothingEnabled = false;
+  g.save();
+  if (P.facing < 0) g.scale(-1, 1);
+  g.drawImage(MARA_SHEET.img, f.x, f.y, f.w, f.h, -px * k, -py * k, f.w * k, f.h * k);
+  g.restore();
+  g.imageSmoothingEnabled = smooth;
+  return true;
+}
 function drawMara() {
   g.save(); g.translate(Math.round(P.x), Math.round(P.y));
   const step = Math.sin(P.anim) * 3;
   if (P.hurt > 0) g.globalAlpha = 0.6;
-  (typeof VEC !== 'undefined' ? VEC : SPR).mara(g, Math.abs(step) < 0.8 ? 0 : (step > 0 ? 1 : 2), P.facing < 0);
-  g.fillStyle = '#222'; g.fillRect(P.facing > 0 ? 5 : -15, typeof VEC !== 'undefined' ? -19 : -24, 10, 3);
+  let drewSheet = false;
+  try { drewSheet = drawMaraSheet(); } catch (e) { drewSheet = false; }
+  if (!drewSheet) {
+    (typeof VEC !== 'undefined' ? VEC : SPR).mara(g, Math.abs(step) < 0.8 ? 0 : (step > 0 ? 1 : 2), P.facing < 0);
+    g.fillStyle = '#222'; g.fillRect(P.facing > 0 ? 5 : -15, typeof VEC !== 'undefined' ? -19 : -24, 10, 3);
+  }
   g.restore();
   g.fillStyle = '#ffb347'; g.font = '700 10px "Chakra Petch"'; g.fillText('MARA', P.x - 13, P.y - 46);
 }
@@ -2888,7 +3121,8 @@ function drawEnemy(e, ox = 0) {
   const bob = Math.sin(e.anim) * 2;
   if (e.hidden) { box(-14, -6, 28, 6, '#5a4a38'); box(-8, -10, 16, 4, '#6e5a44'); g.restore(); return; }
   const ART = typeof VEC !== 'undefined' ? VEC : SPR;
-  if (e.type === 'burrower') { box(-14, -18 + bob * 0.5, 28, 14, b.color); box(e.facing < 0 ? -20 : 10, -20 + bob * 0.5, 10, 10, '#4a3a2c'); g.fillStyle = '#e8e0d0'; g.fillRect(e.facing < 0 ? -22 : 18, -16, 2, 5); g.fillStyle = '#ff4030'; g.fillRect(e.facing < 0 ? -16 : 12, -18, 2, 2); }
+  if ((e.type === 'maw' || e.type === 'cinder') && sheetDrawEnemy(e)) { /* drawn from Sprite Forge sheet */ }
+  else if (e.type === 'burrower') { box(-14, -18 + bob * 0.5, 28, 14, b.color); box(e.facing < 0 ? -20 : 10, -20 + bob * 0.5, 10, 10, '#4a3a2c'); g.fillStyle = '#e8e0d0'; g.fillRect(e.facing < 0 ? -22 : 18, -16, 2, 5); g.fillStyle = '#ff4030'; g.fillRect(e.facing < 0 ? -16 : 12, -18, 2, 2); }
   else if (ART.hasEnemy(e.type)) {
     ART.enemy(g, e.type, b.color, Math.abs(bob) < 0.7 ? 0 : (bob > 0 ? 1 : 2), e.facing < 0, performance.now() / 1000);
     if ((e.type === 'raider' || e.type === 'cinder') && !e.gear) { g.fillStyle = '#222'; g.fillRect(e.facing < 0 ? -18 : 4, -b.h + 12, 14, 3); }
@@ -3241,7 +3475,7 @@ function renderHud() {
     <span class="res">${RES.map(r => { const v = Math.floor(S.res[r.k]); const low = resLow(r.k); return `<span class="${low ? 'lowres' : ''}" title="${r.k === 'elec' ? esc(elecHint()) : r.name + (low ? ' (low)' : '')}"><i style="background:${r.color}"></i>${low ? '<em class="lowico" aria-hidden="true">&#9888;</em>' : ''}${({ elec: 'Elec', mat: 'Mat' })[r.k] || r.name} <b class="${low ? 'low' : ''}">${v}</b>${low ? '<em class="lowtag">LOW</em>' : ''}</span>`; }).join('')}</span>
     <span class="res"><span class="${kit().cooked < 2 ? 'lowres' : ''}" title="Prepared meals at the serving station${kit().cooked < 2 ? ' (low)' : ''}"><i style="background:#e8b86a"></i>${kit().cooked < 2 ? '<em class="lowico" aria-hidden="true">&#9888;</em>' : ''}Meals <b class="${kit().cooked < 2 ? 'low' : ''}">${Math.floor(kit().cooked)}</b></span></span>
     <span class="threat ${th.hot ? 'hot' : ''}" data-raid="1" style="cursor:pointer" title="Click for raid details">${esc(th.text)} ${raidOpen ? '&#9662;' : '&#9656;'}</span>
-    <span class="threat" title="Mara">Mara ${Math.ceil(pl.hp)}/${pl.maxHp}${pl.down ? ' · down' : ''}</span>
+    <span class="threat" title="Mara">Mara ${Math.ceil(pl.hp)}/${pl.maxHp}${pl.down ? ' · down' : ''} · revives ${pl.revives | 0}</span>
     <span class="spd">${[0, 1, 2, 4].map(s => `<button data-spd="${s}" class="${(s === 0 ? paused : (!paused && speed === s)) ? 'on' : ''}" title="${s ? s + 'x speed (' + (s === 4 ? 3 : s) + ')' : 'Pause (P)'}">${s ? s + 'x' : 'II'}</button>`).join('')}</span>`;
 }
 document.addEventListener('click', e => { const b = e.target.closest('[data-spd]'); if (!b) return; const s = +b.dataset.spd; if (s === 0) paused = !paused; else setSpeed(s); renderHud(); });
@@ -3309,6 +3543,7 @@ function closeDrawer() { uiSfx('Close'); setDrawerCollapsed(false); $('#drawer')
 function toggleDrawer(t) { if (!$('#drawer').hidden && $('#drawer').classList.contains('collapsed')) { setDrawerCollapsed(false); openDrawer(t); } else if (!$('#drawer').hidden && tab === t) closeDrawer(); else openDrawer(t); }
 let pendingFocus = null;
 function bar(pct, c, kind, label) { const v = Math.round(clamp(pct, 0, 100)); const a = label ? ` role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${v}"` : ' aria-hidden="true"'; return `<div class="bar"${a}><i class="${kind ? 'p-' + kind : ''}" style="width:${clamp(pct, 0, 100)}%;background:${c}"></i></div>`; }
+function needBar(icon, name, pct, color, kind, low) { const v = Math.round(clamp(pct, 0, 100)); const lo = low === undefined ? v < 30 : low; return `<span style="white-space:nowrap"><span aria-hidden="true">${icon}</span> ${name} ${v}${lo ? ' <span aria-hidden="true">\u26A0\uFE0E</span>' : ''}</span>` + bar(pct, color, lo ? 'low' : kind, name).replace('class="bar"', 'class="bar tick"'); }
 function canPay(c) { return Object.entries(c).every(([k, v]) => S.res[k] >= v); }
 function pay(c) { for (const [k, v] of Object.entries(c)) S.res[k] -= v; }
 function renderDrawer() {
@@ -3365,7 +3600,7 @@ function crewHTML() {
     const bondNames = c.bonds.map(id => S.crew.find(o => o.id === id)).filter(o => o && o.alive).map(o => o.name);
     return `<div class="card ${sel === c.id ? 'sel' : ''}" data-crew="${c.id}">
       <div class="ch"><span class="sw" style="background:${c.color}"></span><span aria-hidden="true">${stateIcon(c)}</span><button type="button" data-fk="n:${c.id}" aria-label="Focus camera on ${esc(c.name)}" style="background:none;border:0;color:inherit;font:inherit;font-weight:bold;padding:0;cursor:pointer;text-align:left">${esc(c.name)}</button><span class="tag">${esc(c.role)} · ${state}${c.sick ? ' · SICK' : ''}</span><span class="lvl">LV ${c.lvl}</span></div>
-      <div class="bars"><span>Health</span>${bar(c.hp / c.maxHp * 100, '#7ddc6f', 'hp', 'Health')}<span>Food</span>${bar(c.food, '#c9a27a', 'food', 'Food')}<span style="white-space:nowrap">Rest${prefs.cb && sf < 0.6 ? ' \u26A0' : ''}</span>${bar(rest, sf < 0.6 ? '#ff5a4e' : '#7fc8ff', sf < 0.6 ? 'low' : 'rest', 'Rest')}</div>
+      <div class="bars">${needBar('\u2665', 'HP', c.hp / c.maxHp * 100, '#7ddc6f', 'hp')}${needBar('\uD83C\uDF74', 'Food', c.food, '#c9a27a', 'food')}${needBar('\u263E', 'Rest', rest, sf < 0.6 ? '#ff5a4e' : '#7fc8ff', 'rest', sf < 0.6)}</div>
       <div class="row">${Object.entries(JOBS).filter(([k, j]) => !j.hidden).map(([k, j]) => { const dis = k === 'turretA' && !S.turrets.some(t => t && t.type !== 'coil'); return `<button class="chip ${c.job === k || (k === 'turretA' && c.job === 'turretB') ? 'on' : ''}" data-job="${k}" data-id="${c.id}" ${dis ? 'disabled title="Build a gun turret first"' : (k === 'turretA' ? 'title="Picks a gun turret automatically"' : '')}>${j.label}</button>`; }).join('')}</div>
       <div class="row" style="margin-top:5px">${Object.entries(SHIFTS).map(([k, s]) => { const p = n => String(n % 24).padStart(2, '0') + ':00', h = Math.floor(hourF()), awake = !s.sleep || !(s.sleep[0] > s.sleep[1] ? (h >= s.sleep[0] || h < s.sleep[1]) : (h >= s.sleep[0] && h < s.sleep[1])); return `<button class="chip ${c.shift === k ? 'on' : ''}" data-shift="${k}" data-id="${c.id}" title="${awake ? 'Awake right now' : 'Asleep right now'}">${awake ? '● ' : ''}${s.sleep ? 'Sleeps ' + p(s.sleep[0]) + '-' + p(s.sleep[1]) : s.label}</button>`; }).join('')}</div>
       ${gearRow(c)}
@@ -3466,6 +3701,7 @@ function buildHTML() {
   }
   for (const i of [0, 1]) if (S.turrets[i]) CATS.defenses.push(turretStatusHTML(i));
   out = CATS.structure;
+  (S.scars || []).forEach((sc, i) => out.push(item('Rebuild scarred ' + scarName(sc.room) + ' <span class="tag">severity ' + sc.severity + '</span>', sc.room === 'door' ? 'Rebuilt hatch has 15% less max HP, permanently.' : 'Removes the scar, but the room is permanently 15% less effective. Until then it runs at ' + Math.round(SCAR_PENALTY * sc.severity * 100) + '% less.', scarCost(sc), 'rescar_' + i, true, 'Rebuild')));
   if ((S.rooms.hydro || 1) < 2) CATS.food.push(item('Hydroponics: grow lamps', 'Hydroponics grows 50% more food.', { elec: 3, mat: 8 }, 'upHydro', true, 'Upgrade'));
   if (S.rooms.med < 2) CATS.medical.push(item('Med bay: proper beds', 'Patients heal 50% faster.', { elec: 3, mat: 6 }, 'upMed', true, 'Upgrade'));
   if (S.rooms.bunks < 2) CATS.furniture.push(item('Bunks: real mattresses', 'A full rest takes 5 hours instead of 7.', { scrap: 10, mat: 10 }, 'upBunks', true, 'Upgrade'));
@@ -3741,6 +3977,15 @@ function doBuild(a) {
   else if (/^upT/.test(a)) { const c = { parts: 8, elec: 2 }; if (!canPay(c)) return; pay(c); S.turrets[+a[3]].lvl = 2; lamp('Turret ' + (+a[3] + 1) + ' upgraded.', 'good'); }
   else if (a === 'upHydro' || a === 'upMed' || a === 'upBunks') { const k = a.slice(2).toLowerCase(); const c = { hydro: { elec: 3, mat: 8 }, med: { elec: 3, mat: 6 }, bunks: { scrap: 10, mat: 10 } }[k]; if (!canPay(c)) return; pay(c); S.rooms[k] = 2; lamp(ROOMS[k].name + ' upgraded.', 'good'); }
   else if (/^room_/.test(a)) { const k = a.slice(5), r = BUILD_ROOMS[k]; if (!r || S.rooms[k]) return; if (!canPay(r.cost)) { uiSfx('Error'); lamp('The ' + ROOMS[k].name + ' needs ' + fmtCost(r.cost) + '.', 'warn'); return; } startPlace({ kind: 'room', k }); }
+  else if (/^rescar_/.test(a)) {
+    const i = +a.slice(7), sc = (S.scars || [])[i];
+    if (!sc || S.enemies.some(e => e.inside)) return;
+    const c = scarCost(sc); if (!canPay(c)) { uiSfx('Error'); lamp('Rebuilding the ' + scarName(sc.room) + ' needs ' + fmtCost(c) + '.', 'warn'); return; }
+    pay(c); S.scars.splice(i, 1);
+    if (sc.room === 'door') { S.door.max = Math.max(50, Math.round(S.door.max * WORSE_MUL)); S.door.hp = S.door.max; }
+    else { if (!S.worse) S.worse = {}; S.worse[sc.room] = (S.worse[sc.room] || 0) + 1; }
+    lamp(scarName(sc.room) + ' rebuilt. It works, but not like it used to.', 'good');
+  }
   else if (a === 'toggleLadder') { if (placing && placing.kind === 'ladder') cancelPlace(); else startPlace({ kind: 'ladder' }); }
   else if (/^buy_/.test(a)) buyItem(a.slice(4));
   else if (/^bld_/.test(a)) buyBuild(a.slice(4));
@@ -3975,7 +4220,7 @@ function maraWorkTick(mins) {
   if (!P.auto || !P.autoWork || S.player.down) return;
   const h = mins / 60, job = P.autoWork;
   const m = { stats: MARA_STATS, food: 100, awake: 0, grief: 0, bonds: [], state: 'work', job, xp: 0, lvl: 1, cd: 0 };
-  const e = eff(m) * (S.powered && POWERED_JOBS.includes(job) ? ROOM_FX.powerBoost : 1);
+  const e = eff(m) * (S.powered && POWERED_JOBS.includes(job) ? ROOM_FX.powerBoost : 1) * roomMul(job);
   switch (job) {
     case 'hydro': S.res.food += 1.3 * m.stats.cook * e * h * (S.rooms.hydro > 1 ? 1.5 : 1) * (hasB('rain') ? 1.25 : 1) * wearF('planter') * hydroMul(); break;
     case 'kitchen': {
@@ -4026,7 +4271,9 @@ function personAt(x, y) { return living().find(c => Math.abs(c.x - x) < 11 && y 
 const BIND_DEF = { left: 'a', right: 'd', up: 'w', down: 's', jump: ' ', shoot: 'j', interact: 'e' };
 const BIND_LABELS = [['left', 'Move left'], ['right', 'Move right'], ['up', 'Climb up / jump'], ['down', 'Climb down / drop'], ['jump', 'Jump'], ['shoot', 'Shoot'], ['interact', 'Interact']];
 const BIND_ARROWS = { left: 'arrowleft', right: 'arrowright', up: 'arrowup', down: 'arrowdown' };
-const BIND_RESERVED = ['c', 'b', 't', 'r', 'g', 'm', 'h', 'v', 'x', 'p', 'o', '1', '2', '3', 'escape'];
+const BIND_RESERVED = ['c', 'b', 't', 'r', 'g', 'm', 'h', 'v', 'x', 'p', 'o', 'l', '[', ']', '`', '1', '2', '3', 'escape'];
+let bindNote = '';
+function bindLabel(a) { const f = BIND_LABELS.find(x => x[0] === a); return f ? f[1] : a; }
 const BIND = Object.assign({}, BIND_DEF);
 try {
   const sv = JSON.parse(localStorage.getItem('ashfall.binds') || '{}');
@@ -4037,7 +4284,8 @@ function kd(a) { return !!(keys[BIND[a]] || keys['t:' + BIND_DEF[a]] || (BIND_AR
 function keyLabel(k) { return k === ' ' ? 'Space' : k.startsWith('arrow') ? k.slice(5).toUpperCase() : k.length === 1 ? k.toUpperCase() : k; }
 function setBind(a, k) {
   const other = Object.keys(BIND).find(x => x !== a && BIND[x] === k);
-  if (other) BIND[other] = BIND[a];
+  if (other) { const old = BIND[a]; BIND[other] = old; bindNote = '\u26A0 ' + keyLabel(k) + ' was already used by "' + bindLabel(other) + '". Swapped: "' + bindLabel(other) + '" now uses ' + keyLabel(old) + '.'; }
+  else bindNote = bindLabel(a) + ' set to ' + keyLabel(k) + '.';
   BIND[a] = k; saveBinds();
 }
 function startRebind(a, btn, done) {
@@ -4047,7 +4295,9 @@ function startRebind(a, btn, done) {
     const k = e.key.toLowerCase();
     if (['shift', 'control', 'alt', 'meta', 'tab', 'capslock', 'dead'].includes(k)) return;
     window.removeEventListener('keydown', h, true);
-    if (k !== 'escape' && !BIND_RESERVED.includes(k)) setBind(a, k);
+    if (k === 'escape') bindNote = 'Rebind cancelled.';
+    else if (BIND_RESERVED.includes(k)) bindNote = '\u26A0 ' + keyLabel(k) + ' is reserved for a fixed hotkey and can\'t be used. Pick another key.';
+    else setBind(a, k);
     done();
   };
   window.addEventListener('keydown', h, true);
@@ -4388,7 +4638,7 @@ function showSettings(from) {
   const curTs = getTextSize();
   const tsBtns = '<div class="tsrow">' + TEXT_SIZES.map(([k, label]) => `<button class="btn ghost" data-ts="${k}" aria-pressed="${k === curTs}">${label}</button>`).join('') + '</div>';
   const muted = !!(window.SFX && SFX.muted);
-  overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="sTitle" style="width:640px"><h1 id="sTitle" style="font-size:36px">SETTINGS</h1><div class="setp"><h3>VOLUME</h3>${rows}<button class="btn ghost" id="sMute" style="min-width:0">${muted ? 'Sound: off' : 'Sound: on'}</button><h3>DISPLAY</h3><div class="tsrow"><button class="btn ghost" data-pref="cb" aria-pressed="false">Colorblind: off</button><button class="btn ghost" data-pref="hc" aria-pressed="false">High contrast: off</button><button class="btn ghost" id="sCap" aria-pressed="${window.narrCaptionsOn ? narrCaptionsOn() : true}">Captions: ${(window.narrCaptionsOn ? narrCaptionsOn() : true) ? 'on' : 'off'}</button></div><h3>TEXT SIZE</h3>${tsBtns}<h3>MOVEMENT &amp; ACTION KEYS</h3><div class="binds">${bindRows}</div><h3>OTHER KEYS</h3><dl class="keys">${keys}</dl></div><button class="btn" id="sBack">Back</button></div>`);
+  overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="sTitle" style="width:640px"><h1 id="sTitle" style="font-size:36px">SETTINGS</h1><div class="setp"><h3>VOLUME</h3>${rows}<button class="btn ghost" id="sMute" style="min-width:0">${muted ? 'Sound: off' : 'Sound: on'}</button><h3>DISPLAY</h3><div class="tsrow"><button class="btn ghost" data-pref="cb" aria-pressed="false">Colorblind: off</button><button class="btn ghost" data-pref="hc" aria-pressed="false">High contrast: off</button><button class="btn ghost" id="sCap" aria-pressed="${window.narrCaptionsOn ? narrCaptionsOn() : true}">Captions: ${(window.narrCaptionsOn ? narrCaptionsOn() : true) ? 'on' : 'off'}</button></div><h3>TEXT SIZE</h3>${tsBtns}<h3>MOVEMENT &amp; ACTION KEYS</h3><div class="binds">${bindRows}</div><div id="bindNote" role="status" aria-live="polite" style="min-height:1.4em;margin-top:6px;color:#e8b84a">${bindNote}</div><h3>OTHER KEYS</h3><dl class="keys">${keys}</dl></div><button class="btn" id="sBack">Back</button></div>`);
   document.querySelectorAll('#overlay input[data-vol]').forEach(inp => {
     const out = inp.parentNode.querySelector('b');
     inp.oninput = () => { if (window.SFX && SFX.setVol) SFX.setVol(inp.dataset.vol, inp.value / 100); out.textContent = inp.value + '%'; };
@@ -4398,7 +4648,8 @@ function showSettings(from) {
   document.querySelectorAll('#overlay button[data-bind]').forEach(b => {
     b.onclick = () => startRebind(b.dataset.bind, b, () => showSettings(from));
   });
-  $('#sBindReset').onclick = () => { Object.assign(BIND, BIND_DEF); saveBinds(); showSettings(from); };
+  bindNote = '';
+  $('#sBindReset').onclick = () => { Object.assign(BIND, BIND_DEF); saveBinds(); bindNote = 'Keys reset to defaults.'; showSettings(from); };
   $('#sBack').onclick = () => { if (from === 'pause') showPauseMenu(); else showMenu(); };
   document.querySelectorAll('#overlay button[data-ts]').forEach(b => {
     b.onclick = () => { setTextSize(b.dataset.ts); showSettings(from); };
