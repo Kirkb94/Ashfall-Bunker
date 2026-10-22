@@ -19,24 +19,27 @@ const LADDER_X = 232;                          // the shaft from the hatch down 
 const IN_L = 186, IN_R = 1250;                 // inside walls of the bunker
 const DOOR_X = 232, WALL_X = 520;
 const SLOT_X = [340, 430];                     // turret slots between the door and the wall
+const FOOD_DRAIN = (100 / 21) / 6;               // hunger lost per game hour (6x slower than the original 100/21)
 const GAME_MIN_PER_SEC = 5;                    // 1 real second = 5 game minutes at 1x (an hour is 12 s)
-const SAVE_KEY = 'ashfall-bunker-save-v1';
+const SAVE_KEY = 'ashfall-bunker-save-v2';        // v2: Hydroponics/Kitchen split, pit-built Workshop, ladders (old saves start fresh)
 
 const ROOMS = {
-  workshop: { name: 'Workshop', floor: 1, x0: 262, x1: 700, job: 'workshop' },
+  hydro:    { name: 'Hydroponics', floor: 1, x0: 262, x1: 700, job: 'hydro' },
   signal:   { name: 'Signal Room', floor: 1, x0: 700, x1: IN_R, job: 'signal' },
-  kitchen:  { name: 'Kitchen & Hydroponics', floor: 2, x0: 262, x1: 700, job: 'kitchen' },
+  kitchen:  { name: 'Kitchen', floor: 2, x0: 262, x1: 700, job: 'kitchen' },
   med:      { name: 'Med Bay', floor: 2, x0: 700, x1: IN_R, job: 'med' },
   bunks:    { name: 'Bunks', floor: 3, x0: 262, x1: 820, job: 'sleep' },
   common:   { name: 'Common Room', floor: 3, x0: 820, x1: IN_R, job: 'idle' },
+  workshop:  { name: 'Workshop', floor: 3, x0: 820, x1: 963, build: true, job: 'workshop' },   // built on the pit grid, not on a bunker floor
   armory:    { name: 'Armory', floor: 3, x0: 820, x1: 963, build: true },
   storage:   { name: 'Storage', floor: 3, x0: 963, x1: 1106, build: true },
   generator: { name: 'Generator', floor: 3, x0: 1106, x1: IN_R, build: true },
 };
 // Buildable annex rooms and their effects. All tuning for them lives here.
 const ROOM_FX = { powerBoost: 1.25, fuelPerHour: 0.25, armoryDmg: 1.2, storageTheft: 0.1, storageLoot: 1.1 };
-const POWERED_JOBS = ['kitchen', 'workshop', 'signal'];
+const POWERED_JOBS = ['kitchen', 'hydro', 'workshop', 'signal'];
 const BUILD_ROOMS = {
+  workshop:  { cost: { scrap: 25, parts: 6, mat: 8 }, desc: 'Crew here repair the hatch, wall and turrets, turn scrap into parts and build weapons. Nothing gets repaired or crafted without one.', done: 'Old Bram can get to work.' },
   generator: { cost: { scrap: 30, parts: 12, elec: 4 }, desc: 'Burns a little scrap each hour to power the bunker: kitchen, workshop, signal and med bay work 25% faster. Armory needs it.', done: 'It will burn about 6 scrap a day to keep the lights on.' },
   armory:    { cost: { scrap: 25, parts: 10, mat: 8 }, desc: 'Turrets, door guards and Mara hit 20% harder. Needs the generator running.', done: 'It needs power from the generator to charge the racks.' },
   storage:   { cost: { scrap: 20, mat: 15 }, desc: 'Locked shelving: night thieves take far less, and loot from scavenging trips is sorted for 10% more.', done: 'Everything is counted and locked now.' },
@@ -56,6 +59,7 @@ const JOBS = {
   workshop: { label: 'Workshop', short: 'Shop' },
   signal:   { label: 'Signal tower', short: 'Tower' },
   kitchen:  { label: 'Kitchen', short: 'Food' },
+  hydro:    { label: 'Hydroponics', short: 'Hydro' },
   med:      { label: 'Med bay', short: 'Med' },
   mine:     { label: 'Miner', short: 'Mine' },
   idle:     { label: 'Rest', short: 'Rest' },
@@ -64,7 +68,7 @@ const JOBS = {
 const STATIONS_FALLBACK = { capacity: null, ttlMin: 30, blockTicks: 120 };
 const STATIONS = {};
 for (const k of Object.keys(JOBS)) STATIONS[k] = Object.assign({}, STATIONS_FALLBACK);
-for (const [k, cap] of Object.entries({ turretA: 1, turretB: 1, door: 6, workshop: 4, signal: 3, kitchen: 4, med: 3, sleep: 20 })) if (STATIONS[k]) STATIONS[k].capacity = cap; // 'sleep' is not a job, so it has no entry
+for (const [k, cap] of Object.entries({ turretA: 1, turretB: 1, door: 6, workshop: 4, signal: 3, kitchen: 4, hydro: 3, med: 3, sleep: 20 })) if (STATIONS[k]) STATIONS[k].capacity = cap; // 'sleep' is not a job, so it has no entry
 function loadStationsConfig() {
   const okVal = (key, v) => key === 'capacity' ? (v === null || (Number.isInteger(v) && v >= 0)) : (Number.isInteger(v) && v >= 0);
   const apply = (target, src, where) => {
@@ -112,6 +116,93 @@ const TURRETS = {
   coil:    { name: 'Slow-field coil', range: 300, cd: 0, dmg: 0, pellets: 0, base: 0, accK: 0, hp: 110, cost: { scrap: 25, parts: 10, elec: 4 }, slow: 0.45, fuel: 0.15, desc: 'Needs the generator running (burns extra scrap). Slows every enemy in range to under half speed. No crew needed, deals no damage.' },
 };
 
+// ---------------------------------------------------------------- held items
+// Each crew member holds up to one weapon (c.held) and can carry food (c.carry = { id: 'crate' | 'meal', n }).
+// Weapons are crafted at the workshop (S.craft queue), looted from enemies that carried them (e.gear), kept in S.stock,
+// and dismantled back into scrap and parts. They are for show for now: they do not change combat numbers.
+// cost = what crafting spends, back = what dismantling returns, work = workshop work units to build one.
+const GEAR = {
+  pipe:    { name: 'Pipe club', kind: 'melee', cost: { scrap: 6 },            back: { scrap: 3 },           work: 15 },
+  machete: { name: 'Machete',   kind: 'melee', cost: { scrap: 10, parts: 1 }, back: { scrap: 5, parts: 1 },  work: 25 },
+  pistol:  { name: 'Pistol',    kind: 'gun',   cost: { scrap: 12, parts: 4 }, back: { scrap: 6, parts: 2 },  work: 40 },
+  smg:     { name: 'SMG',       kind: 'gun',   cost: { scrap: 18, parts: 8 }, back: { scrap: 9, parts: 4 },  work: 70 },
+  shotgun: { name: 'Shotgun',   kind: 'gun',   cost: { scrap: 16, parts: 6 }, back: { scrap: 8, parts: 3 },  work: 55 },
+  rifle:   { name: 'Rifle',     kind: 'gun',   cost: { scrap: 20, parts: 8 }, back: { scrap: 10, parts: 4 }, work: 80 },
+};
+const GEAR_IDS = Object.keys(GEAR);
+const GEAR_PREF = ['rifle', 'shotgun', 'smg', 'pistol', 'machete', 'pipe'];   // who gets what first when arming the crew
+const CRAFT_MAX = 6;
+// what each enemy type may be carrying: [gear id or null, weight]
+const ENEMY_GEAR = {
+  raider: [['pistol', 3], ['shotgun', 2], ['rifle', 1], ['machete', 1]],
+  brute:  [['pipe', 1]],
+  ghoul:  [['pipe', 1], [null, 3]],
+  cinder: [['smg', 1]],
+};
+function rollGear(type) {
+  const t = ENEMY_GEAR[type]; if (!t) return null;
+  let r = Math.random() * t.reduce((a, x) => a + x[1], 0);
+  for (const [id, w] of t) { r -= w; if (r < 0) return id; }
+  return null;
+}
+const stock = () => S.stock || (S.stock = {});
+function addStock(id, n = 1) { if (GEAR[id]) stock()[id] = (stock()[id] || 0) + n; }
+const gearName = id => (GEAR[id] ? GEAR[id].name : String(id)).toLowerCase();
+function refundGear(id) {
+  const g = GEAR[id]; if (!g) return;
+  for (const [k, v] of Object.entries(g.back)) S.res[k] = (S.res[k] || 0) + v;
+  lamp('Dismantled a ' + gearName(id) + ' for ' + fmtCost(g.back) + '.', 'good');
+}
+function craftGear(id) {
+  const g = GEAR[id]; if (!g || !canPay(g.cost)) return;
+  if (!Array.isArray(S.craft)) S.craft = [];
+  if (S.craft.length >= CRAFT_MAX) return;
+  pay(g.cost); S.craft.push({ id, left: g.work, max: g.work });
+}
+function dismantleGear(id) { if (!GEAR[id] || !(stock()[id] > 0)) return; stock()[id]--; refundGear(id); }
+function equipGear(c, id) {
+  if (!c || !GEAR[id] || !(stock()[id] > 0)) return;
+  if (c.held) addStock(c.held, 1);
+  stock()[id]--; c.held = id; c.noArm = false;
+}
+function unequipGear(c) { if (c && c.held) { addStock(c.held, 1); c.held = null; c.noArm = true; } }
+function dismantleHeld(c) { if (c && c.held) { const id = c.held; c.held = null; c.noArm = true; refundGear(id); } }
+// food a worker is carrying goes back where it came from
+function dropCarry(c) {
+  const cr = c.carry; if (!cr) return;
+  if (cr.id === 'crate') S.res.food += cr.n; else kit().cooked += cr.n;
+  c.carry = null;
+}
+// unarmed crew take weapons out of stock each hour: turret and door guards first, then the best shots
+function autoArm() {
+  if (!S.stock) return;
+  const guard = c => (c.job === 'turretA' || c.job === 'turretB' || c.job === 'door') ? 1 : 0;
+  const want = living().filter(c => !c.held && !c.noArm && !c.patient).sort((a, b) => (guard(b) - guard(a)) || (b.stats.acc - a.stats.acc));
+  for (const c of want) { const id = GEAR_PREF.find(x => stock()[x] > 0); if (!id) break; equipGear(c, id); }
+}
+function gearAct(act, id, crewId) {
+  const c = crewId ? S.crew.find(x => x.id === crewId) : null;
+  if (act === 'craft') craftGear(id);
+  else if (act === 'dis') dismantleGear(id);
+  else if (act === 'equip') equipGear(c, id);
+  else if (act === 'unequip') unequipGear(c);
+  else if (act === 'disheld') dismantleHeld(c);
+}
+
+// Goal choice: 'tower' (signal tower) or 'vehicle' (escape vehicle). Both reuse the TOWER stage pipeline; setGoal swaps the stages in place.
+let GOAL_KIND = 'tower';
+const VEHICLE = [
+  { name: 'Chassis frame', cost: { scrap: 50, mat: 25 }, work: 45, line: 'The frame is welded. It is ugly, and it is ours.' },
+  { name: 'Engine and drivetrain', cost: { parts: 24, elec: 6 }, work: 60, line: 'The engine coughs, catches, and holds an idle.' },
+  { name: 'Armor and fuel', cost: { scrap: 45, mat: 20, parts: 10 }, work: 70, line: 'Plated and fueled. It might survive the ash roads.' },
+  { name: 'Ignition and loading', cost: { parts: 20, elec: 10, mat: 15 }, work: 85, line: '' },
+];
+function setGoal(kind) {
+  if (!setGoal.base) setGoal.base = TOWER.slice();
+  GOAL_KIND = kind === 'vehicle' ? 'vehicle' : 'tower';
+  const src = GOAL_KIND === 'vehicle' ? VEHICLE : setGoal.base;
+  TOWER.length = 0; TOWER.push(...src);
+}
 // Signal tower: pay for a stage, then crew on the Signal tower job put work into it (Tech skill).
 const TOWER = [
   { name: 'Antenna mast', cost: { scrap: 40, mat: 20 }, work: 40, line: 'The mast is up. Topside will see it, so expect company.' },
@@ -125,11 +216,26 @@ const NAMED = [
   { id: 'juno', name: 'Juno Park', role: 'Sharpshooter', color: '#3f5f8f', accent: '#f2c14e', stats: { acc: 0.92, build: 0.6, cook: 0.5, med: 0.4, tech: 0.6 }, bonds: [], job: 'turretA', shift: 'night', hp: 100 },
   { id: 'reed', name: 'Doc Reed', role: 'Medic', color: '#e8e4da', accent: '#6b8fb0', stats: { acc: 0.35, build: 0.5, cook: 0.9, med: 1.8, tech: 0.8 }, bonds: ['bram'], job: 'med', shift: 'day', hp: 90 },
   { id: 'tick', name: 'Tick', role: 'Runner', color: '#a86b3c', accent: '#59d0c4', stats: { acc: 0.55, build: 0.9, cook: 0.6, med: 0.4, tech: 0.9 }, bonds: ['bram'], job: 'kitchen', shift: 'day', hp: 85 },
+  // Arrive later through recruit events (arrives: true), not part of the starting crew.
+  { id: 'dorrow', name: 'Sgt. Hale Dorrow', role: 'Drill Sergeant', color: '#7d8a70', accent: '#d9d4c8', stats: { acc: 0.8, build: 0.7, cook: 0.3, med: 0.5, tech: 0.4 }, bonds: ['juno'], job: 'idle', shift: 'day', hp: 130, loyalty: 1, arrives: true,
+    relationships: { rook: 'wary' },
+    history: [
+      { with: 'juno', kind: 'mentor', text: 'Trained her at the checkpoint; both were wounded the night it fell.' },
+      { with: 'vesper', kind: 'rival', text: 'She served under him before she defected.' },
+      { with: 'warden', kind: 'guilt', text: 'The Warden was his unit\u2019s guardian robot; he carries the guilt of its fall.' },
+      { with: 'rook', kind: 'mentor', text: 'Rook was among the raiders at his checkpoint; he offers him a second chance.' } ] },
+  { id: 'rook', name: 'Rook', role: 'Defector', color: '#b0553a', accent: '#d9d4c8', stats: { acc: 0.75, build: 0.7, cook: 0.4, med: 0.3, tech: 0.5 }, bonds: ['dorrow'], job: 'idle', shift: 'day', hp: 110, loyalty: 1, arrives: true,
+    relationships: { dorrow: 'wary' },
+    history: [
+      { with: 'cinder', kind: 'rival', text: 'Raised by Cinder as a raider.' },
+      { with: 'vesper', kind: 'rival', text: 'Shaped by her; she recruited his loyalty.' },
+      { with: 'juno', kind: 'tension', text: 'Present at the checkpoint attack that wounded her and Dorrow.' },
+      { with: 'dorrow', kind: 'mentor', text: 'Dorrow gives him a second chance.' } ] },
 ];
 // Named recruits kept separate from the generic generator. history.checkpoint is shared by Dorrow and Rook.
 const NAMED_RECRUITS = {
-  dorrow: { id: 'dorrow', name: 'Sgt. Dorrow', role: 'Drill Sergeant', color: '#6f7a58', accent: '#d9d4c8', stats: { acc: 0.8, build: 0.7, cook: 0.3, med: 0.5, tech: 0.4 }, bonds: ['juno'], job: 'idle', shift: 'day', hp: 130, loyalty: 1,
-    relationships: { rook: 'wary' } }
+  dorrow: NAMED.find(n => n.id === 'dorrow'),
+  rook: NAMED.find(n => n.id === 'rook')
 };
 const PAIR_HISTORY = { checkpoint: 'Dorrow commanded the checkpoint that fell. Rook was among the raiders who attacked it, the night Juno and Dorrow were wounded.' };
 function ensurePair(s) {
@@ -314,7 +420,7 @@ function makeCrew(base) {
     id: base.id || ('s' + (uid++)), name: base.name, role: base.role || 'Survivor', named: !!base.named, color: base.color, accent: base.accent || '#cfcfcf',
     stats: { ...base.stats }, bonds: base.bonds || [], job: base.job || 'idle', shift: base.shift || 'day',
     maxHp: base.hp || 100, hp: base.hp || 100, food: 80, awake: 2, xp: 0, lvl: 1, loyalty: base.loyalty ?? 1, grief: 0, mor: 70, alive: true,
-    x: 300 + Math.random() * 300, y: FLOORS[3], floor: 3, climbing: false, state: 'walk', cd: 0, facing: 1, anim: Math.random() * 10, kills: 0, traits: base.traits || [], past: base.past || null,
+    x: 300 + Math.random() * 300, y: FLOORS[3], floor: 3, climbing: false, state: 'walk', cd: 0, facing: 1, anim: Math.random() * 10, kills: 0, traits: base.traits || [], past: base.past || null, history: base.history || null,
   };
 }
 function randomSurvivor() {
@@ -328,21 +434,22 @@ function randomSurvivor() {
   const role = { acc: 'Shooter', build: 'Builder', cook: 'Cook', med: 'Medic', tech: 'Tinkerer' }[best];
   return { name: pick(FIRST) + ' ' + pick(LAST), role, color: pick(SURV_COLORS), accent: '#d8cfbf', stats, hp: Math.round(rnd(80, 105)), loyalty: +rnd(0.25, 0.9).toFixed(2), job: 'idle', shift: Math.random() < 0.5 ? 'day' : 'night' };
 }
-function newRun() {
+function newRun(goal) {
+  setGoal(goal === 'vehicle' ? 'vehicle' : 'tower');
   scav = null;
   S = {
     v: 1, rid: Math.random(), t: 8 * 60, lastHour: 8, res: { food: 40, scrap: 40, parts: 6, elec: 2, mat: 10 },
     door: { hp: 400, max: 400 }, wall: { hp: 300, max: 300, lvl: 1 }, breached: false,
     turrets: [{ type: 'rifle', hp: 130, max: 130, lvl: 1, cd: 0 }, null],
-    rooms: { kitchen: 1, med: 1, bunks: 1, workshop: 1 }, makeParts: true,
-    tower: { done: 0, paid: false, work: 0 }, kit: { cooked: 8, cap: 16, prog: 0 },
+    rooms: { kitchen: 1, hydro: 1, med: 1, bunks: 1 }, makeParts: true, ladders: [],
+    goalKind: GOAL_KIND, tower: { done: 0, paid: false, work: 0 }, kit: { cooked: 8, cap: 16, prog: 0, raw: 6 }, stock: { pipe: 1, pistol: 1 }, craft: [],
     crew: [], enemies: [], spawns: [], alarm: false, stats: { kills: 0, trips: 0, raids: 0, lost: [], repelled: 0, scav: {}, moments: [] }, won: false, hint: 0,
     player: { hp: 100, maxHp: 100, food: 80, xp: 0, lvl: 1, down: 0 },
   };
   ensurePair(S);
-  for (const n of NAMED) S.crew.push(makeCrew({ ...n, named: true }));
+  for (const n of NAMED) if (!n.arrives) S.crew.push(makeCrew({ ...n, named: true }));
   const a = makeCrew(randomSurvivor()); a.job = 'turretA'; a.shift = 'day'; a.loyalty = 1; S.crew.push(a);
-  const b = makeCrew(randomSurvivor()); b.job = 'signal'; b.shift = 'day'; b.loyalty = 1; S.crew.push(b);
+  const b = makeCrew(randomSurvivor()); b.job = 'hydro'; b.shift = 'day'; b.loyalty = 1; S.crew.push(b);
   // Juno takes the turret at night; the day-shift survivor covers it in daytime.
   placePlayer('bunker');
   fx.tracers = []; fx.parts = []; fx.nums = []; fx.bullets = [];
@@ -378,7 +485,16 @@ function migrateSave(sv) {
   for (const k of ['food', 'scrap', 'parts', 'elec', 'mat']) if (typeof s.res[k] !== 'number') s.res[k] = 0;
   // the dig grid is rebuilt on first use when missing; drop anything malformed
   if (s.dig !== undefined && (!s.dig || typeof s.dig !== 'object')) delete s.dig;
+  if (s.dig && (!s.dig.lad || typeof s.dig.lad !== 'object')) s.dig.lad = {};
+  if (!Array.isArray(s.ladders)) s.ladders = [];
+  if (!Array.isArray(s.drops)) s.drops = [];
+  s.ladders = s.ladders.filter(l => l && (l.g === 1 || l.g === 2) && typeof l.x === 'number');
   for (const c of s.crew) { if (c && c.sched !== undefined && typeof c.sched !== 'string') delete c.sched; }
+  if (!s.stock || typeof s.stock !== 'object') s.stock = {};
+  if (!Array.isArray(s.craft)) s.craft = [];
+  s.craft = s.craft.filter(j => j && GEAR[j.id] && typeof j.left === 'number' && typeof j.max === 'number');
+  for (const c of s.crew) { if (!c) continue; if (c.held && !GEAR[c.held]) c.held = null; if (c.carry && !(c.carry.n > 0 && (c.carry.id === 'crate' || c.carry.id === 'meal'))) c.carry = null; }
+  if (s.kit && typeof s.kit.raw !== 'number') s.kit.raw = 0;
   ensurePair(s);
 }
 // show a startup/runtime error on screen instead of a dead page
@@ -479,6 +595,11 @@ function jobSpot(c, job) {
   const room = Object.values(ROOMS).find(r => r.job === job) || ROOMS.common;
   const same = living().filter(o => targetJob(o) === job);
   const i = Math.max(0, same.indexOf(c));
+  const pk = pitRoomFor(job);
+  if (pk) { // the job's room is a pit room: stand inside it, spread along the bottom row
+    const rm = dg().rooms[pk], span2 = rm.w * DIG.cell - 30, x = dCenterX(rm.c) - DIG.cell / 2 + 15 + ((i * 37) % span2);
+    return { floor: 3, pit: true, rk: pk, x, cell: dIdx(clamp(Math.floor((x - DIG.x0) / DIG.cell), rm.c, rm.c + rm.w - 1), rm.r + rm.h - 1) };
+  }
   const span = room.x1 - room.x0 - 90;
   const its = roomItems(job);
   if (its.length) { const it = its[i % its.length], slot = Math.floor(i / its.length); return { floor: room.floor, x: ITX0 + (it.col + ITEM_TYPES[it.type].w / 2) * ITILE + ((slot % 3) - 1) * 14 }; }
@@ -486,7 +607,7 @@ function jobSpot(c, job) {
 }
 // What someone should be doing right now.
 // Applies station capacity on top of baseJob. Door and turrets are never capped (battle stations).
-const CAPPED_JOBS = ['workshop', 'signal', 'kitchen', 'med', 'idle'];
+const CAPPED_JOBS = ['workshop', 'signal', 'kitchen', 'hydro', 'med', 'idle'];
 function targetJob(c) {
   const job = baseJob(c);
   if (c.patient || S.alarm || !CAPPED_JOBS.includes(job)) return job;
@@ -508,10 +629,64 @@ function baseJob(c) {
   }
   if (inSleepHours(c)) return 'sleep';
   if (ensureSched(c)[Math.floor(hourF()) % 24] === 'M') return 'meal';
+  if (c.plate || hungryNow(c)) return 'meal';   // hungry: fetch food, eat it at the table, then go back to work
   if ((c.job === 'turretA' || c.job === 'turretB') && !turretFor(c.job)) return 'door';
+  if (c.job === 'workshop' && !S.rooms.workshop) return 'idle';   // no workshop built yet
   return c.job;
 }
 const turretFor = job => S.turrets[job === 'turretB' ? 1 : 0];
+// hungry enough to stop work and eat, and there is something to eat
+function hungryNow(c) { return c.food < 30 && (kit().cooked >= 1 || S.res.food >= 1); }
+// a plate in hand is dropped where the person stands (battle stations, med bay, sleep) and left on the floor for a while
+function dropPlate(c) {
+  (S.drops || (S.drops = [])).push({ x: c.x, y: c.y, t: S.t });
+  c.plate = false; c.rawPlate = false; c.eatT = 0; c.queued = 0;
+}
+// ---- task icons: a small badge above each survivor showing what they are doing right now ----
+const TASK_ICON = {
+  turret: '#ff9a5a', door: '#9ab0c8', workshop: '#ffb347', signal: '#7fc8ff', kitchen: '#ff8a4a', hydro: '#7ddc6f',
+  med: '#ff6a6a', mine: '#c9a27a', meal: '#e8d8a8', sleep: '#a8b4ff', fight: '#ff4a4a', haul: '#d8b070', wait: '#b8b8b8', idle: '#9a9a9a'
+};
+function taskKey(c) {
+  if (c.state === 'fight') return 'fight';
+  if (c.state === 'sleep') return 'sleep';
+  if (c.state === 'eat' || c.state === 'queue' || c.plate) return 'meal';
+  if (c.carry) return 'haul';
+  if (c.state === 'patient' || c.patient) return 'med';
+  const j = targetJob(c);
+  if (j === 'turretA' || j === 'turretB') return 'turret';
+  if (j === 'meal') return 'meal';
+  if (j === 'sleep') return 'sleep';
+  if (j === 'idle' && c.wait) return 'wait';
+  return TASK_ICON[j] ? j : 'idle';
+}
+function drawTaskIcon(c) {
+  const k = taskKey(c), col = TASK_ICON[k], x = c.x, y = c.y - 56;
+  g.save(); g.translate(x, y);
+  g.fillStyle = 'rgba(16,10,6,.82)'; g.beginPath(); g.arc(0, 0, 9, 0, 7); g.fill();
+  g.strokeStyle = col; g.fillStyle = col; g.lineWidth = 1.6; g.lineCap = 'round'; g.lineJoin = 'round';
+  g.beginPath(); g.arc(0, 0, 9, 0, 7); g.stroke();
+  g.beginPath();
+  if (k === 'turret') { g.arc(0, 0, 4, 0, 7); g.moveTo(-6, 0); g.lineTo(-2, 0); g.moveTo(2, 0); g.lineTo(6, 0); g.moveTo(0, -6); g.lineTo(0, -2); g.moveTo(0, 2); g.lineTo(0, 6); g.stroke(); }
+  else if (k === 'door') { g.rect(-4, -5, 8, 10); g.moveTo(-4, -1); g.lineTo(4, -1); g.stroke(); }
+  else if (k === 'workshop') { g.moveTo(-5, 5); g.lineTo(2, -2); g.stroke(); g.beginPath(); g.arc(3, -3, 3.2, 0, 7); g.stroke(); }
+  else if (k === 'signal') { g.moveTo(0, 5); g.lineTo(0, -2); g.stroke(); g.beginPath(); g.arc(0, -2, 3.5, Math.PI * 1.15, Math.PI * 1.85); g.stroke(); g.beginPath(); g.arc(0, -2, 6, Math.PI * 1.2, Math.PI * 1.8); g.stroke(); }
+  else if (k === 'kitchen') { g.moveTo(-4, -1); g.lineTo(4, -1); g.lineTo(3, 4); g.lineTo(-3, 4); g.closePath(); g.stroke(); g.beginPath(); g.moveTo(0, -3); g.quadraticCurveTo(2, -5, 0, -7); g.stroke(); }
+  else if (k === 'hydro') { g.moveTo(-4, 4); g.quadraticCurveTo(-5, -4, 4, -5); g.quadraticCurveTo(5, 3, -4, 4); g.stroke(); }
+  else if (k === 'med') { g.fillRect(-1.6, -5, 3.2, 10); g.fillRect(-5, -1.6, 10, 3.2); }
+  else if (k === 'mine') { g.moveTo(-5, 4); g.lineTo(4, -4); g.stroke(); g.beginPath(); g.moveTo(-2, -5); g.quadraticCurveTo(4, -6, 6, 0); g.stroke(); }
+  else if (k === 'meal') { g.ellipse(0, 2, 5, 2, 0, 0, 7); g.stroke(); g.beginPath(); g.arc(0, 0, 3.4, Math.PI, 0); g.stroke(); }
+  else if (k === 'sleep') { g.moveTo(-3, -4); g.lineTo(3, -4); g.lineTo(-3, 3); g.lineTo(3, 3); g.stroke(); }
+  else if (k === 'fight') { g.moveTo(-4, -4); g.lineTo(4, 4); g.moveTo(4, -4); g.lineTo(-4, 4); g.stroke(); }
+  else if (k === 'haul') { g.rect(-4, -3, 8, 7); g.moveTo(-4, 0); g.lineTo(4, 0); g.stroke(); }
+  else { g.arc(-4, 0, 1.2, 0, 7); g.arc(0, 0, 1.2, 0, 7); g.arc(4, 0, 1.2, 0, 7); g.fill(); }
+  g.restore();
+}
+function drawDrops() {
+  if (!S.drops || !S.drops.length) return;
+  S.drops = S.drops.filter(d => S.t - d.t < 180);
+  for (const d of S.drops) { g.save(); g.translate(d.x, d.y); if (typeof VEC !== 'undefined' && VEC.gear) VEC.gear(g, 'g_meal', false); else { g.fillStyle = '#d8cfbf'; g.fillRect(-6, -4, 12, 3); } g.restore(); }
+}
 // Retry delay (game minutes) for a crew member waiting on a full station: exponential backoff, capped, with jitter.
 function waitDelay(tries) { const base = Math.min(30, 4 * Math.pow(2, Math.min(tries, 4))); return base + Math.random() * base * 0.4; }
 // Releases everything a crew member holds on a station: bed claim, wait/retry timer, meal queue counter.
@@ -522,20 +697,38 @@ function leaveState(c, why) {
 }
 
 // Moving along floors and the shaft (crew and enemies inside).
+// Ladders: the main shaft at LADDER_X runs from the hatch to floor 3. Extra one-tile ladders (S.ladders, placed from the Build tab)
+// each join two neighbouring bunker floors: g = 1 joins floors 1 and 2, g = 2 joins floors 2 and 3. Only the shaft reaches the hatch.
+function ladderSpans() {
+  const out = [{ x: LADDER_X, y0: FLOORS[0], y1: FLOORS[3] }];
+  if (S && S.ladders) for (const l of S.ladders) out.push({ x: l.x, y0: FLOORS[l.g], y1: FLOORS[l.g + 1] });
+  return out;
+}
+function ladderXs(gap) {
+  const xs = [LADDER_X];
+  if (S && S.ladders) for (const l of S.ladders) if (l.g === gap) xs.push(l.x);
+  return xs;
+}
 function moveTo(m, floor, x, dt, spd) {
   if (m.floor === floor && !m.climbing) {
     const d = x - m.x; if (Math.abs(d) < 3) { m.x = x; return true; }
     m.facing = Math.sign(d); m.x += Math.sign(d) * Math.min(Math.abs(d), spd * dt); return false;
   }
   if (!m.climbing) {
-    const d = LADDER_X - m.x;
+    const dir = Math.sign(floor - m.floor) || 1, gap = dir > 0 ? m.floor : m.floor - 1;
+    // pick the ladder that costs the least walking, counting a little for the walk afterwards
+    const xs = ladderXs(gap); let lx = xs[0], best = Infinity;
+    for (const v of xs) { const cost = Math.abs(v - m.x) + Math.abs(v - x) * 0.3; if (cost < best) { best = cost; lx = v; } }
+    const d = lx - m.x;
     if (Math.abs(d) > 2) { m.facing = Math.sign(d); m.x += Math.sign(d) * Math.min(Math.abs(d), spd * dt); return false; }
     // Enemies cannot pass a closed hatch; crew can.
     if (m.enemy && !m.burrow && !S.breached && (m.floor === 0 || floor === 0)) return false;
-    m.x = LADDER_X; m.climbing = true;
+    m.x = lx; m.climbing = true;
+    m.ltf = lx === LADDER_X ? floor : (dir > 0 ? gap + 1 : gap);   // the floor this climb ends on (extra ladders span one gap)
   }
-  const ty = FLOORS[floor], dy = ty - m.y;
-  if (Math.abs(dy) < 2) { m.y = ty; m.floor = floor; m.climbing = false; return false; }
+  const tf = m.ltf == null ? floor : m.ltf;
+  const ty = FLOORS[tf], dy = ty - m.y;
+  if (Math.abs(dy) < 2) { m.y = ty; m.floor = tf; m.climbing = false; m.ltf = null; return false; }
   m.y += Math.sign(dy) * Math.min(Math.abs(dy), spd * 0.8 * dt);
   // passing a floor on the way
   for (let f = 0; f < FLOORS.length; f++) if (Math.abs(m.y - FLOORS[f]) < 1) m.floor = f;
@@ -554,6 +747,7 @@ function hourEvents(h) {
   if (h === 15 && d === 5 && !S.maw) { S.maw = { at: S.t + 120, done: false }; lamp('The floor is trembling. Something big is moving under the bunker. Get everyone armed and away from the lower floor.', 'warn'); addShake(0.3); }
   if (h === 12 && d >= 3 && !(S.pair && S.pair.dorrowDone)) recruitDorrow();
   else if (h === 12 && d >= 2 && Math.random() < 0.55) wandererAtDoor();
+  autoArm();
   lowResCheck();
   if (h % 1 === 0) save();
 }
@@ -569,14 +763,16 @@ function meal(h) {
   if (k.cooked >= 1) { k.cooked -= 1; p.food = Math.min(100, p.food + 42); }
   else lampEv('hungry', 'The serving station is empty. Mara went without a meal. Put a cook in the kitchen, or bring food back from topside.', 'warn');
 }
+// Raid tuning (balance pass for a ~1 hour run). Edit these to retune.
+const RAID_BASE = 3, RAID_PER_DAY = 1.25, RAID_CAP = 20, CINDER_ESCORT = 3, ENEMY_HP_PER_DAY = 0.08;
 function raidPlan(d) {
   if (S.plan && S.plan.d === d) return S.plan.list;
-  const n = 3 + Math.round(d * 1.5);
+  const n = Math.min(RAID_CAP, RAID_BASE + Math.round(d * RAID_PER_DAY));
   const types = d === 1 ? ['hound', 'ghoul', 'ghoul'] : d === 2 ? ['hound', 'ghoul', 'raider'] : ['hound', 'ghoul', 'raider', 'raider', 'brute'];
   const list = [];
   for (let i = 0; i < n; i++) list.push(pick(types));
   if (d >= 3 && d % 2 === 1) list.push('brute');
-  if (d === 3) { for (let i = 0; i < 4; i++) list.push('raider'); list.push('cinder'); }
+  if (d === 3) { for (let i = 0; i < CINDER_ESCORT; i++) list.push('raider'); list.push('cinder'); }
   if (d >= 6) for (let i = 0; i < Math.floor((d - 4) / 2); i++) list.push(pick(['raider', 'brute', 'hound']));
   S.plan = { d, list };
   return list;
@@ -596,8 +792,8 @@ function queueProbe(d) {
   lampSay('probe', 'warn');
 }
 function spawnEnemy(type) {
-  const b = ENEMIES[type], scale = 1 + (day() - 1) * 0.1;
-  S.enemies.push({ id: uid++, type, enemy: true, x: W + 30 + rnd(0, 60), y: FLOORS[0], floor: 0, climbing: false, hp: Math.round(b.hp * scale), max: Math.round(b.hp * scale), cd: rnd(0, 0.5), facing: -1, anim: Math.random() * 10, inside: false });
+  const b = ENEMIES[type], scale = 1 + (day() - 1) * ENEMY_HP_PER_DAY;
+  S.enemies.push({ id: uid++, type, enemy: true, x: W + 30 + rnd(0, 60), y: FLOORS[0], floor: 0, climbing: false, hp: Math.round(b.hp * scale), max: Math.round(b.hp * scale), cd: rnd(0, 0.5), facing: -1, anim: Math.random() * 10, inside: false, gear: rollGear(type) });
   if (type === 'cinder') S.cinderRaid = true; if (type === 'cinder') lampEv('boss_arrive', 'Cinder is here. Hold the door.', 'warn'); if (type === 'cinder') lamp('Cinder (over a loudspeaker): “Open up, little mole. Only the strong get to leave the ground.”', 'warn');
 }
 function spawnMaw() {
@@ -659,7 +855,7 @@ function crewTick(c, dt, mins) {
   if (c.grief > 0) c.grief -= h;
   moraleTick(c, h);
   // needs
-  c.food = Math.max(0, c.food - (100 / 21) * h);
+  c.food = Math.max(0, c.food - FOOD_DRAIN * h);
   if (c.food <= 0) { c.hp -= 3 * h; if (c.hp <= 0) return kill(c, 'starved'); }
   if (c.state === 'sleep') c.awake = Math.max(0, c.awake - h * (16 / (S.rooms.bunks > 1 ? 5 : 7)) * (c.bed === false ? FLOOR_REST_MULT : 1));
   else c.awake += h;
@@ -674,6 +870,7 @@ function crewTick(c, dt, mins) {
   if (foe) { leaveState(c, 'fight'); c.state = 'fight'; c.facing = Math.sign(foe.x - c.x) || 1; if (c.cd <= 0) { c.cd = 0.7; hitEnemy(foe, (8 + c.stats.acc * 8) * eff(c), c); } return; }
   // guards hunt enemies that got inside
   let job = targetJob(c);
+  if (c.plate && job !== 'meal') dropPlate(c);
   // WaitingForStation: denied a capped station -> wait, retry on a jittered, backing-off timer (game minutes)
   { const want = baseJob(c);
     if (c.wait && c.wait.job !== want) c.wait = null;
@@ -687,7 +884,7 @@ function crewTick(c, dt, mins) {
   }
   if (job === 'sleep') claimBed(c); else leaveState(c, 'job');
   if (job !== 'mine') c.dig = null;
-  if (c.pit && job !== 'mine') { c.state = 'walk'; if (!pitLeave(c, dt)) return; }
+  if (c.pit && job !== 'mine' && !pitRoomFor(job)) { c.state = 'walk'; if (!pitLeave(c, dt, true)) return; }
   if (job === 'mine') { mineTick(c, dt, h); return; }
   if (job === 'door' && (S.breached || S.enemies.some(e => e.inside && e.hp > 0))) {
     const inside = S.enemies.filter(e => e.inside && e.hp > 0).sort((a, b) => (Math.abs(a.floor - c.floor) * 500 + Math.abs(a.x - c.x)) - (Math.abs(b.floor - c.floor) * 500 + Math.abs(b.x - c.x)))[0];
@@ -701,21 +898,30 @@ function crewTick(c, dt, mins) {
       c.state = 'walk'; moveTo(c, inside.floor, inside.x, dt, 80); return;
     }
   }
+  // food in hand goes back if the job changes; cooks haul raw food from the pantry and plates to the serving station
+  if (c.carry && job !== 'kitchen') dropCarry(c);
+  if (job === 'kitchen' && kitchenHaul(c, dt)) return;
   if (job === 'meal') { mealTick(c, dt, mins); return; }
   const spot = job === 'sleep' ? sleepSpot(c) : jobSpot(c, job);
-  const arrived = moveTo(c, spot.floor, spot.x, dt, 70);
+  const arrived = spot.pit ? pitGoto(c, spot, dt, 70) : moveTo(c, spot.floor, spot.x, dt, 70);
   if (!arrived) { c.state = 'walk'; return; }
   c.state = job === 'sleep' ? 'sleep' : c.patient ? 'patient' : (c.wait && job === 'idle') ? 'waiting' : 'work';
   if (c.state !== 'work') return;
   const e = eff(c) * (S.powered && POWERED_JOBS.includes(job) ? ROOM_FX.powerBoost : 1);
   const gain = x => { c.xp += x * h; const need = 60 * c.lvl; if (c.xp >= need) { c.xp -= need; levelUp(c); } };
   switch (job) {
+    case 'hydro': S.res.food += 1.3 * c.stats.cook * e * h * (S.rooms.hydro > 1 ? 1.5 : 1); gain(3); break;   // hydroponics: raw food into the pantry
     case 'kitchen': {
-      S.res.food += 1.3 * c.stats.cook * e * h * (S.rooms.kitchen > 1 ? 1.5 : 1); // hydroponics: raw food
-      const k = kit();
-      if (k.cooked < k.cap) {
+      const k = kit(); if (k.raw == null) k.raw = 0;
+      // cook from the raw food the kitchen already has (hauled in by kitchenHaul); finished meals go into the cook's hands
+      const held = () => (c.carry && c.carry.id === 'meal' ? c.carry.n : 0);
+      if (k.cooked + held() < k.cap && k.raw >= 1) {
         k.prog += 4 * c.stats.cook * e * h;
-        while (k.prog >= 1 && S.res.food >= 1 && k.cooked < k.cap) { k.prog -= 1; S.res.food -= 1; k.cooked += 1; }
+        while (k.prog >= 1 && k.raw >= 1 && k.cooked + held() < k.cap) {
+          k.prog -= 1; k.raw -= 1;
+          if (!c.carry) c.carry = { id: 'meal', n: 0 };
+          c.carry.n += 1;
+        }
         if (k.prog > 1) k.prog = 1;
       }
       gain(4); break;
@@ -728,7 +934,28 @@ function crewTick(c, dt, mins) {
   }
 }
 // ---- food: raw food -> cooked at the kitchen -> serving station -> eaten in the common room ----
-const kit = () => S.kit || (S.kit = { cooked: 8, cap: 16, prog: 0 });
+const kit = () => S.kit || (S.kit = { cooked: 8, cap: 16, prog: 0, raw: 0 });
+const SERVE_X = 396, PANTRY_X = 850;   // serving station (floor 2) and the pantry shelves (floor 3, common room)
+// A cook's trips: pantry -> kitchen with a crate of raw food, then stove -> serving station with plates.
+// Returns true while the cook is walking or handing something over (the normal kitchen work waits).
+function kitchenHaul(c, dt) {
+  const k = kit(); if (k.raw == null) k.raw = 0;
+  const cr = c.carry;
+  if (cr && cr.id === 'meal' && (cr.n >= 3 || k.raw < 1 || k.cooked + cr.n >= k.cap)) {
+    if (!moveTo(c, 2, SERVE_X, dt, 70)) { c.state = 'walk'; return true; }
+    k.cooked = Math.min(k.cap, k.cooked + cr.n); c.carry = null; return true;
+  }
+  if (cr && cr.id === 'crate') {
+    const sp = jobSpot(c, 'kitchen');
+    if (!moveTo(c, sp.floor, sp.x, dt, 70)) { c.state = 'walk'; return true; }
+    k.raw += cr.n; c.carry = null; return true;
+  }
+  if (!cr && k.raw < 1 && k.cooked < k.cap && S.res.food >= 1) {
+    if (!moveTo(c, 3, PANTRY_X, dt, 70)) { c.state = 'walk'; return true; }
+    const n = Math.min(8, Math.floor(S.res.food)); S.res.food -= n; c.carry = { id: 'crate', n }; return true;
+  }
+  return false;
+}
 const TABLE_X = 990;
 function mealId(c) {
   const sc = ensureSched(c); let h = Math.floor(S.t / 60), n = 0;
@@ -737,7 +964,7 @@ function mealId(c) {
 }
 function mealTick(c, dt, mins) {
   const id = mealId(c), k = kit(), idx = Math.max(0, S.crew.indexOf(c));
-  if (c.ate === id && !c.plate) { const sp = jobSpot(c, 'meal'); c.state = moveTo(c, sp.floor, sp.x, dt, 70) ? 'work' : 'walk'; c.queued = 0; return; }
+  if (c.ate === id && !c.plate && !hungryNow(c)) { const sp = jobSpot(c, 'meal'); c.state = moveTo(c, sp.floor, sp.x, dt, 70) ? 'work' : 'walk'; c.queued = 0; return; }
   if (!c.plate) {
     if (!moveTo(c, 2, 396 + (idx * 7) % 36 - 18, dt, 70)) { c.state = 'walk'; return; }
     if (k.cooked >= 1) { k.cooked -= 1; c.plate = true; c.queued = 0; }
@@ -779,7 +1006,7 @@ const DIG = {
   ],
 };
 const WH = DIG.y0 + DIG.rows * DIG.cell + 20;     // full world height (bunker + pit)
-const ROOM_CELLS = { generator: { w: 6, h: 4 }, armory: { w: 6, h: 4 }, storage: { w: 6, h: 4 } };
+const ROOM_CELLS = { workshop: { w: 6, h: 4 }, generator: { w: 6, h: 4 }, armory: { w: 6, h: 4 }, storage: { w: 6, h: 4 } };
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 let digTool = false, digDrag = null;
 const dIdx = (c, r) => r * DIG.cols + c;
@@ -796,7 +1023,7 @@ function genDig() {
     const t = r < 2 ? 1 : v < 0.2 ? 1 : v < 0.5 ? 2 : v < 0.78 ? 3 : 4;
     m[dIdx(c, r)] = t; hp[dIdx(c, r)] = DIG.mats[t].hard;
   }
-  const d = { m, hp, mark, rooms: {} };
+  const d = { m, hp, mark, rooms: {}, lad: {}, ver: 0 };
   // old saves that already own annex rooms get a cleared chamber for each
   let off = 1;
   for (const k of Object.keys(ROOM_CELLS)) if (S && S.rooms && S.rooms[k]) {
@@ -804,6 +1031,8 @@ function genDig() {
     for (let r = 0; r < sz.h; r++) for (let c = 0; c < sz.w; c++) m[dIdx(off + c, r)] = 0;
     d.rooms[k] = { c: off, r: 0, w: sz.w, h: sz.h }; off += sz.w + 1;
   }
+  // every new pit starts with one cleared 6x4 chamber under the bunker, ready for the first room
+  if (off === 1) for (let r = 0; r < 4; r++) for (let c = 2; c < 8; c++) m[dIdx(c, r)] = 0;
   return d;
 }
 const dg = () => S.dig || (S.dig = genDig());
@@ -819,20 +1048,23 @@ window.addEventListener('pointermove', e => { if (digDrag) digDrag.b = dCellClam
 window.addEventListener('pointerup', () => { if (!digDrag) return; digMark(digDrag.a, digDrag.b, digDrag.erase); digDrag = null; });
 window.addEventListener('pointercancel', () => { digDrag = null; });
 function toggleDig() {
-  digTool = !digTool; digDrag = null;
+  digTool = !digTool; digDrag = null; if (digTool) placing = null;
   const b = document.getElementById('tDig'); if (b) { b.classList.toggle('on', digTool); b.setAttribute('aria-pressed', digTool ? 'true' : 'false'); }
   if (digTool && S) { bcam.follow = null; bcam.cy = 640; } else bcam.cy = H / 2;
 }
 { const b = document.getElementById('tDig'); if (b) b.onclick = e => { toggleDig(); e.currentTarget.blur(); }; }
 // breadth-first search over cleared cells from the given source cells
-function digBfs(d, src) {
+// strict = how crew (not miners) move: sideways freely, but a change of row needs a ladder or the inside of a room.
+function digBfs(d, src, strict) {
   const n = DIG.cols * DIG.rows, dist = new Array(n).fill(-1), par = new Array(n).fill(-1), q = [];
+  const lad = d.lad || {}, rmap = strict ? roomMap(d) : null;
   for (const s of src) { dist[s] = 0; q.push(s); }
   for (let k = 0; k < q.length; k++) {
     const i = q[k], c = i % DIG.cols, r = (i / DIG.cols) | 0;
     for (const [dc, dr] of DIRS) {
       const cc = c + dc, rr = r + dr; if (!dIn(cc, rr)) continue;
       const j = dIdx(cc, rr);
+      if (strict && dr !== 0 && !(lad[i] || lad[j] || (rmap[i] && rmap[i] === rmap[j]))) continue;
       if (d.m[j] === 0 && dist[j] < 0) { dist[j] = dist[i] + 1; par[j] = i; q.push(j); }
     }
   }
@@ -870,18 +1102,22 @@ function stepTo(c, tx, ty, dt, spd) {
   return false;
 }
 // climb back up through cleared cells to floor 3; true once out
-function pitLeave(c, dt) {
-  const d = dg(), cur = curCell(c), i0 = dIdx(cur.c, cur.r), { dist, par } = digBfs(d, [i0]);
+// strict: walk out the way ordinary crew do (ladders and rooms only); falls back to the miner's route if that is cut off
+function pitLeave(c, dt, strict) {
+  const d = dg(), cur = curCell(c), i0 = dIdx(cur.c, cur.r), { dist, par } = digBfs(d, [i0], !!strict);
+  const exits = strict ? pitEntries(d, true) : null;
   let j = -1;
-  for (let k = 0; k < DIG.cols; k++) { const i = dIdx(k, 0); if (dist[i] >= 0 && (j < 0 || dist[i] < dist[j])) j = i; }
-  if (j < 0) { c.pit = false; c.y = FLOORS[3]; return true; }
+  for (let k = 0; k < DIG.cols; k++) { const i = dIdx(k, 0); if (dist[i] >= 0 && (!strict || exits.includes(i)) && (j < 0 || dist[i] < dist[j])) j = i; }
+  if (j < 0 && strict) return pitLeave(c, dt, false);
+  if (j < 0) { c.pit = false; c.y = FLOORS[3]; c.pp = null; c.climbing = false; return true; }
   const chain = [];
   for (let k = j; k >= 0 && k !== i0; k = par[k]) chain.push(k);
   chain.reverse();
   const wp = chain.map(k => ({ x: dCenterX(k % DIG.cols), y: dFeetY((k / DIG.cols) | 0) }));
   wp.push({ x: dCenterX(j % DIG.cols), y: FLOORS[3] });
+  c.climbing = Math.abs(wp[0].x - c.x) < 1.5;
   if (!stepTo(c, wp[0].x, wp[0].y, dt, 60)) return false;
-  if (wp.length === 1) { c.pit = false; c.y = FLOORS[3]; c.floor = 3; c.climbing = false; return true; }
+  if (wp.length === 1) { c.pit = false; c.y = FLOORS[3]; c.floor = 3; c.climbing = false; c.pp = null; return true; }
   return false;
 }
 function mineTick(c, dt, h) {
@@ -927,7 +1163,146 @@ function findRoomSpot(k) {
   for (let r = 0; r <= DIG.rows - sz.h; r++) for (let c = 0; c <= DIG.cols - sz.w; c++) if (roomFree(d, c, r, sz.w, sz.h)) return { c, r };
   return null;
 }
-function claimRoom(k, s) { const sz = ROOM_CELLS[k]; dg().rooms[k] = { c: s.c, r: s.r, w: sz.w, h: sz.h }; }
+function claimRoom(k, s) { const sz = ROOM_CELLS[k], d = dg(); d.rooms[k] = { c: s.c, r: s.r, w: sz.w, h: sz.h }; d.ver = (d.ver | 0) + 1; }
+
+// ---- building on the tile grid: rooms and one-tile ladder segments ----
+// The pit grid (24 px tiles) is where the bunker grows. Rooms go on cleared tiles. Crew walk sideways through cleared tiles freely but
+// need a ladder segment (or the inside of a room) to change rows; miners climb on their own. Extra ladders can also join two bunker floors.
+const LADDER_COST = { pit: { scrap: 3 }, bunker: { scrap: 12, mat: 3 } };
+let placing = null;                       // { kind: 'room', k } or { kind: 'ladder' } while the Build tool is held
+const roomMapCache = new WeakMap();
+function roomMap(d) {                     // tile index -> room key (or null)
+  const sig = JSON.stringify(d.rooms), hit = roomMapCache.get(d);
+  if (hit && hit.sig === sig) return hit.map;
+  const map = new Array(DIG.cols * DIG.rows).fill(null);
+  for (const [k, rm] of Object.entries(d.rooms)) for (let r = rm.r; r < rm.r + rm.h; r++) for (let c = rm.c; c < rm.c + rm.w; c++) map[dIdx(c, r)] = k;
+  roomMapCache.set(d, { sig, map });
+  return map;
+}
+// the job's room, when it is a built pit room
+function pitRoomFor(job) {
+  if (!S) return null;
+  const k = Object.keys(ROOMS).find(x => ROOMS[x].build && ROOMS[x].job === job);
+  return k && S.rooms[k] && S.dig && S.dig.rooms[k] ? k : null;
+}
+// row-0 tiles that open onto floor 3 (a ladder or the top of a room)
+function pitEntries(d, strict) {
+  const rmap = roomMap(d), lad = d.lad || {}, out = [];
+  for (let k = 0; k < DIG.cols; k++) { const i = dIdx(k, 0); if (d.m[i] === 0 && (!strict || lad[i] || rmap[i])) out.push(i); }
+  return out;
+}
+// walkable route (crew rules) from the floor-3 openings, or from tile `from`, to tile `goal`; null when cut off
+function pitRoute(d, from, goal) {
+  const src = from == null ? pitEntries(d, true) : [from];
+  if (!src.length) return null;
+  const { dist, par } = digBfs(d, src, true);
+  if (dist[goal] < 0) return null;
+  const path = []; let k = goal;
+  while (k >= 0) { if (dist[k] === 0) { if (from == null) path.push(k); break; } path.push(k); k = par[k]; }
+  path.reverse();
+  return { path };
+}
+// Walk someone through the pit to a spot in a room: floor 3, down through an opening, then tile to tile. True once there.
+function pitGoto(c, spot, dt, spd) {
+  const d = dg(), goal = spot.cell, v = d.ver | 0;
+  if (!c.pp || c.pp.goal !== goal || c.pp.v !== v || (!c.pit && c.pp.fromPit)) {
+    const cur = c.pit ? curCell(c) : null, route = pitRoute(d, cur ? dIdx(cur.c, cur.r) : null, goal);
+    c.pp = { goal, v, fromPit: !!c.pit, path: route ? route.path : null, i: 0 };
+  }
+  const pp = c.pp;
+  if (!pp.path) {            // no ladder route: wait above the room instead of freezing mid-air
+    c.noRoute = true;
+    if (c.pit) { pitLeave(c, dt, true); return false; }
+    moveTo(c, 3, spot.x, dt, spd); return false;
+  }
+  c.noRoute = false;
+  if (!c.pit) {
+    if (!moveTo(c, 3, dCenterX(pp.path[0] % DIG.cols), dt, spd)) return false;
+    c.pit = true; c.y = FLOORS[3]; c.floor = 3; c.climbing = false;
+  }
+  while (pp.i < pp.path.length) {
+    const k = pp.path[pp.i], tx = dCenterX(k % DIG.cols), ty = dFeetY((k / DIG.cols) | 0);
+    c.climbing = Math.abs(tx - c.x) < 1.5 && Math.abs(ty - c.y) > 1.5;
+    if (!stepTo(c, tx, ty, dt, spd * 0.85)) return false;
+    pp.i++;
+  }
+  c.climbing = false;
+  return stepTo(c, spot.x, dFeetY((goal / DIG.cols) | 0), dt, spd * 0.85);
+}
+// can crew reach this room by ladders right now?
+function pitRoomReachable(k) {
+  const d = dg(), rm = d.rooms[k]; if (!rm) return false;
+  return !!pitRoute(d, null, dIdx(rm.c, rm.r + rm.h - 1));
+}
+// Where may a room's top-left tile go? Every tile must be cleared, free of other rooms and ladders, and the chamber must connect to the bunker.
+function roomPlaceCheck(k, c0, r0) {
+  const sz = ROOM_CELLS[k], d = dg();
+  if (c0 < 0 || r0 < 0 || c0 + sz.w > DIG.cols || r0 + sz.h > DIG.rows) return { ok: false, why: 'Outside the grid' };
+  for (let r = r0; r < r0 + sz.h; r++) for (let c = c0; c < c0 + sz.w; c++) {
+    const i = dIdx(c, r);
+    if (d.m[i] !== 0) return { ok: false, why: 'Dig these tiles out first' };
+    if (d.lad && d.lad[i]) return { ok: false, why: 'A ladder is in the way' };
+  }
+  for (const rm of Object.values(d.rooms)) if (rm.c < c0 + sz.w && c0 < rm.c + rm.w && rm.r < r0 + sz.h && r0 < rm.r + rm.h) return { ok: false, why: 'Another room is there' };
+  const { dist } = digBfs(d, pitEntries(d, false), false);
+  let linked = false;
+  for (let r = r0; r < r0 + sz.h && !linked; r++) for (let c = c0; c < c0 + sz.w; c++) if (dist[dIdx(c, r)] >= 0) { linked = true; break; }
+  if (!linked) return { ok: false, why: 'Not connected: dig a tunnel to it from the top' };
+  return { ok: true, why: '' };
+}
+// Ladder spot under the cursor: a pit tile (cleared, touching the walkable network) or a bunker floor gap (one tile wide, from floor to floor).
+function ladderCheck(w) {
+  const d = dg();
+  if (w.y >= FLOORS[1] && w.y < FLOORS[3] && w.x >= IN_L + 16 && w.x <= IN_R - 16) {
+    const g = w.y < FLOORS[2] ? 1 : 2, x = DIG.x0 + Math.floor((w.x - DIG.x0) / DIG.cell) * DIG.cell + DIG.cell / 2;
+    if (ladderXs(g).some(v => Math.abs(v - x) < DIG.cell + 6)) return { kind: 'bunker', g, x, ok: false, why: 'Too close to another ladder', cost: LADDER_COST.bunker };
+    return { kind: 'bunker', g, x, ok: true, why: '', cost: LADDER_COST.bunker };
+  }
+  const cc = dCellAt(w);
+  if (!cc) return null;
+  const i = dIdx(cc.c, cc.r), res = { kind: 'pit', c: cc.c, r: cc.r, cost: LADDER_COST.pit };
+  if (d.m[i] !== 0) return Object.assign(res, { ok: false, why: 'Dig this tile out first' });
+  if (d.lad[i]) return Object.assign(res, { ok: false, why: 'Already a ladder' });
+  if (roomMap(d)[i]) return Object.assign(res, { ok: false, why: 'Rooms have their own stairs' });
+  if (cc.r === 0) return Object.assign(res, { ok: true, why: '' });          // opens onto floor 3
+  const { dist } = digBfs(d, pitEntries(d, true), true);
+  for (const [dc, dr] of DIRS) { const a = cc.c + dc, b = cc.r + dr; if (dIn(a, b) && dist[dIdx(a, b)] >= 0) return Object.assign(res, { ok: true, why: '' }); }
+  return Object.assign(res, { ok: false, why: 'Must join a ladder, a room or a floor' });
+}
+function startPlace(p) {
+  if (digTool) toggleDig();
+  if (typeof itemTool !== 'undefined' && itemTool) { itemTool = false; renderItemUI(); }
+  placing = p;
+  if (S && scene === 'bunker') { bcam.follow = null; bcam.cy = 640; }
+  const b = document.getElementById('tDig'); if (b) b.classList.remove('on');
+  renderDrawer();
+}
+function cancelPlace() { if (!placing) return; placing = null; if (S && !digTool) bcam.cy = H / 2; renderDrawer(); }
+function placeClick(w) {
+  if (!placing) return;
+  const d = dg();
+  if (placing.kind === 'room') {
+    const k = placing.k, r = BUILD_ROOMS[k], sz = ROOM_CELLS[k], s = placeRoomOrigin(w, sz), chk = roomPlaceCheck(k, s.c, s.r);
+    if (!chk.ok) { lamp(chk.why + '.', 'warn'); return; }
+    if (!canPay(r.cost)) { lamp('The ' + ROOMS[k].name + ' needs ' + fmtCost(r.cost) + '.', 'warn'); return; }
+    pay(r.cost); claimRoom(k, s); S.rooms[k] = 1; placing = null; bcam.cy = H / 2;
+    lamp(ROOMS[k].name + ' built in the pit. ' + r.done + (pitRoomReachable(k) ? '' : ' No ladder reaches it yet: crew cannot get there until a ladder does.'), 'good');
+    renderDrawer(); return;
+  }
+  const l = ladderCheck(w);
+  if (!l) return;
+  if (!l.ok) { lamp(l.why + '.', 'warn'); return; }
+  if (!canPay(l.cost)) { lamp('A ladder segment needs ' + fmtCost(l.cost) + '.', 'warn'); return; }
+  pay(l.cost);
+  if (l.kind === 'bunker') S.ladders.push({ g: l.g, x: l.x }); else d.lad[dIdx(l.c, l.r)] = 1;
+  d.ver = (d.ver | 0) + 1;
+  burst(l.kind === 'bunker' ? l.x : dCenterX(l.c), l.kind === 'bunker' ? FLOORS[l.g + 1] - 20 : dFeetY(l.r) - 10, '#a8906a', 5);
+}
+// top-left tile for a room of this size centred on the cursor, kept inside the grid
+function placeRoomOrigin(w, sz) {
+  const cc = dCellClamp(w);
+  return { c: clamp(cc.c - (sz.w >> 1), 0, DIG.cols - sz.w), r: clamp(cc.r - (sz.h >> 1), 0, DIG.rows - sz.h) };
+}
 function drawDig() {
   const d = dg(), cs = DIG.cell, gw = DIG.cols * cs, gh = DIG.rows * cs;
   const claimed = new Set(S.crew.filter(o => o.alive && o.dig != null).map(o => o.dig));
@@ -962,7 +1337,21 @@ function drawDig() {
     g.fillStyle = 'rgba(255,214,150,.85)'; g.font = '600 12px sans-serif'; g.fillText(ROOMS[k].name.toUpperCase(), rx + 8, ry + 18);
     if (k === 'generator') { box(rx + 10, ry + rh - 44, 70, 44, '#3d4650'); box(rx + 18, ry + rh - 58, 14, 14, '#2a2a26'); g.fillStyle = S.powered ? ((Math.floor(performance.now() / 250) % 2) ? '#7fc8ff' : '#3a6a8a') : '#553'; g.fillRect(rx + 90, ry + rh - 36, 8, 8); }
     else if (k === 'armory') { box(rx + 8, ry + rh - 46, 110, 5, '#4a4a44'); for (let q = 0; q < 5; q++) box(rx + 14 + q * 20, ry + rh - 46, 4, 26, '#2a2a26'); box(rx + 20, ry + rh - 18, 80, 18, '#5a4a32'); g.fillStyle = S.powered ? '#7fc8ff' : '#553'; g.fillRect(rx + rw - 14, ry + 24, 6, 6); }
+    else if (k === 'workshop') {
+      for (const bx of [8, 84]) { box(rx + bx, ry + rh - 30, 56, 6, '#7a6a55'); box(rx + bx + 4, ry + rh - 24, 5, 24, '#5a4d3c'); box(rx + bx + 47, ry + rh - 24, 5, 24, '#5a4d3c'); }
+      box(rx + 20, ry + rh - 40, 14, 10, '#9a8a70'); g.fillStyle = '#ffb347'; g.fillRect(rx + 100, ry + rh - 38, 6, 8);
+      box(rx + 8, ry + 30, 128, 3, '#4a3d2e'); for (let q = 0; q < 6; q++) box(rx + 14 + q * 20, ry + 33, 3, 12, '#8a8a92');
+    }
     else { for (let q = 0; q < 4; q++) { box(rx + 10 + q * 32, ry + rh - 24, 26, 22, '#8a6a42'); box(rx + 10 + q * 32, ry + rh - 50, 26, 22, '#7a5c38'); } }
+    if (!pitRoomReachable(k)) { g.fillStyle = '#ff6a5a'; g.font = '600 10px sans-serif'; g.fillText('NO LADDER ROUTE', rx + 8, ry + 32); }
+  }
+  // ladder segments (one tile wide)
+  for (const key of Object.keys(d.lad || {})) {
+    const i = +key, lc = i % DIG.cols, lr = (i / DIG.cols) | 0, lx = DIG.x0 + lc * cs, ly = DIG.y0 + lr * cs;
+    if (lr === 0) { g.fillStyle = '#0e0a07'; g.fillRect(lx, FLOORS[3], cs, 10); }   // hatch cut in the floor-3 slab
+    g.fillStyle = 'rgba(14,10,7,.5)'; g.fillRect(lx + 2, ly, cs - 4, cs);
+    g.strokeStyle = '#8a7650'; g.lineWidth = 2; g.beginPath(); g.moveTo(lx + 6, ly - (lr === 0 ? 10 : 0)); g.lineTo(lx + 6, ly + cs); g.moveTo(lx + cs - 6, ly - (lr === 0 ? 10 : 0)); g.lineTo(lx + cs - 6, ly + cs); g.stroke();
+    g.lineWidth = 1.6; for (let y = ly + 5; y < ly + cs; y += 8) { g.beginPath(); g.moveTo(lx + 6, y); g.lineTo(lx + cs - 6, y); g.stroke(); }
   }
   if (digDrag) {
     const a = digDrag.a, b = digDrag.b, x = DIG.x0 + Math.min(a.c, b.c) * cs, y = DIG.y0 + Math.min(a.r, b.r) * cs;
@@ -980,6 +1369,52 @@ function drawDig() {
       g.fillStyle = 'rgba(20,10,8,.9)'; g.fillRect(tx, ty, tw, 18); g.fillStyle = '#ffe0a8'; g.fillText(txt, tx + 6, ty + 13);
     }
   }
+  g.restore();
+}
+// bunker ladders (S.ladders): a one-tile shaft between two floors with a hatch cut in the slab above
+function drawBunkerLadders() {
+  if (!S || !S.ladders) return;
+  for (const l of S.ladders) {
+    const y0 = FLOORS[l.g], y1 = FLOORS[l.g + 1];
+    g.fillStyle = '#0e0a07'; g.fillRect(l.x - 12, y0, 24, 10);
+    g.fillStyle = 'rgba(14,10,7,.55)'; g.fillRect(l.x - 11, y0 + 10, 22, y1 - y0 - 10);
+    g.strokeStyle = '#8a7650'; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(l.x - 7, y0); g.lineTo(l.x - 7, y1); g.moveTo(l.x + 7, y0); g.lineTo(l.x + 7, y1); g.stroke();
+    g.lineWidth = 1.6; for (let y = y0 + 8; y < y1; y += 12) { g.beginPath(); g.moveTo(l.x - 7, y); g.lineTo(l.x + 7, y); g.stroke(); }
+  }
+}
+// green / red preview of the room or ladder segment under the cursor while the Build tool is held
+function drawPlaceGhost() {
+  if (!placing || !S || scene !== 'bunker') return;
+  const w = bcamToWorld({ x: mouse.x, y: mouse.y }), cs = DIG.cell;
+  let chk, x, y, bw, bh, label;
+  if (placing.kind === 'room') {
+    const k = placing.k, sz = ROOM_CELLS[k], s = placeRoomOrigin(w, sz);
+    chk = roomPlaceCheck(k, s.c, s.r); x = DIG.x0 + s.c * cs; y = DIG.y0 + s.r * cs; bw = sz.w * cs; bh = sz.h * cs; label = ROOMS[k].name.toUpperCase();
+    if (chk.ok && !canPay(BUILD_ROOMS[k].cost)) chk = { ok: false, why: 'Needs ' + fmtCost(BUILD_ROOMS[k].cost) };
+  } else {
+    const l = ladderCheck(w); if (!l) return;
+    chk = l; label = 'LADDER';
+    if (l.kind === 'bunker') { x = l.x - cs / 2; y = FLOORS[l.g]; bw = cs; bh = FLOORS[l.g + 1] - FLOORS[l.g]; }
+    else { x = DIG.x0 + l.c * cs; y = DIG.y0 + l.r * cs; bw = cs; bh = cs; }
+    if (chk.ok && !canPay(l.cost)) chk = { ok: false, why: 'Needs ' + fmtCost(l.cost) };
+  }
+  g.save(); g.font = '600 12px sans-serif';
+  g.fillStyle = chk.ok ? 'rgba(90,220,110,.32)' : 'rgba(230,70,70,.34)'; g.fillRect(x, y, bw, bh);
+  g.strokeStyle = chk.ok ? '#5adc6e' : '#ff5a4e'; g.lineWidth = 2; g.strokeRect(x + 1, y + 1, bw - 2, bh - 2);
+  const txt = label + (chk.ok ? '' : ': ' + chk.why), tw = g.measureText(txt).width + 12;
+  const tx = clamp(x, IN_L, IN_R - tw), ty = Math.max(FLOORS[0] + 20, y - 22);
+  g.fillStyle = 'rgba(20,10,8,.9)'; g.fillRect(tx, ty, tw, 18); g.fillStyle = chk.ok ? '#d6ffd9' : '#ffd0cc'; g.fillText(txt, tx + 6, ty + 13);
+  g.restore();
+}
+function drawPlaceHint() {
+  if (!placing || !S || scene !== 'bunker') return;
+  const t = placing.kind === 'room'
+    ? 'PLACE ' + ROOMS[placing.k].name.toUpperCase() + ' (' + fmtCost(BUILD_ROOMS[placing.k].cost) + '): click cleared pit tiles that connect to the bunker. Right-drag pans. Esc cancels.'
+    : 'LADDER TOOL (' + fmtCost(LADDER_COST.pit) + ' per pit tile, ' + fmtCost(LADDER_COST.bunker) + ' per floor gap): click to add one segment. Right-drag pans. Esc or L stops.';
+  g.save(); g.font = '600 13px sans-serif';
+  const w = g.measureText(t).width + 24;
+  g.fillStyle = 'rgba(20,10,8,.85)'; g.fillRect((W - w) / 2, H - 44, w, 28); g.fillStyle = '#9af0a6'; g.fillText(t, (W - w) / 2 + 12, H - 25);
   g.restore();
 }
 function drawDigHint() {
@@ -1002,6 +1437,13 @@ function workshopTick(c, e, h) {
     s.hp += amt; S.res.scrap -= amt / 10; work -= amt;
     if (s === S.door && S.breached && S.door.hp > 40) { S.breached = false; lampEv('door_repair', 'The hatch is sealed again.', 'good'); }
   }
+  // then the craft queue (weapons paid for up front in the Gear tab)
+  while (work > 0 && S.craft && S.craft.length) {
+    const j = S.craft[0], use = Math.min(work, j.left);
+    j.left -= use; work -= use;
+    if (j.left > 0.001) break;
+    S.craft.shift(); addStock(j.id, 1); lamp('The workshop finished a ' + gearName(j.id) + '. It is in the Gear tab.', 'good');
+  }
   if (work > 0 && S.makeParts && S.res.scrap >= 2) { const n = Math.min(work / 30, S.res.scrap / 2); S.res.parts += n; S.res.scrap -= n * 2; }
 }
 function guardShoot(c, e) {
@@ -1018,6 +1460,8 @@ function levelUp(c) {
 }
 function kill(c, how) {
   c.alive = false; c.hp = 0; S.stats.lost.push(c.name); leaveState(c, 'dead');
+  if (c.held) { addStock(c.held, 1); c.held = null; }
+  dropCarry(c);
   for (const o of living()) o.mor = Math.max(0, (o.mor ?? 70) - 6);
   if (c.named || S.stats.lost.length === 1) moment(c.name + (how === 'starved' ? ' starved' : ' was killed'));
   for (const o of living()) if (o.bonds.includes(c.id) || c.bonds.includes(o.id)) { o.grief = 24; lamp(o.name + ' is grieving ' + c.name + '. They will work slower for a day.', 'warn'); }
@@ -1135,6 +1579,11 @@ function hitEnemy(e, dmg, by) {
     if (by && by.stats) { by.xp += xp; by.kills++; if (by.xp >= 60 * by.lvl) { by.xp -= 60 * by.lvl; levelUp(by); } }
     else if (by === P) { S.player.xp += xp; if (S.player.xp >= 50 * S.player.lvl) { S.player.xp -= 50 * S.player.lvl; S.player.lvl++; S.player.maxHp += 10; S.player.hp += 10; lamp('Mara is now level ' + S.player.lvl + ': more health and a harder-hitting pistol.', 'good'); } }
     if (Math.random() < 0.35) S.res.scrap += e.type === 'raider' ? 3 : 1;
+    if (e.gear && GEAR[e.gear]) {
+      // the weapon it was carrying: usually still in one piece, otherwise a few scrap
+      if (Math.random() < 0.75 || e.type === 'cinder') { addStock(e.gear, 1); lamp('Looted a ' + gearName(e.gear) + ' off the ' + ENEMIES[e.type].name.toLowerCase() + '.', 'good'); }
+      else S.res.scrap += 2;
+    }
     if (e.type === 'cinder') { lampEv('boss_down', 'Cinder is down. His raiders scatter into the ash. Rook will want to hear about this.', 'good'); S.res.parts += 8; S.res.elec += 3; }
     if (e.type === 'maw') { lamp('The Maw is dead. Its tunnel is full of salvage.', 'good'); S.res.parts += 12; S.res.elec += 5; S.res.mat += 10; }
     burst(e.x, e.y - 10, '#5a3', 12);
@@ -1184,7 +1633,7 @@ function simTick(dt) {
   if (!S.dorrowDone && !S.raidActive && (S.stats.repelled || 0) >= 2) {
     S.dorrowDone = true;
     if (!S.crew.some(c => c.id === 'dorrow')) {
-      const d = makeCrew({ id: 'dorrow', name: 'Sgt. Hale Dorrow', role: 'Drill Sergeant', named: true, color: '#7d8a70', accent: '#d9d4c8', stats: { acc: 0.8, build: 0.6, cook: 0.4, med: 0.5, tech: 0.5 }, bonds: ['juno'], job: 'idle', shift: 'day', hp: 130, loyalty: 1 });
+      const d = makeCrew({ ...NAMED_RECRUITS.dorrow, named: true });
       d.x = 300; d.floor = 0; d.y = FLOORS[0]; d.hp = Math.round(d.maxHp * 0.8);
       S.crew.push(d);
       moment('Sgt. Dorrow arrived');
@@ -1194,7 +1643,7 @@ function simTick(dt) {
   if (S.rookAt != null && !S.rookDone && S.t >= S.rookAt) {
     S.rookDone = true; S.rookAt = null;
     if (!S.crew.some(c => c.id === 'rook')) {
-      const r = makeCrew({ id: 'rook', name: 'Rook', role: 'Defector', named: true, color: '#b0553a', accent: '#d9d4c8', stats: { acc: 0.75, build: 0.7, cook: 0.4, med: 0.3, tech: 0.5 }, bonds: S.crew.some(c => c.id === 'dorrow') ? ['dorrow'] : [], job: 'idle', shift: 'day', hp: 110, loyalty: 1 });
+      const r = makeCrew({ ...NAMED_RECRUITS.rook, named: true, bonds: S.crew.some(c => c.id === 'dorrow') ? ['dorrow'] : [] });
       r.x = 300; r.floor = 0; r.y = FLOORS[0]; r.hp = Math.round(r.maxHp * 0.6);
       S.crew.push(r);
       moment('Rook defected'); pairOnJoin('rook');
@@ -1204,7 +1653,7 @@ function simTick(dt) {
   if (S.breached && !S.enemies.some(e => e.inside) && S.door.hp > 40) S.breached = false;
   // Mara's needs
   const pl = S.player;
-  pl.food = Math.max(0, pl.food - (100 / 21) * mins / 60);
+  pl.food = Math.max(0, pl.food - FOOD_DRAIN * mins / 60);
   if (pl.food <= 0 && !pl.down) hurtPlayer(3 * mins / 60, true);
   // tower
   if (S.tower.paid && !S.tower.half && S.tower.work >= TOWER[S.tower.done].work / 2 && S.tower.work < TOWER[S.tower.done].work) { S.tower.half = true; lampSay('towerHalf', 'good', { name: TOWER[S.tower.done].name }); }
@@ -1257,11 +1706,12 @@ function playerTick(dt) {
   if (scene === 'scav') { P.auto = false; return scavPlayerTick(dt); }
   if (P.auto) { maraAuto(dt); if (P.cd > 0) P.cd -= dt; if (P.hurt > 0) P.hurt -= dt; return; }
   const L = kd('left'), R = kd('right'), U = kd('up'), D = kd('down');
-  const nearLadder = Math.abs(P.x - LADDER_X) < 22;
-  if (!P.onLadder && nearLadder && (U && P.y > FLOORS[0] + 2 || D && P.y < FLOORS[3] - 2)) { P.onLadder = true; P.x = LADDER_X; P.vy = 0; }
+  const lad = ladderSpans().find(s => Math.abs(P.x - s.x) < 22 && ((U && P.y > s.y0 + 2 && P.y <= s.y1 + 2) || (D && P.y < s.y1 - 2 && P.y >= s.y0 - 2)));
+  if (!P.onLadder && lad) { P.onLadder = true; P.x = lad.x; P.vy = 0; }
   if (P.onLadder) {
+    const ls = ladderSpans().find(s => Math.abs(P.x - s.x) < 3 && P.y >= s.y0 - 12 && P.y <= s.y1 + 12) || ladderSpans()[0];
     if (U) P.y -= TUNE.ladder * dt; if (D) P.y += TUNE.ladder * dt;
-    P.y = clamp(P.y, FLOORS[0], FLOORS[3]);
+    P.y = clamp(P.y, ls.y0, ls.y1);
     const f = FLOORS.findIndex(y => Math.abs(P.y - y) < 10);
     if ((L || R) && f >= 0) { P.onLadder = false; P.y = FLOORS[f]; P.floor = f; P.vy = 0; }
     else if (!(L || R)) { if (f >= 0 && !U && !D) { P.y = FLOORS[f]; P.floor = f; } }
@@ -1332,32 +1782,96 @@ function carryBar() {
   const n = packCount(), f = n >= CARRY_LIMIT;
   return `<span style="display:inline-block;width:80px;height:8px;border:1px solid #888;vertical-align:middle;margin-right:6px"><i style="display:block;height:100%;width:${Math.round(100 * Math.min(1, n / CARRY_LIMIT))}%;background:${f ? '#d44' : '#e0a040'}"></i></span>${n}/${CARRY_LIMIT}${f ? ' FULL' : ''}`;
 }
+const WASTE_SCALE = 25;
+// Key areas of the wasteland by fraction of the distance from the hatch. The hatch is at the RIGHT end; the map runs left.
+const WASTE_AREAS = [
+  { name: 'Hatch Yard', to: 0.04, danger: 0.2, loot: 1, note: 'Quiet ground near the hatch.' },
+  { name: 'Rust Flats', to: 0.20, danger: 0.6, loot: 1, note: 'Open flats, scattered wrecks.' },
+  { name: 'Dead Highway', to: 0.40, danger: 1.0, loot: 1.2, note: 'Abandoned cars line the road.' },
+  { name: 'Gas Marshes', to: 0.55, danger: 1.2, loot: 0.8, note: 'Toxic pockets. Find a mask.' },
+  { name: 'Ruined Suburb', to: 0.72, danger: 1.4, loot: 1.5, note: 'Collapsed homes, good loot, more hostiles.' },
+  { name: 'Scrapyard', to: 0.88, danger: 1.7, loot: 1.8, note: 'Heaps of scrap and parts. Heavily infested.' },
+  { name: 'Radio Mast', to: 0.96, danger: 2.0, loot: 2.0, note: 'Dangerous ground under the old mast.' },
+  { name: 'Far Reach', to: 1.01, danger: 2.2, loot: 2.4, note: 'The edge of the map. Best loot, worst enemies.' }
+];
+function areaAtDist(d, len) { const f = d / len; return WASTE_AREAS.find(a => f < a.to) || WASTE_AREAS[WASTE_AREAS.length - 1]; }
+// random x in [lo,hi] (distance from hatch) weighted by an area weight ('danger' or 'loot')
+function rndByArea(lo, hi, key, len) {
+  const mx = Math.max(...WASTE_AREAS.map(a => a[key]));
+  let x = rnd(lo, hi);
+  for (let i = 0; i < 30; i++) { x = rnd(lo, hi); if (Math.random() < areaAtDist(x, len)[key] / mx) break; }
+  return x;
+}
+// Mirror a scav level generated in distance-from-hatch space so the hatch is at the right end.
+function flipScav(s) {
+  const L = s.len;
+  s.flip = true; s.home = L; s.seenAreas = {};
+  s.plats.forEach(p => { p.x = L - p.x - p.w; });
+  s.crates.forEach(c => { c.x = L - c.x; });
+  s.enemies.forEach(e => { e.x = L - e.x; e.home = L - e.home; e.facing = 1; });
+  if (s.wanderer) s.wanderer.x = L - s.wanderer.x;
+  const hz = s.hz;
+  hz.gas.forEach(q => { q.x = L - q.x - q.w; });
+  hz.debris.forEach(z => { z.x = L - z.x - z.w; });
+  hz.masks.forEach(m => { m.x = L - m.x; });
+}
+function areaTick() {
+  const s = scav; if (!s || !s.flip) return;
+  const a = areaAtDist(s.len - P.x, s.len);
+  if (s.curArea === a) return;
+  s.curArea = a;
+  if (s.seenAreas[a.name]) return;
+  s.seenAreas[a.name] = 1;
+  if (a.name !== 'Hatch Yard') lamp(a.name + '. ' + a.note, a.danger >= 1.4 ? 'warn' : undefined);
+}
+function drawScavMap() {
+  const s = scav; if (!s || !s.flip) return;
+  const mw = 320, mx = Math.round((W - mw) / 2), my = 8, mh = 10;
+  g.save();
+  g.fillStyle = 'rgba(10,8,6,.7)'; g.fillRect(mx - 4, my - 4, mw + 8, mh + 26);
+  let prev = 0;
+  for (const a of WASTE_AREAS) {
+    const to = Math.min(1, a.to);
+    g.fillStyle = 'hsl(' + Math.round(45 - a.danger * 18) + ',45%,' + Math.round(34 - a.danger * 4) + '%)';
+    g.fillRect(mx + (1 - to) * mw, my, (to - prev) * mw, mh);
+    prev = to;
+  }
+  g.fillStyle = '#ffd59a'; g.fillRect(mx + mw - 2, my - 3, 3, mh + 6);
+  g.fillStyle = '#fff'; g.fillRect(mx + clamp(P.x / s.len, 0, 1) * mw - 2, my - 3, 4, mh + 6);
+  const a = areaAtDist(s.len - P.x, s.len);
+  g.fillStyle = '#ffe0a8'; g.font = '600 11px "Chakra Petch", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+  g.fillText(a.name + ' · ' + Math.round((s.len - P.x) / 10) + 'm from hatch', W / 2, my + mh + 13);
+  g.restore();
+}
 function startScav(area) {
   S.stats.trips++;
   const town = area === 'town';
-  const len = town ? 3000 : 3600;
+  const len = town ? 3000 : 3600 * WASTE_SCALE;
+  const rx = (lo, hi, key) => town ? rnd(lo, hi) : rndByArea(lo, hi, key, len);
   CARRY_LIMIT = packCap();
   const plats = [], crates = [], enemies = [];
   for (let x = 500; x < len - 300; x += rnd(260, 420)) plats.push({ x, y: rnd(470, 540), w: rnd(120, 220) });
-  for (let i = 0; i < (town ? 12 : 9); i++) {
+  for (let i = 0; i < (town ? 12 : 9 * WASTE_SCALE); i++) {
     const onPlat = Math.random() < 0.45 && plats.length;
     const p = onPlat ? pick(plats) : null;
-    crates.push({ x: p ? p.x + rnd(16, p.w - 16) : rnd(300, len - 100), y: p ? p.y : 620, open: false, kind: town ? pick(['shelf', 'shelf', 'till', 'locker', 'car']) : pick(['crate', 'crate', 'locker', 'car']) });
+    crates.push({ x: p ? p.x + rnd(16, p.w - 16) : rx(300, len - 100, 'loot'), y: p ? p.y : 620, open: false, kind: town ? pick(['shelf', 'shelf', 'till', 'locker', 'car']) : pick(['crate', 'crate', 'locker', 'car']) });
   }
   const tier = Math.min(4, day());
-  for (let i = 0; i < 4 + tier; i++) {
+  for (let i = 0; i < (4 + tier) * (town ? 1 : WASTE_SCALE); i++) {
     const type = Math.random() < 0.5 ? 'hound' : (tier >= 2 && Math.random() < 0.3 ? 'raider' : 'ghoul');
     const b = ENEMIES[type];
-    enemies.push({ id: uid++, type, x: rnd(700, len - 150), y: 620, hp: b.hp, max: b.hp, cd: 0, facing: -1, anim: 0, home: 0, vy: 0 });
+    enemies.push({ id: uid++, type, x: rx(700, len - 150, 'danger'), y: 620, hp: b.hp, max: b.hp, cd: 0, facing: -1, anim: 0, home: 0, vy: 0 });
   }
   enemies.forEach(e => e.home = e.x);
   if (town) enemies.push({ id: uid++, type: 'ram', x: len - 450, y: 620, hp: ENEMIES.ram.hp, max: ENEMIES.ram.hp, cd: 0, facing: -1, anim: 0, home: len - 450, vy: 0, st: 'patrol', t: 0, dir: -1, hit: false, warned: false });
   const wanderer = Math.random() < 0.7 && living().length < 14 ? { x: rnd(1600, len - 300), y: 620, s: randomSurvivor(), talked: false } : null;
-  scav = { area: town ? 'town' : 'wasteland', len, plats, crates, enemies, wanderer, pack: takeCarried(), cam: 0, ruins: Array.from({ length: 40 }, () => ({ x: rnd(0, len), w: rnd(60, 180), h: rnd(60, 260), c: rnd(0, 1) })) };
+  scav = { area: town ? 'town' : 'wasteland', len, plats, crates, enemies, wanderer, pack: takeCarried(), cam: 0, ruins: Array.from({ length: town ? 40 : 400 }, () => ({ x: rnd(0, town ? len : len * 0.4 + W), w: rnd(60, 180), h: rnd(60, 260), c: rnd(0, 1) })) };
   scav.hz = makeHazards(len);
+  scav.home = 0;
+  if (!town) flipScav(scav);
   scene = 'scav';
-  Object.assign(P, { x: 80, y: 620, vx: 0, vy: 0, onLadder: false, grounded: true, facing: 1 });
-  lampEv('topside_exit', 'You are topside. The bunker keeps running without you: I will call if the door is in trouble. Walk back to the left edge to come home.');
+  Object.assign(P, { x: scav.flip ? scav.home - 80 : 80, y: 620, vx: 0, vy: 0, onLadder: false, grounded: true, facing: 1 });
+  lampEv('topside_exit', 'You are topside. The bunker keeps running without you: I will call if the door is in trouble. Walk back to the ' + (scav.flip ? 'right' : 'left') + ' edge to come home.' + (scav.flip ? ' The wasteland stretches far to the left: watch the map at the top of the screen.' : ''));
   if (town) lamp('The dead town. Shelves and tills hold food, materials and parts, but little electronics. Something heavy patrols the streets: jump its charge.', 'warn');
 }
 function endScav(keep) {
@@ -1381,14 +1895,16 @@ function makeHazards(len) {
   for (let x = 700; x < len - 400; x += rnd(500, 750)) gas.push({ x, w: rnd(150, 230), ph: rnd(0, 6) });
   for (let x = 900; x < len - 300; x += rnd(600, 900)) debris.push({ x, w: rnd(260, 360), next: rnd(1, 3) });
   const masks = [{ x: rnd(300, 600), taken: false }, { x: rnd(1500, 2200), taken: false }];
+  for (let x = 4000; x < len - 600; x += rnd(3500, 5000)) masks.push({ x, taken: false });
   return { gas, debris, masks, drops: [], gasAcc: 0, mask: 0, inGas: false, told: {} };
 }
 function hazardTick(dt) {
   const hz = scav && scav.hz; if (!hz) return;
+  areaTick();
   // gas
   const low = P.y > SC_GROUND - GAS_H + 10;
   hz.inGas = low && hz.gas.some(q => P.x > q.x && P.x < q.x + q.w);
-  if (!hz.told.gas && hz.gas.some(q => q.x - P.x > 0 && q.x - P.x < 300)) { hz.told.gas = 1; lamp('Toxic gas ahead. Jump it, go around, or find a gas mask first.', 'warn'); }
+  if (!hz.told.gas && hz.gas.some(q => Math.abs(q.x + q.w / 2 - P.x) < 300)) { hz.told.gas = 1; lamp('Toxic gas ahead. Jump it, go around, or find a gas mask first.', 'warn'); }
   if (hz.inGas) {
     if (hz.mask > 0) { hz.mask = Math.max(0, hz.mask - dt); if (hz.mask === 0) lamp('Your mask filter is spent. Get out of the gas.', 'warn'); }
     else {
@@ -1632,6 +2148,27 @@ function draw() {
   if (shakeT > 0 && !prefs.rm) { const amp = Math.min(1, shakeT / 0.4) * 6; g.translate((Math.random() - 0.5) * 2 * amp, (Math.random() - 0.5) * 2 * amp); }
   if (scene === 'scav' && scav) drawScav(); else drawBunker();
   g.restore();
+  drawDoorVignette();
+}
+// Red screen-edge warning when the door is below 25% HP. Pulses unless Reduced motion is on.
+function drawDoorVignette() {
+  if (typeof S === 'undefined' || !S || !S.door || S.over || !(S.door.max > 0)) return;
+  const frac = S.door.hp / S.door.max;
+  if (!(frac < 0.25)) return;
+  const sev = 1 - Math.max(0, frac) / 0.25;             // 0 at 25% HP .. 1 at 0 HP
+  let a = 0.28 + 0.22 * sev;
+  if (!prefs.rm) {
+    const hz = 1 + sev * 1.2;                            // faster pulse as the door gets worse
+    a *= 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(performance.now() / 1000 * hz * Math.PI * 2));
+  }
+  const w = cv.width, h = cv.height;
+  g.save();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  const rg = g.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.38, w / 2, h / 2, Math.hypot(w, h) / 2);
+  rg.addColorStop(0, 'rgba(200,20,20,0)');
+  rg.addColorStop(1, 'rgba(200,20,20,' + a.toFixed(3) + ')');
+  g.fillStyle = rg; g.fillRect(0, 0, w, h);
+  g.restore();
 }
 function drawBunker() {
   bcamBegin();
@@ -1659,11 +2196,15 @@ function drawBunker() {
   g.fillStyle = '#3a2d1f';
   for (let f = 1; f < 4; f++) { g.fillRect(IN_L - 6, FLOORS[f], IN_R - IN_L + 12, 10); }
   g.fillRect(IN_L - 14, FLOORS[0] + 16, 10, FLOORS[3] - FLOORS[0]); g.fillRect(IN_R + 4, FLOORS[0] + 16, 10, FLOORS[3] - FLOORS[0]);
+  drawBunkerLadders();
   drawDig();
+  drawPlaceGhost();
   drawSurface(sky);
   // night over the surface only: the bunker keeps its lamps
   if (sky.dayAmt < 1) { g.fillStyle = 'rgba(5,6,18,' + (0.55 * (1 - sky.dayAmt)) + ')'; g.fillRect(0, 0, W, FLOORS[0] + 16); }
+  drawDrops();
   for (const c of S.crew) if (c.alive) drawPerson(c.x, c.y, c.color, c.accent, c, c.anim, c.facing, c.state === 'sleep', c.climbing);
+  for (const c of S.crew) if (c.alive && !c.left) drawTaskIcon(c);
   drawFocus();
   drawCrewDebug();
   for (const e of S.enemies) drawEnemy(e);
@@ -1672,6 +2213,7 @@ function drawBunker() {
   bcamEnd();
   drawRaidForecast();
   drawDigHint();
+  drawPlaceHint();
   if (S.breached && prefs.cb) { g.save(); g.strokeStyle = '#fff'; g.lineWidth = 6; g.setLineDash([22, 14]); g.strokeRect(3, 3, W - 6, H - 6); g.restore(); }
   if (S.breached) { g.fillStyle = 'rgba(255,40,30,' + (prefs.rm ? 0.09 : 0.06 + 0.05 * Math.sin(performance.now() / 150)) + ')'; g.fillRect(0, 0, W, H); }
 }
@@ -1884,10 +2426,11 @@ function drawPerson(x, y, color, accent, c, anim, facing, sleeping, climbing) {
     const step = Math.sin(anim) * 3;
     (typeof VEC !== 'undefined' ? VEC : SPR).person(g, color, accent, (climbing || Math.abs(step) < 0.8) ? 0 : (step > 0 ? 1 : 2), facing < 0);
     if (typeof VEC === 'undefined' && c && c.id === 'bram') { g.fillStyle = '#c9c4b8'; g.fillRect(-4, -28, 8, 3); }
-    if (c && c.id === 'juno') { g.fillStyle = '#222'; g.fillRect(facing > 0 ? 2 : -18, typeof VEC !== 'undefined' ? -17 : -22, 16, 3); }
+    if (c && c.id === 'juno' && !c.held) { g.fillStyle = '#222'; g.fillRect(facing > 0 ? 2 : -18, typeof VEC !== 'undefined' ? -17 : -22, 16, 3); }
     if (typeof VEC === 'undefined' && c && c.id === 'reed') { g.fillStyle = '#b0b8c0'; g.fillRect(-4, -31, 8, 2); }
     if (typeof VEC === 'undefined' && c && c.id === 'tick') { g.fillStyle = '#59d0c4'; g.fillRect(-5, -33, 10, 3); }
     if (c && c.state === 'patient') { g.fillStyle = '#e04848'; g.fillRect(-2, -44, 4, 10); g.fillRect(-5, -41, 10, 4); }
+    if (c) drawCrewHeld(c, facing);
   }
   if (c) {
     if (c.hp < c.maxHp) hpBar(-10, -42, 20, c.hp / c.maxHp, '#7ddc6f');
@@ -1896,6 +2439,25 @@ function drawPerson(x, y, color, accent, c, anim, facing, sleeping, climbing) {
     if (sleepFactor(c.awake) < 0.6 && !sleeping) { g.fillStyle = '#ff8c2a'; g.font = '700 11px "IBM Plex Sans"'; g.fillText('!', 8, -30); }
   }
   g.restore();
+}
+// held items: the model's grip is moved onto the hand (hx, hy) and mirrored when facing left
+function heldAt(id, f, hx, hy) {
+  if (typeof VEC === 'undefined' || !VEC.gear || !VEC.hasGear(id)) return;
+  g.save(); g.translate(hx, hy + 12); VEC.gear(g, id, f < 0); g.restore();
+}
+function drawCrewHeld(c, facing) {
+  const f = facing < 0 ? -1 : 1;
+  if (c.held) heldAt('g_' + c.held, f, 9 * f, -12.5);
+  const cr = c.carry;
+  if (cr) {
+    heldAt(cr.id === 'crate' ? 'g_crate' : 'g_meal', f, c.held ? 2 * f : 8 * f, c.held ? -19 : -12.5);
+    if (cr.n > 1) { g.fillStyle = '#ffe0a8'; g.font = '700 10px "IBM Plex Sans"'; g.fillText('x' + cr.n, f > 0 ? 10 : -22, -26); }
+  } else if (c.plate) heldAt('g_meal', f, 8 * f, -12.5);
+}
+function enemyGearDraw(e, b) {
+  if (!e.gear) return;
+  const f = e.facing < 0 ? -1 : 1;
+  heldAt('g_' + e.gear, f, 9 * f, -b.h + 14);
 }
 function drawMara() {
   g.save(); g.translate(Math.round(P.x), Math.round(P.y));
@@ -1913,7 +2475,7 @@ function drawEnemy(e, ox = 0) {
   const ART = typeof VEC !== 'undefined' ? VEC : SPR;
   if (ART.hasEnemy(e.type)) {
     ART.enemy(g, e.type, b.color, Math.abs(bob) < 0.7 ? 0 : (bob > 0 ? 1 : 2), e.facing < 0, performance.now() / 1000);
-    if (e.type === 'raider' || e.type === 'cinder') { g.fillStyle = '#222'; g.fillRect(e.facing < 0 ? -18 : 4, -b.h + 12, 14, 3); }
+    if ((e.type === 'raider' || e.type === 'cinder') && !e.gear) { g.fillStyle = '#222'; g.fillRect(e.facing < 0 ? -18 : 4, -b.h + 12, 14, 3); }
   }
   else if (e.type === 'hound') { box(-13, -16 + bob * 0.5, 26, 10, b.color); box(e.facing < 0 ? -18 : 10, -20 + bob * 0.5, 8, 8, '#7a4f36'); g.fillStyle = '#ff4030'; g.fillRect(e.facing < 0 ? -16 : 15, -18, 2, 2); g.fillStyle = '#3a2818'; for (let i = 0; i < 4; i++) g.fillRect(-11 + i * 6, -6, 3, 6 + (i % 2 ? bob : -bob) * 0.5); }
   else if (e.type === 'maw') { box(-22, -34, 44, 34, b.color); box(-18, -30, 36, 26, '#3a2e24'); g.fillStyle = '#e8e0d0'; for (let i = 0; i < 6; i++) g.fillRect(-16 + i * 6, -30 + (i % 2) * 3, 3, 8); g.fillStyle = '#ff4030'; g.fillRect(-10, -36, 4, 3); g.fillRect(6, -36, 4, 3); }
@@ -1922,9 +2484,10 @@ function drawEnemy(e, ox = 0) {
   else {
     g.fillStyle = '#2a2018'; g.fillRect(-5, -10, 4, 10 + bob); g.fillRect(1, -10, 4, 10 - bob);
     box(-7, -b.h + 6, 14, b.h - 16, b.color); g.fillStyle = e.type === 'ghoul' ? '#a9ae88' : '#d8b89a'; g.fillRect(-4, -b.h - 2, 8, 8);
-    if (e.type === 'raider' || e.type === 'cinder') { g.fillStyle = '#222'; g.fillRect(e.facing < 0 ? -18 : 4, -b.h + 12, 14, 3); }
+    if ((e.type === 'raider' || e.type === 'cinder') && !e.gear) { g.fillStyle = '#222'; g.fillRect(e.facing < 0 ? -18 : 4, -b.h + 12, 14, 3); }
     if (e.type === 'cinder') { g.fillStyle = '#fff'; g.fillRect(-4, -b.h - 2, 8, 8); g.fillStyle = '#c22'; g.fillRect(-3, -b.h + 3, 6, 2); g.fillStyle = '#7a3a22'; g.fillRect(-10, -b.h + 8, 20, 4); }
   }
+  enemyGearDraw(e, b);
   g.restore();
   hpBar(e.x - ox - 12, e.y - b.h - 10, 24, e.hp / e.max, '#ff5a4e');
   if (b.boss) { g.fillStyle = '#ff5a4e'; g.font = '700 11px "Chakra Petch"'; g.fillText(b.name.toUpperCase(), e.x - ox - 20, e.y - b.h - 16); }
@@ -1968,8 +2531,8 @@ function drawScav() {
     if (!c.open) { g.fillStyle = '#ffb347'; g.fillRect(x - 2, c.y - (c.kind === 'locker' ? 46 : c.kind === 'car' ? 40 : 30), 4, 4); }
   }
   // the way home
-  box(20 - ox, SC_GROUND - 60, 6, 60, '#7a6650'); box(8 - ox, SC_GROUND - 66, 60, 16, '#4a3a28');
-  g.fillStyle = '#ffd59a'; g.font = '600 11px "Chakra Petch"'; g.fillText('← BUNKER', 12 - ox, SC_GROUND - 54);
+  { const hx = scav.flip ? scav.home - 68 : 8; box(hx + (scav.flip ? 48 : 12) - ox, SC_GROUND - 60, 6, 60, '#7a6650'); box(hx - ox, SC_GROUND - 66, 60, 16, '#4a3a28'); }
+  g.fillStyle = '#ffd59a'; g.font = '600 11px "Chakra Petch"'; g.fillText(scav.flip ? 'BUNKER →' : '← BUNKER', (scav.flip ? scav.home - 62 : 12) - ox, SC_GROUND - 54);
   if (scav.wanderer && !scav.wanderer.gone) { const w = scav.wanderer; drawPerson(w.x - ox, w.y, w.s.color, w.s.accent, null, performance.now() / 300, -1, false, false); g.fillStyle = '#ffe0a8'; g.font = '600 11px "IBM Plex Sans"'; g.fillText('?', w.x - ox - 3, w.y - 44); }
   drawHazards(ox);
   for (const e of scav.enemies) drawEnemy(e, ox);
@@ -1979,11 +2542,12 @@ function drawScav() {
   lampTick();
   drawScavLantern(ox);
   drawScavCompass(ox);
+  drawScavMap();
 }
 
 // Edge-of-screen arrows to the bunker door and the level exit (if any), with distance in metres.
 function drawScavCompass(ox) {
-  const targets = [{ x: 40, label: 'BUNKER', color: '#ffd59a' }];
+  const targets = [{ x: scav.home + (scav.flip ? -40 : 40), label: 'BUNKER', color: '#ffd59a' }];
   if (scav.exit && typeof scav.exit.x === 'number') targets.push({ x: scav.exit.x, label: 'EXIT', color: '#9fe8a0' });
   const rowY = { BUNKER: SC_GROUND - 130, EXIT: SC_GROUND - 170 };
   g.save();
@@ -2229,9 +2793,25 @@ function renderDrawer() {
   if ($('#drawer').hidden || !S) return;
   document.querySelectorAll('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   const body = $('#dbody'); const keep = body.scrollTop; const fk = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.view : null;
-  body.innerHTML = tab === 'crew' ? crewHTML() : tab === 'build' ? buildHTML() : tab === 'rel' ? relHTML() : tab === 'log' ? logHTML() : towerHTML();
+  body.innerHTML = tab === 'crew' ? crewHTML() : tab === 'build' ? buildHTML() : tab === 'rel' ? relHTML() : tab === 'log' ? logHTML() : tab === 'gear' ? gearHTML() : towerHTML();
   body.scrollTop = keep;
   if (fk) { const el = body.querySelector(`[data-view="${fk}"]`); if (el) el.focus(); }
+}
+function gearRow(c) {
+  const st = stock(), have = GEAR_IDS.filter(id => st[id] > 0);
+  return `<div class="row" style="margin-top:5px"><span class="note" style="margin:0 4px 0 0">Holding</span>${c.held ? `<b>${esc(GEAR[c.held].name)}</b> <button class="chip" data-gear="unequip" data-id="${c.id}">Put away</button><button class="chip" data-gear="disheld" data-id="${c.id}" title="Break it down for scrap and parts">Dismantle</button>` : '<span class="note" style="margin:0">nothing</span>'}${have.map(id => `<button class="chip" data-gear="equip" data-g="${id}" data-id="${c.id}">Take ${esc(GEAR[id].name)} (${st[id]})</button>`).join('')}${c.carry ? `<span class="note" style="margin:0 0 0 6px">Carrying ${c.carry.n} ${c.carry.id === 'crate' ? 'raw food' : 'cooked meal' + (c.carry.n > 1 ? 's' : '')}</span>` : ''}</div>`;
+}
+function gearHTML() {
+  const st = stock(), k = kit(), q = S.craft || [];
+  const rows = GEAR_IDS.map(id => {
+    const g = GEAR[id], n = st[id] || 0, can = canPay(g.cost) && q.length < CRAFT_MAX;
+    return `<div class="card bitem"><div><b>${esc(g.name)}</b> <span class="tag">${g.kind}</span><p>In stock: ${n} · Craft: ${fmtCost(g.cost)} · ${g.work} work · Dismantling returns ${fmtCost(g.back)}</p></div><div><button class="btn" data-gear="craft" data-g="${id}" ${can ? '' : 'disabled'}>Craft</button> <button class="btn ghost" data-gear="dis" data-g="${id}" ${n ? '' : 'disabled'}>Dismantle</button></div></div>`;
+  }).join('');
+  const queue = q.length ? q.map((j, i) => `<div class="note" style="margin:2px 0">${i === 0 ? 'Building' : 'Queued'}: ${esc(GEAR[j.id].name)}<div style="margin-top:3px">${bar((1 - j.left / j.max) * 100, '#7fc8ff')}</div></div>`).join('') : '<p class="note">Nothing queued.</p>';
+  const workers = living().filter(c => c.job === 'workshop').length;
+  return `<p class="note" style="margin:0">Craft weapons here: the cost is paid now and workshop crew build them after repairs. Enemies that carried a weapon may drop it when they die. Crew hold one each, shown in their hand; unarmed guards are armed from stock every hour. Dismantling turns a weapon back into scrap and parts. Weapons are for show for now.</p>`
+    + `<div class="sec">WEAPONS</div>${rows}<div class="sec">WORKSHOP QUEUE</div>${queue}${workers ? '' : '<p class="note bad">Nobody is on the Workshop job, so nothing gets built.</p>'}`
+    + `<div class="sec">FOOD</div><p class="note">Pantry: ${Math.floor(S.res.food)} raw food<br>Kitchen: ${Math.floor(k.raw || 0)} raw, ${Math.floor(k.prog * 100)}% of the next meal<br>Serving station: ${k.cooked} / ${k.cap} meals<br>Cooks carry crates from the pantry to the kitchen and plates to the serving station.</p>`;
 }
 function crewHTML() {
   const filtering = crewFilterActive();
@@ -2264,6 +2844,7 @@ function crewHTML() {
       <div class="bars"><span>Health</span>${bar(c.hp / c.maxHp * 100, '#7ddc6f', 'hp')}<span>Food</span>${bar(c.food, '#c9a27a', 'food')}<span style="white-space:nowrap">Rest${prefs.cb && sf < 0.6 ? ' \u26A0' : ''}</span>${bar(rest, sf < 0.6 ? '#ff5a4e' : '#7fc8ff', sf < 0.6 ? 'low' : 'rest')}</div>
       <div class="row">${Object.entries(JOBS).map(([k, j]) => { const dis = (k === 'turretA' && !S.turrets[0]) || (k === 'turretB' && !S.turrets[1]); return `<button class="chip ${c.job === k ? 'on' : ''}" data-job="${k}" data-id="${c.id}" ${dis ? 'disabled title="Build this turret first"' : ''}>${j.label}</button>`; }).join('')}</div>
       <div class="row" style="margin-top:5px">${Object.entries(SHIFTS).map(([k, s]) => { const p = n => String(n % 24).padStart(2, '0') + ':00', h = Math.floor(hourF()), awake = !s.sleep || !(s.sleep[0] > s.sleep[1] ? (h >= s.sleep[0] || h < s.sleep[1]) : (h >= s.sleep[0] && h < s.sleep[1])); return `<button class="chip ${c.shift === k ? 'on' : ''}" data-shift="${k}" data-id="${c.id}" title="${awake ? 'Awake right now' : 'Asleep right now'}">${awake ? '● ' : ''}${s.sleep ? 'Sleeps ' + p(s.sleep[0]) + '-' + p(s.sleep[1]) : s.label}</button>`; }).join('')}</div>
+      ${gearRow(c)}
       ${schedHTML(c)}
       <div class="row" style="margin-top:5px"><button class="chip" data-rest="${c.id}" title="Hold to give a rest day: sleep and meals for 24h, morale boost" style="${restHold && restHold.id === c.id ? 'background:linear-gradient(90deg,#3a7a4a ' + Math.min(100, (performance.now() - restHold.t0) / REST_HOLD_MS * 100) + '%,transparent 0)' : ''}">${restActive(c) ? 'Resting (hold to renew)' : 'Hold: Rest day'}</button>${restActive(c) ? '<span class="note" style="margin:0 0 0 6px">Rest day: schedule is sleep and meals, morale +' + REST_BOOST + '</span>' : ''}</div>
       ${bgHTML(c)}<div class="note">Aim ${pctS(c.stats.acc)} · Build ${pctS(c.stats.build)} · Cook ${pctS(c.stats.cook)} · Medic ${pctS(c.stats.med)} · Tech ${pctS(c.stats.tech)}${sf < 1 ? ` · <span style="color:var(--red)">working at ${Math.round(sf * 100)}% (tired)</span>` : ''}${c.grief > 0 ? ' · grieving' : ''}${bondNames.length ? `<br>Works better beside ${esc(bondNames.join(', '))}` : ''}<br>Morale ${Math.round(morale(c))}${morale(c) < 40 ? ' <span style="color:var(--red)">· slow' + (!c.named && c.loyalty < 1 ? ', might leave' : '') + '</span>' : ''}</div>
@@ -2345,13 +2926,16 @@ function buildHTML() {
     }
   }
   out.push('<div class="sec">ROOMS</div>');
-  if (S.rooms.kitchen < 2) out.push(item('Kitchen: grow lamps', 'Hydroponics grows 50% more food.', { elec: 3, mat: 8 }, 'upKitchen', true, 'Upgrade'));
+  if ((S.rooms.hydro || 1) < 2) out.push(item('Hydroponics: grow lamps', 'Hydroponics grows 50% more food.', { elec: 3, mat: 8 }, 'upHydro', true, 'Upgrade'));
   if (S.rooms.med < 2) out.push(item('Med bay: proper beds', 'Patients heal 50% faster.', { elec: 3, mat: 6 }, 'upMed', true, 'Upgrade'));
   if (S.rooms.bunks < 2) out.push(item('Bunks: real mattresses', 'A full rest takes 5 hours instead of 7.', { scrap: 10, mat: 10 }, 'upBunks', true, 'Upgrade'));
   out.push(`<div class="card bitem"><div><b>Dig tool (X)</b><p>Drag a box over the pit under the bunker to mark cells. Crew on the Miner job clear them: dirt is quick, clay slower, rock slow, hard stone very slow. Annex rooms are built in cleared chambers.</p></div><button class="btn ghost" data-build="toggleDig">${digTool ? 'On' : 'Off'}</button></div>`);
-  for (const [k, r] of Object.entries(BUILD_ROOMS)) if (!S.rooms[k]) { const sz = ROOM_CELLS[k], spot = findRoomSpot(k); out.push(item('Build ' + ROOMS[k].name, r.desc + ' Needs a cleared ' + sz.w + 'x' + sz.h + ' chamber in the pit' + (spot ? ': one is ready.' : ': dig one first.'), r.cost, 'room_' + k, !!spot)); }
+  for (const [k, r] of Object.entries(BUILD_ROOMS)) if (!S.rooms[k]) { const sz = ROOM_CELLS[k]; out.push(item('Build ' + ROOMS[k].name, r.desc + ' A ' + sz.w + 'x' + sz.h + ' tile room: you choose the spot on the pit grid, on cleared tiles that connect to the bunker.', r.cost, 'room_' + k, true, 'Place')); }
+  out.push(`<div class="card bitem"><div><b>Ladder segments (L)</b><p>One tile wide. In the pit, put one on a cleared tile that touches the floor above, a room or another ladder: crew only change rows on ladders and inside rooms. In the bunker, put one between two floors for a second route.</p><span class="cost">${fmtCost(LADDER_COST.pit)} per pit tile · ${fmtCost(LADDER_COST.bunker)} per floor gap</span></div><button class="btn ghost" data-build="toggleLadder">${placing && placing.kind === 'ladder' ? 'On' : 'Off'}</button></div>`);
+  for (const k of Object.keys(BUILD_ROOMS)) if (S.rooms[k] && dg().rooms[k] && !pitRoomReachable(k)) out.push(`<p class="note bad">${ROOMS[k].name}: no ladder route from the bunker yet. Dig and ladder a way down to it.</p>`);
+  if (!S.rooms.workshop) out.push('<p class="note bad">No workshop yet: nothing is repaired and nobody makes parts or weapons. Place one above.</p>');
   if (S.rooms.generator) out.push(`<p class="note">Generator: ${S.powered ? 'running, burning about ' + Math.round(ROOM_FX.fuelPerHour * 24) + ' scrap a day' : '<span style="color:var(--red)">OFF: out of scrap</span>'}</p>`);
-  out.push(`<div class="card bitem"><div><b>Workshop makes parts</b><p>When nothing needs repairing, workshop crew turn 2 scrap into 1 part.</p></div><button class="btn ghost" data-build="toggleParts">${S.makeParts ? 'On' : 'Off'}</button></div>`);
+  if (S.rooms.workshop) out.push(`<div class="card bitem"><div><b>Workshop makes parts</b><p>When nothing needs repairing, workshop crew turn 2 scrap into 1 part.</p></div><button class="btn ghost" data-build="toggleParts">${S.makeParts ? 'On' : 'Off'}</button></div>`);
   return out.join('');
 }
 function towerShort(c) { return Object.entries(c).filter(([k, v]) => (S.res[k] || 0) < v).map(([k, v]) => ({ k, need: v - Math.floor(S.res[k] || 0) })); }
@@ -2368,13 +2952,15 @@ function towerNote(c) {
 function towerHTML() {
   const st = S.tower.done, cur = TOWER[st], need = cur ? cur.work : 0;
   const workers = living().filter(c => c.job === 'signal');
-  return `<p class="note" style="margin:0">Finish all four stages to send the signal and win. Pay for a stage here, then give crew the Signal tower job. People with high Tech work faster.</p>
+  return `<p class="note" style="margin:0">${GOAL_KIND === 'vehicle' ? 'Finish all four stages to build the escape vehicle and drive everyone out.' : 'Finish all four stages to send the signal and win.'} Pay for a stage here, then give crew the Signal tower job. People with high Tech work faster.</p>
   <div class="stages">${TOWER.map((t, i) => `<div class="card stage ${i < st ? 'done' : i === st ? 'cur' : ''}"><span class="n">${i < st ? '✓' : i + 1}</span><div style="flex:1"><b>${t.name}</b><p class="note" style="margin:2px 0 0">${towerCostHTML(t.cost, i === st && !S.tower.paid)} · ${t.work} work</p>
     ${i === st ? (S.tower.paid ? `<div style="margin-top:6px">${bar(S.tower.work / need * 100, '#7fc8ff')}</div><p class="note">${Math.floor(S.tower.work)} / ${need} work · ${workers.length ? workers.map(w => esc(w.name)).join(', ') + ' on it' : '<span style="color:var(--red)">nobody is on the Signal tower job</span>'}</p>` : `<button class="btn" style="margin-top:6px" data-build="tower" ${canPay(t.cost) ? '' : 'disabled'}>Start this stage</button>${canPay(t.cost) ? '' : towerNote(t.cost)}`) : ''}</div></div>`).join('')}</div>`;
 }
 $('#dbody').addEventListener('click', e => {
   const j = e.target.closest('[data-job]'), s = e.target.closest('[data-shift]'), b = e.target.closest('[data-build]'), card = e.target.closest('[data-crew]');
   if (e.target.closest('[data-act="compact"]')) { crewView.compact = !compactOn(); renderDrawer(); return; }
+  const gb = e.target.closest('[data-gear]');
+  if (gb) { gearAct(gb.dataset.gear, gb.dataset.g, gb.dataset.id); renderDrawer(); renderHud(); return; }
   const br = e.target.closest('[data-brush]'), cell = e.target.closest('[data-cell]');
   if (br) { schedBrush = br.dataset.brush; renderDrawer(); return; }
   if (cell) { const c = S.crew.find(x => x.id === cell.dataset.id); if (c) { const a = ensureSched(c).split(''); a[+cell.dataset.cell] = schedBrush; c.sched = a.join(''); c.shift = 'custom'; c.restUntil = 0; c.restPrev = null; sel = c.id; } renderDrawer(); return; }
@@ -2411,9 +2997,8 @@ window.addEventListener('pointercancel', cancelRestHold);
 // ---- room items on a 30px tile grid (snap-to-grid build mode) ----
 const ITILE = 30, ITX0 = 180;
 const ITEM_TYPES = {
-  bench:   { name: 'Workbench', room: 'workshop', w: 3, cost: { scrap: 15 }, color: '#7a6a55' },
   stove:   { name: 'Stove',     room: 'kitchen',  w: 2, cost: { scrap: 12 }, color: '#8a6a42' },
-  planter: { name: 'Planter',   room: 'kitchen',  w: 2, cost: { scrap: 10 }, color: '#3a5a2a' },
+  planter: { name: 'Planter',   room: 'hydro',    w: 2, cost: { scrap: 10 }, color: '#3a5a2a' },
   cot:     { name: 'Med cot',   room: 'med',      w: 3, cost: { scrap: 14 }, color: '#d8d2c4' },
   bunk:    { name: 'Bunk',      room: 'bunks',    w: 2, cost: { scrap: 10 }, color: '#6a5a48' },
   table:   { name: 'Table',     room: 'common',   w: 3, cost: { scrap: 8 },  color: '#6b4b33' },
@@ -2422,8 +3007,8 @@ const ITEM_TYPES = {
 const ITEM_MAX_LVL = 3;
 // Starter furniture, all snapped to the 30px grid (col = (x - ITX0) / ITILE). Seeded lazily so old saves without items get it too.
 const DEFAULT_ITEM_LAYOUT = [
-  ['workshop', 'bench', 3], ['workshop', 'bench', 8],
-  ['kitchen', 'stove', 3], ['kitchen', 'planter', 6], ['kitchen', 'planter', 9], ['kitchen', 'planter', 12],
+  ['hydro', 'planter', 3], ['hydro', 'planter', 6], ['hydro', 'planter', 9], ['hydro', 'planter', 12], ['hydro', 'planter', 15],
+  ['kitchen', 'stove', 3],
   ['med', 'cot', 19], ['med', 'cot', 24], ['med', 'cot', 29],
   ['bunks', 'bunk', 3], ['bunks', 'bunk', 6], ['bunks', 'bunk', 9], ['bunks', 'bunk', 12], ['bunks', 'bunk', 15], ['bunks', 'bunk', 18],
   ['common', 'table', 26],
@@ -2507,6 +3092,14 @@ function drawItemSprite(type, x, yb, w, T) {
   }
   g.strokeStyle = 'rgba(0,0,0,.45)'; g.lineWidth = 1; g.strokeRect(x + 1.5, yb - 27.5, w - 3, 27);
 }
+// the pantry shelves where raw food is stored (cooks fetch crates from here)
+function drawPantry(yb) {
+  const x = PANTRY_X, n = Math.max(0, Math.min(6, Math.ceil(S.res.food / 10)));
+  box(x - 24, yb - 4, 48, 4, '#4a3a2a');
+  const spots = [[-22, 0], [-2, 0], [18, 0], [-12, -14], [8, -14], [-2, -28]];
+  for (let i = 0; i < n; i++) { const [dx, dy] = spots[i]; box(x + dx, yb - 18 + dy, 18, 14, i % 2 ? '#7a5c38' : '#8a6a42'); g.fillStyle = '#5a4228'; g.fillRect(x + dx, yb - 12 + dy, 18, 1.5); g.fillStyle = '#7ddc6f'; g.fillRect(x + dx + 4, yb - 20 + dy, 5, 3); }
+  g.fillStyle = 'rgba(255,214,150,.6)'; g.font = '600 10px "Chakra Petch"'; g.fillText('PANTRY', x - 18, yb - 48);
+}
 function drawItems(k, r) {
   if (!S || typeof r.x0 !== 'number') return;
   const yb = FLOORS[r.floor];
@@ -2522,6 +3115,7 @@ function drawItems(k, r) {
     g.fillStyle = '#ffd24a';
     for (let i = 0; i < (it.lvl || 1); i++) g.fillRect(x + 4 + i * 7, yb - 40, 5, 5);
   }
+  if (k === 'common') drawPantry(yb);
   if (itemTool && scene === 'bunker') {
     const c = itemCellAt(bcamToWorld({ x: mouse.x, y: mouse.y }));
     if (c && c.k === k) {
@@ -2531,7 +3125,7 @@ function drawItems(k, r) {
     }
   }
 }
-let itemTool = false, itemSel = 'bench';
+let itemTool = false, itemSel = 'stove';
 const itemUI = document.createElement('div');
 itemUI.style.cssText = 'position:fixed;left:10px;bottom:70px;z-index:40;display:none;font:600 12px "Chakra Petch",sans-serif;color:#ffd9a0;background:rgba(20,14,8,.9);border:1px solid #5a4428;padding:6px;border-radius:6px;max-width:220px';
 document.body.appendChild(itemUI);
@@ -2541,6 +3135,7 @@ function renderItemUI() {
 itemUI.addEventListener('click', e => {
   const b = e.target.closest('[data-it]'); if (!b) return;
   if (b.dataset.it === 'toggle') itemTool = !itemTool; else itemSel = b.dataset.it;
+  if (itemTool) placing = null;
   renderItemUI();
 });
 setInterval(() => {
@@ -2557,8 +3152,9 @@ function doBuild(a) {
   else if (/^turret\d/.test(a)) { const i = +a[6], k = a.slice(7), sp = TURRETS[k]; if (!canPay(sp.cost) || S.turrets[i]) return; pay(sp.cost); S.turrets[i] = { type: k, hp: sp.hp, max: sp.hp, lvl: 1, cd: 0 }; lamp(sp.name + ' built in slot ' + (i + 1) + (k === 'coil' ? '. It runs on generator power, no crew needed.' : '. Assign someone to it in Crew.'), 'good'); }
   else if (/^repT/.test(a)) rep(S.turrets[+a[4]]);
   else if (/^upT/.test(a)) { const c = { parts: 8, elec: 2 }; if (!canPay(c)) return; pay(c); S.turrets[+a[3]].lvl = 2; lamp('Turret ' + (+a[3] + 1) + ' upgraded.', 'good'); }
-  else if (a === 'upKitchen' || a === 'upMed' || a === 'upBunks') { const k = a.slice(2).toLowerCase(); const c = { kitchen: { elec: 3, mat: 8 }, med: { elec: 3, mat: 6 }, bunks: { scrap: 10, mat: 10 } }[k]; if (!canPay(c)) return; pay(c); S.rooms[k] = 2; lamp(ROOMS[k].name + ' upgraded.', 'good'); }
-  else if (/^room_/.test(a)) { const k = a.slice(5), r = BUILD_ROOMS[k]; if (!r || S.rooms[k] || !canPay(r.cost)) return; const spot = findRoomSpot(k); if (!spot) { lamp('The ' + ROOMS[k].name + ' needs a cleared chamber in the pit first. Use the Dig tool (X).', 'warn'); return; } pay(r.cost); claimRoom(k, spot); S.rooms[k] = 1; lamp(ROOMS[k].name + ' built in the pit. ' + r.done, 'good'); }
+  else if (a === 'upHydro' || a === 'upMed' || a === 'upBunks') { const k = a.slice(2).toLowerCase(); const c = { hydro: { elec: 3, mat: 8 }, med: { elec: 3, mat: 6 }, bunks: { scrap: 10, mat: 10 } }[k]; if (!canPay(c)) return; pay(c); S.rooms[k] = 2; lamp(ROOMS[k].name + ' upgraded.', 'good'); }
+  else if (/^room_/.test(a)) { const k = a.slice(5), r = BUILD_ROOMS[k]; if (!r || S.rooms[k]) return; if (!canPay(r.cost)) { lamp('The ' + ROOMS[k].name + ' needs ' + fmtCost(r.cost) + '.', 'warn'); return; } startPlace({ kind: 'room', k }); }
+  else if (a === 'toggleLadder') { if (placing && placing.kind === 'ladder') cancelPlace(); else startPlace({ kind: 'ladder' }); }
   else if (a === 'toggleParts') S.makeParts = !S.makeParts;
   else if (a === 'toggleDig') toggleDig();
   else if (a === 'tower') { const t = TOWER[S.tower.done]; if (!t || S.tower.paid || !canPay(t.cost)) return; pay(t.cost); S.tower.paid = true; S.tower.work = 0; lampEv('exit_build_start', 'Signal tower: work on the ' + t.name.toLowerCase() + ' can begin. Put people with Tech on the Signal tower job.', 'good'); }
@@ -2591,7 +3187,7 @@ function interactable() {
   if (scene === 'bunker' && P.floor === 0 && P.x > W - 60 && !S.player.down) return { text: 'E · Go scavenging in the wasteland (time keeps running)', act: () => startScav('wasteland') };
   if (scene === 'bunker' && P.floor === 0 && P.x > W - 180 && P.x <= W - 60 && !S.player.down) return { text: 'E · Go to the dead town (food, materials, Pike\'s ram rig patrols)', act: () => startScav('town') };
   if (scene === 'scav' && scav) {
-    if (P.x < 70) return { text: 'E · Return to the bunker', act: () => endScav(true) };
+    if (scav.flip ? P.x > scav.home - 70 : P.x < 70) return { text: 'E · Return to the bunker', act: () => endScav(true) };
     const c = scav.crates.find(c => !c.open && Math.abs(c.x - P.x) < 30 && Math.abs(c.y - P.y) < 30);
     if (c) return { text: 'E · Search the ' + (c.kind === 'car' ? 'wreck' : c.kind), act: () => openCrate(c) };
     const w = scav.wanderer;
@@ -2615,6 +3211,7 @@ cv.addEventListener('pointerdown', e => {
   if (scene !== 'bunker' && scene !== 'scav') return;
   const p = toCanvas(e);
   if (e.button === 2 && scene === 'bunker') { bcam.pan = { x: p.x, y: p.y }; return; }
+  if (e.button === 0 && placing && scene === 'bunker' && S) { placeClick(bcamToWorld(p)); return; }
   if (e.button === 0 && itemTool && scene === 'bunker' && S) { placeItem(bcamToWorld(p), e.shiftKey); return; }
   if (e.button === 0 && digTool && scene === 'bunker' && S) { digStart(bcamToWorld(p), e.shiftKey); return; }
   const bp = scene === 'bunker' ? bcamToWorld(p) : p;
@@ -2645,7 +3242,7 @@ function bcamFocus(id) { bcam.follow = id; bcam.tz = Math.max(bcam.tz, 1.8); }
 function bcamReset() { bcam.follow = null; bcam.anchor = null; bcam.tz = 1; bcam.cx = W / 2; bcam.cy = H / 2; }
 // ---- overview mode + Mara autopilot ----
 const MARA_STATS = { cook: 0.7, tech: 0.7, build: 0.7, acc: 0.7 };
-const MARA_JOBS = ['workshop', 'signal', 'kitchen', 'idle'];
+const MARA_JOBS = ['workshop', 'signal', 'kitchen', 'hydro', 'idle'];
 function toggleOverview() {
   if (scene !== 'bunker' || !S || S.over || S.player.down) return;
   bcam.overview = !bcam.overview;
@@ -2659,15 +3256,19 @@ function toggleOverview() {
 }
 function endOverview() {
   bcam.overview = false; P.auto = false; P.autoWork = null;
+  if (P.pit) { P.pit = false; P.pp = null; P.floor = 3; P.climbing = false; P.x = clamp(P.x, IN_L + 8, IN_R - 8); }   // Mara pops back up to floor 3
   P.onLadder = !!P.climbing;
   if (!P.onLadder) { P.climbing = false; P.y = FLOORS[P.floor]; P.vy = 0; P.grounded = true; }
   bcamReset();
 }
 function maraAuto(dt) {
-  let floor, x, work = null;
+  let floor, x, work = null, pitSpot = null;
   if (S.alarm) { floor = 0; x = 290; }
-  else { work = (S.player.job && MARA_JOBS.includes(S.player.job)) ? S.player.job : 'idle'; const sp = jobSpot(P, work); floor = sp.floor; x = sp.x; }
-  const arrived = moveTo(P, floor, x, dt, 175);
+  else { work = (S.player.job && MARA_JOBS.includes(S.player.job)) ? S.player.job : 'idle'; if (work === 'workshop' && !S.rooms.workshop) work = 'idle'; const sp = jobSpot(P, work); floor = sp.floor; x = sp.x; if (sp.pit) pitSpot = sp; }
+  let arrived;
+  if (pitSpot) arrived = pitGoto(P, pitSpot, dt, 175);
+  else if (P.pit) { arrived = false; if (pitLeave(P, dt, true)) arrived = moveTo(P, floor, x, dt, 175); }
+  else arrived = moveTo(P, floor, x, dt, 175);
   P.onLadder = !!P.climbing;
   P.anim += arrived ? 0 : dt * 10;
   P.autoWork = arrived && !S.alarm ? work : null;
@@ -2683,8 +3284,8 @@ function maraWorkTick(mins) {
   const m = { stats: MARA_STATS, food: 100, awake: 0, grief: 0, bonds: [], state: 'work', job, xp: 0, lvl: 1, cd: 0 };
   const e = eff(m) * (S.powered && POWERED_JOBS.includes(job) ? ROOM_FX.powerBoost : 1);
   switch (job) {
+    case 'hydro': S.res.food += 1.3 * m.stats.cook * e * h * (S.rooms.hydro > 1 ? 1.5 : 1); break;
     case 'kitchen': {
-      S.res.food += 1.3 * m.stats.cook * e * h * (S.rooms.kitchen > 1 ? 1.5 : 1);
       const k = kit();
       if (k.cooked < k.cap) {
         k.prog += 4 * m.stats.cook * e * h;
@@ -2777,10 +3378,11 @@ window.addEventListener('keydown', e => {
   if (k === 'v') toggleDbgCrew();
   if (k === '`') toggleTunePanel();
   if (k === 'x' && scene === 'bunker' && S) toggleDig();
+  if (k === 'l' && scene === 'bunker' && S) { if (placing && placing.kind === 'ladder') cancelPlace(); else startPlace({ kind: 'ladder' }); }
   if (k === 'p') { paused = !paused; renderHud(); }
   if (k === '1' || k === '2' || k === '3') setSpeed(k === '3' ? 4 : +k);
   if ((k === '[' || k === ']') && scene === 'bunker' && S) cycleCrew(k === ']' ? 1 : -1);
-  if (k === 'escape') { if (!$('#drawer').hidden) closeDrawer(); else showPauseMenu(); }
+  if (k === 'escape') { if (placing) cancelPlace(); else if (!$('#drawer').hidden) closeDrawer(); else showPauseMenu(); }
 });
 window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 // cycle the selected survivor through living crew (same effect as clicking a crew card)
@@ -2857,10 +3459,16 @@ function showMenu() {
   overlay(`<div class="menu"><h1>ASHFALL<br>BUNKER</h1><p class="sub">Twenty years after the bombs. A hole in the ground, a handful of people, and a dead signal tower that might be a way out.</p>
     ${sv ? `<button class="btn" id="mContinue">Continue · Day ${Math.floor(sv.S.t / 1440) + 1}</button>` : ''}<button class="btn ${sv ? 'ghost' : ''}" id="mNew">New run</button><button class="btn ghost" id="mHelp">How to play</button><button class="btn ghost" id="mSet">Settings</button>
     <p class="sub" style="font-size:12.5px">Web prototype · stage 1</p></div>`);
-  $('#mNew').onclick = () => { clearSave(); newRun(); start(); tutStart(); };
+  $('#mNew').onclick = () => {
+    overlay(`<div class='menu'><h1>CHOOSE YOUR WAY OUT</h1><p class='sub'>Pick the goal for this run. The signal tower calls for rescue. The escape vehicle drives everyone out.</p><button class='btn' id='gTower'>Signal tower</button><button class='btn' id='gVehicle'>Escape vehicle</button><button class='btn ghost' id='gBack'>Back</button></div>`);
+    const go = k => { clearSave(); newRun(k); start(); tutStart(); };
+    $('#gTower').onclick = () => go('tower');
+    $('#gVehicle').onclick = () => go('vehicle');
+    $('#gBack').onclick = () => showMenu();
+  };
   $('#mHelp').onclick = () => showHelp(false);
   $('#mSet').onclick = () => showSettings('menu');
-  if (sv) $('#mContinue').onclick = () => { try { migrateSave(sv); } catch (e) { clearSave(); newRun(); start(); return; } S = sv.S; uid = 1 + S.crew.length + 1000; placePlayer('bunker'); if (sv.P) { P.x = sv.P.x; P.y = sv.P.y; P.floor = Math.max(0, FLOORS.findIndex(y => Math.abs(y - P.y) < 3)); } logs.length = 0; lamp('Welcome back, Mara. ' + summaryLine()); start(); };
+  if (sv) $('#mContinue').onclick = () => { try { migrateSave(sv); } catch (e) { clearSave(); newRun(); start(); return; } S = sv.S; setGoal(S.goalKind || 'tower'); uid = 1 + S.crew.length + 1000; placePlayer('bunker'); if (sv.P) { P.x = sv.P.x; P.y = sv.P.y; P.floor = Math.max(0, FLOORS.findIndex(y => Math.abs(y - P.y) < 3)); } logs.length = 0; lamp('Welcome back, Mara. ' + summaryLine()); start(); };
 }
 // help dialog: keyboard navigable (Esc/H close, arrows/PgUp/PgDn/Home/End scroll, Tab trapped)
 function helpKey(e, k) {
@@ -2948,9 +3556,21 @@ function showSettings(from) {
   });
   $('#sBack').focus();
 }
+function pauseVolHtml() {
+  const rows = [['music', 'Music'], ['fx', 'Effects'], ['narr', 'Narrator']].map(([k, label]) => { const v = Math.round(((window.SFX && SFX.getVol) ? SFX.getVol(k) : 1) * 100); return `<label class="srow"><span>${label}</span><input type="range" min="0" max="100" step="1" value="${v}" data-vol="${k}" aria-label="${label} volume"><b>${v}%</b></label>`; }).join('');
+  return `<div class="setp" style="margin:10px 0"><h3>VOLUME</h3>${rows}</div>`;
+}
+function bindPauseVol() {
+  document.querySelectorAll('#overlay input[data-vol]').forEach(inp => {
+    const out = inp.parentNode.querySelector('b');
+    inp.oninput = () => { if (window.SFX && SFX.setVol) SFX.setVol(inp.dataset.vol, inp.value / 100); out.textContent = inp.value + '%'; };
+    inp.onchange = () => { if (inp.dataset.vol === 'fx' && window.SFX && SFX.preview) SFX.preview(); };
+  });
+}
 function showPauseMenu() {
   paused = true; renderHud();
-  overlay(`<div class="menu"><h1 style="font-size:40px">PAUSED</h1><button class="btn" id="pRes">Resume</button><button class="btn ghost" id="pHelp">How to play</button><button class="btn ghost" id="pSet">Settings</button><button class="btn ghost" id="pMenu">Save and quit to menu</button></div>`);
+  overlay(`<div class="menu"><h1 style="font-size:40px">PAUSED</h1>${pauseVolHtml()}<button class="btn" id="pRes">Resume</button><button class="btn ghost" id="pHelp">How to play</button><button class="btn ghost" id="pSet">Settings</button><button class="btn ghost" id="pMenu">Save and quit to menu</button></div>`);
+  bindPauseVol();
   $('#pRes').onclick = () => { overlay(''); paused = false; renderHud(); };
   $('#pHelp').onclick = () => showHelp(true);
   $('#pSet').onclick = () => showSettings('pause');
@@ -3010,7 +3630,7 @@ function summaryHtml() {
   let goalPct = Math.round(Math.min(1, (tw.done + part) / TOWER.length) * 100);
   if (S.goal && typeof S.goal.pct === 'number') goalPct = Math.round(clamp(S.goal.pct, 0, 1) * 100);
   if (S.won) goalPct = 100;
-  const goalLine = S.goal && S.goal.name ? esc(S.goal.name) : 'signal tower stage <b>' + Math.min(tw.done, TOWER.length) + '</b> of ' + TOWER.length + ' complete';
+  const goalLine = S.goal && S.goal.name ? esc(S.goal.name) : (GOAL_KIND === 'vehicle' ? 'escape vehicle' : 'signal tower') + ' stage <b>' + Math.min(tw.done, TOWER.length) + '</b> of ' + TOWER.length + ' complete';
   return `<div style="text-align:left;margin:10px auto;max-width:520px;font-size:15px;line-height:1.5">`
     + `<div>Days survived: <b>${day()}</b></div>`
     + `<div>Crew alive: <b>${living().length}</b> · lost: <b>${lost.length}</b>${lost.length ? ' (' + esc(lost.join(', ')) + ')' : ''}</div>`
@@ -3028,10 +3648,10 @@ function gameOver(won) {
   else narrPlay(narrPick('defeat'));
   const alive = living().map(c => c.name);
   overlay(won
-    ? `<div class="menu"><h1 style="font-size:46px">THE SIGNAL IS OUT</h1><p class="sub">Lamp reads the reply aloud, slowly, the way it reads old maintenance logs: <i>“Bunker 12. We hear you. Hold on. We are coming.”</i> Somewhere above the ash, Nell would finally see the sky.</p>
+    ? `<div class="menu"><h1 style="font-size:46px">${S.goalKind === 'vehicle' ? 'THE WAY OUT IS OPEN' : 'THE SIGNAL IS OUT'}</h1><p class="sub">Lamp reads the reply aloud, slowly, the way it reads old maintenance logs: <i>“Bunker 12. We hear you. Hold on. We are coming.”</i> Somewhere above the ash, Nell would finally see the sky.</p>
        <p class="sub"><b>Lamp:</b> <i>“${esc(winLine)}”</i></p>${summaryHtml()}<button class="btn" id="oNew">Play again</button></div>`
     : `<div class="menu"><h1 style="font-size:46px">THE BUNKER IS SILENT</h1><p class="sub">Lamp keeps reading the maintenance logs to empty rooms.</p>${summaryHtml()}<button class="btn" id="oNew">Try again</button></div>`);
-  $('#oNew').onclick = () => { newRun(); start(); };
+  $('#oNew').onclick = () => { newRun(S && S.goalKind); start(); };
   $('#oNew').focus();
 }
 
@@ -3108,12 +3728,13 @@ function safeShowMenu() {
     if (scene === 'menu' && !(o && o.innerHTML.trim())) fallbackStart();
   }, 1500);
 }
+// register global error hooks first so startup failures and rejections are reported
+window.addEventListener('error', ev => fatal(ev.error || ev.message));
+window.addEventListener('unhandledrejection', ev => fatal(ev.reason || 'Unhandled promise rejection'));
 try {
   quiet = true; newRun(); quiet = false;
 } catch (e) { quiet = false; fatal(e); }
 safeShowMenu();
 requestAnimationFrame(frame);
-window.addEventListener('error', ev => fatal(ev.error || ev.message));
-window.addEventListener('unhandledrejection', ev => fatal(ev.reason || 'Unhandled promise rejection'));
 // for automated tests
 window.__ab = { get S() { return S; }, get P() { return P; }, get scene() { return scene; }, newRun, start, simTick, startScav, endScav, doBuild, toggleAlarm, setSpeed };

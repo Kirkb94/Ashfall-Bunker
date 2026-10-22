@@ -116,5 +116,63 @@ const VEC_MODELS = {
       {"id":"glint R","k":"circ","x":8,"y":-33.4,"r":0.9,"c":"#fff0cc"},
       {"id":"left claw","k":"rr","x":-27,"y":-6,"w":8,"h":6,"r":3,"c":["color",0.85]},
       {"id":"right claw","k":"rr","x":19,"y":-7,"w":9,"h":7,"r":3,"c":["color",0.85]}
+    ] },
+  // ---- held items: the grip sits at x 0 and y -12 (the game moves that point onto the hand), pointing right. ----
+  g_pipe: { label: "Pipe club", kind: "item", shadow: 0, note: "Held item. Melee.", color: "#8a8a90", looks: [{"id":"default","label":"Pipe club","color":"#8a8a90"}],
+    parts: [
+      {"id":"pipe","k":"rr","x":-6,"y":-14,"w":26,"h":4,"r":2,"c":"#8a8a90"},
+      {"id":"cap","k":"rr","x":17,"y":-15,"w":4,"h":6,"r":1.5,"c":"#6a6a70"},
+      {"id":"tape","k":"rr","x":-6,"y":-14.4,"w":8,"h":4.8,"r":1.5,"c":"#3a2e22"}
+    ] },
+  g_machete: { label: "Machete", kind: "item", shadow: 0, note: "Held item. Melee.", color: "#b8bcc0", looks: [{"id":"default","label":"Machete","color":"#b8bcc0"}],
+    parts: [
+      {"id":"handle","k":"rr","x":-6,"y":-13.5,"w":9,"h":3,"r":1.2,"c":"#4a3a2a"},
+      {"id":"guard","k":"rr","x":2.4,"y":-15.2,"w":2,"h":6.4,"r":0.8,"c":"#2a2a2e"},
+      {"id":"blade","k":"rr","x":4,"y":-14.6,"w":18,"h":4.4,"r":1.8,"c":"#b8bcc0"},
+      {"id":"edge","k":"line","x1":5,"y1":-10.6,"x2":21,"y2":-10.6,"w":0.8,"c":"#e8ecf0"}
+    ] },
+  g_pistol: { label: "Pistol", kind: "item", shadow: 0, note: "Held item. Sidearm.", color: "#3a3a40", looks: [{"id":"default","label":"Pistol","color":"#3a3a40"}],
+    parts: [
+      {"id":"grip","k":"rr","x":-3,"y":-11,"w":4.5,"h":8,"r":1.6,"c":"#2a2a2e"},
+      {"id":"slide","k":"rr","x":-4,"y":-16,"w":15,"h":5,"r":1.6,"c":"#3a3a40"},
+      {"id":"barrel","k":"rr","x":10,"y":-15.2,"w":4,"h":2.8,"r":1,"c":"#55555c"},
+      {"id":"sight","k":"rr","x":-3,"y":-17,"w":1.6,"h":1.4,"r":0.4,"c":"#55555c"}
+    ] },
+  g_smg: { label: "SMG", kind: "item", shadow: 0, note: "Held item. Rapid fire.", color: "#3a3a3e", looks: [{"id":"default","label":"SMG","color":"#3a3a3e"}],
+    parts: [
+      {"id":"stock","k":"rr","x":-12,"y":-15,"w":7,"h":3,"r":1,"c":"#5a4a3a"},
+      {"id":"body","k":"rr","x":-5,"y":-16.5,"w":17,"h":5.6,"r":1.8,"c":"#3a3a3e"},
+      {"id":"mag","k":"rr","x":0,"y":-11,"w":3.6,"h":9,"r":1,"c":"#2a2a2e"},
+      {"id":"barrel","k":"rr","x":11,"y":-15.4,"w":7,"h":2.4,"r":1,"c":"#55555c"},
+      {"id":"grip","k":"rr","x":-4,"y":-11,"w":3.6,"h":6,"r":1.4,"c":"#2a2a2e"}
+    ] },
+  g_shotgun: { label: "Shotgun", kind: "item", shadow: 0, note: "Held item. Short range.", color: "#4a4a50", looks: [{"id":"default","label":"Shotgun","color":"#4a4a50"}],
+    parts: [
+      {"id":"stock","k":"rr","x":-13,"y":-15,"w":12,"h":5,"r":1.8,"c":"#6a4a2a"},
+      {"id":"receiver","k":"rr","x":-3,"y":-16.4,"w":9,"h":5,"r":1.5,"c":"#3a3a40"},
+      {"id":"barrel","k":"rr","x":5,"y":-15.8,"w":22,"h":2.6,"r":1.1,"c":"#4a4a50"},
+      {"id":"pump","k":"rr","x":9,"y":-13,"w":9,"h":3,"r":1.4,"c":"#6a4a2a"}
+    ] },
+  g_rifle: { label: "Rifle", kind: "item", shadow: 0, note: "Held item. Long range.", color: "#4a4a50", looks: [{"id":"default","label":"Rifle","color":"#4a4a50"}],
+    parts: [
+      {"id":"stock","k":"rr","x":-14,"y":-15.4,"w":10,"h":5,"r":1.8,"c":"#6a4a2a"},
+      {"id":"receiver","k":"rr","x":-5,"y":-17,"w":11,"h":5,"r":1.5,"c":"#3a3a40"},
+      {"id":"barrel","k":"rr","x":5,"y":-16,"w":25,"h":2.2,"r":1,"c":"#4a4a50"},
+      {"id":"scope","k":"rr","x":-1,"y":-20,"w":9,"h":2.4,"r":1.1,"c":"#2a2a30"},
+      {"id":"mag","k":"rr","x":1,"y":-12,"w":3,"h":5.5,"r":1,"c":"#2a2a2e"}
+    ] },
+  g_meal: { label: "Cooked meal", kind: "item", shadow: 0, note: "Held item. A plate of cooked food, carried from the kitchen to the serving station and the table.", color: "#d8cfbf", looks: [{"id":"default","label":"Cooked meal","color":"#d8cfbf"}],
+    parts: [
+      {"id":"plate","k":"ell","x":0,"y":-10,"rx":7,"ry":2.2,"c":"#d8cfbf"},
+      {"id":"food","k":"rr","x":-4,"y":-14.6,"w":8,"h":4.6,"r":2.3,"c":"#c9843a"},
+      {"id":"veg","k":"circ","x":-1.5,"y":-13.5,"r":1.6,"c":"#7ddc6f"},
+      {"id":"shine","k":"circ","x":1.6,"y":-14,"r":0.9,"c":"#f2cf8a"}
+    ] },
+  g_crate: { label: "Raw food crate", kind: "item", shadow: 0, note: "Held item. Raw food carried from storage to the kitchen.", color: "#8a6a42", looks: [{"id":"default","label":"Raw food crate","color":"#8a6a42"}],
+    parts: [
+      {"id":"box","k":"rr","x":-7,"y":-16,"w":14,"h":10,"r":1.5,"c":"#8a6a42"},
+      {"id":"slat","k":"line","x1":-7,"y1":-12,"x2":7,"y2":-12,"w":1,"c":"#5a4228"},
+      {"id":"greens","k":"circ","x":-3,"y":-17,"r":2.4,"c":"#7ddc6f"},
+      {"id":"tomato","k":"circ","x":2,"y":-17.4,"r":2.2,"c":"#d96a3a"}
     ] }
 };

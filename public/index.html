@@ -54,7 +54,6 @@
   .tools button:hover{border-color:var(--amber);background:rgba(58,44,26,.98);color:#fff}
   .tools button:active{background:rgba(26,19,10,.98);border-color:var(--amber2);transform:translateY(1px)}
   .tools button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
-  .tools button.on{border-color:var(--red);color:var(--red);font-weight:600}
   .tools kbd{font:600 11px var(--disp);opacity:.85;margin-left:5px}
   .prompt{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--amber);border-radius:8px;padding:7px 14px;font-weight:600;pointer-events:none;white-space:nowrap}
   .prompt:empty{display:none}
@@ -269,7 +268,6 @@
     <button id="tTa" aria-pressed="false" title="Scavenging: tap or drag on the screen to aim and shoot">Touch aim: off</button>
     <button id="tDbg" aria-pressed="false" title="Show each survivor's food, rest, health and state">Crew debug<kbd>V</kbd></button>
     <button id="tPathStress" aria-pressed="false" title="Dev: re-path 100 crew every frame on a synthetic graph and show timings">Path stress</button>
-    <button id="tPathStress" aria-pressed="false" title="Dev: re-path 100 crew every frame on a synthetic graph and show timings">Path stress</button>
   </div>
   <div class="prompt" id="prompt"></div>
   <div class="hint" id="hint" role="status" hidden></div>
@@ -283,11 +281,11 @@
   </div>
   <aside class="drawer" id="drawer" hidden>
     <div class="tabs" role="tablist">
-      <button data-tab="crew" role="tab">CREW</button><button data-tab="build" role="tab">BUILD</button><button data-tab="tower" role="tab">TOWER</button><button data-tab="rel" role="tab">REL</button><button data-tab="log" role="tab">LOG</button><button class="x" id="dClose" aria-label="Close panel">✕</button>
+      <button data-tab="crew" role="tab">CREW</button><button data-tab="build" role="tab">BUILD</button><button data-tab="gear" role="tab">GEAR</button><button data-tab="tower" role="tab">TOWER</button><button data-tab="rel" role="tab">REL</button><button data-tab="log" role="tab">LOG</button><button class="x" id="dClose" aria-label="Close panel">✕</button>
     </div>
     <div class="dbody" id="dbody"></div>
   </aside>
-  <div class="overlay" id="overlay"><div style="color:#e8d9b8;font-family:inherit;padding:16px"><div style="font-size:22px;letter-spacing:.04em">Ashfall Bunker – loading…</div><div style="margin-top:10px;font-size:14px;opacity:.8">Stuck on this screen? <a href="" onclick="location.reload();return false" style="color:#ffb347">Reload</a> the page (Ctrl+R / pull to refresh).</div></div></div>
+  <div class="overlay" id="overlay"><div role="status" style="color:#e8d9b8;font-family:inherit;padding:16px"><noscript><div style="color:#ffb347;margin-bottom:10px">JavaScript is required to play Ashfall Bunker.</div></noscript><div style="font-size:22px;letter-spacing:.04em">Ashfall Bunker – loading…</div><div style="margin-top:10px;font-size:14px;opacity:.8">Stuck on this screen? <a href="" onclick="location.reload();return false" style="color:#ffb347">Reload</a> the page (Ctrl+R / pull to refresh).</div></div></div>
 </div></div>
 <div id="rotate">Rotate your device to landscape to play</div>
 <script>

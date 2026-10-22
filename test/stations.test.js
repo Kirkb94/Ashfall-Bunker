@@ -24,6 +24,8 @@ const parts = [
   grab(/function loadStationsConfig\(\) \{[\s\S]*?\n\}\n/, 'loadStationsConfig'),
   grab(/const CAPPED_JOBS = [^\n]*/, 'CAPPED_JOBS'),
   grab(/function targetJob\([\s\S]*?\n\}\n/, 'targetJob'),
+  grab(/function waitDelay\\([^\\n]*/, 'waitDelay'),
+  grab(/function leaveState\\([\\s\\S]*?\\n\\}\\n/, 'leaveState'),
 ];
 
 // opts.cfg: object returned by fake fetch; opts.http: status code; opts.fail: reject fetch
@@ -40,7 +42,7 @@ function load(opts) {
     + 'const living = () => state.crew;\n'
     + 'const baseJob = c => c.base;\n'
     + parts.join('\n')
-    + '\nreturn { STATIONS, CAPPED_JOBS, loadStationsConfig, targetJob };';
+    + '\nreturn { STATIONS, CAPPED_JOBS, loadStationsConfig, targetJob, waitDelay, leaveState };';
   const api = new Function('fetch', 'console', 'state', body)(fakeFetch, { warn: m => warnings.push(m) }, state);
   return Object.assign(api, { warnings, state });
 }
@@ -183,4 +185,47 @@ test('targetJob: capacity 0 sends everyone to idle', async () => {
   await g.loadStationsConfig();
   g.state.crew.push(mk(1, 'kitchen'), mk(2, 'kitchen'));
   assert.deepStrictEqual(g.state.crew.map(c => g.targetJob(c)), ['idle', 'idle']);
+});
+
+test('waitDelay: exponential backoff, capped at 30 game minutes (no jitter)', () => {
+  const g = load();
+  const real = Math.random;
+  Math.random = () => 0;
+  try {
+    assert.deepStrictEqual([0, 1, 2, 3, 4, 5, 9].map(t => g.waitDelay(t)), [4, 8, 16, 30, 30, 30, 30]);
+  } finally { Math.random = real; }
+});
+
+test('waitDelay: jitter adds 0-40% on top of the base and actually varies', () => {
+  const g = load();
+  const bases = [4, 8, 16, 30, 30];
+  for (let t = 0; t < bases.length; t++) {
+    const seen = new Set();
+    for (let i = 0; i < 200; i++) {
+      const d = g.waitDelay(t);
+      assert.ok(d >= bases[t] && d <= bases[t] * 1.4, 'tries ' + t + ' delay ' + d);
+      seen.add(d);
+    }
+    assert.ok(seen.size > 1, 'jitter should vary for tries ' + t);
+  }
+});
+
+test('leaveState: normal job release keeps the wait timer, drops the bed', () => {
+  const g = load();
+  const c = { bed: { id: 1 }, wait: { job: 'workshop', tries: 2, until: 99 }, queued: 1 };
+  g.leaveState(c, 'job');
+  assert.strictEqual(c.bed, null);
+  assert.deepStrictEqual(c.wait, { job: 'workshop', tries: 2, until: 99 });
+  assert.strictEqual(c.queued, 1);
+});
+
+test('leaveState: fight, dead and left clear wait, queue and bed', () => {
+  const g = load();
+  for (const why of ['fight', 'dead', 'left']) {
+    const c = { bed: { id: 1 }, wait: { job: 'med', tries: 1, until: 50 }, queued: 3 };
+    g.leaveState(c, why);
+    assert.strictEqual(c.wait, null, why);
+    assert.strictEqual(c.queued, 0, why);
+    assert.strictEqual(c.bed, null, why);
+  }
 });

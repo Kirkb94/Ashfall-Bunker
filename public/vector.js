@@ -242,6 +242,9 @@ const VEC = (function () {
     hasEnemy(type) { return hasModel(type); },
     enemy(g, type, color, frame, flip, t) { drawModel(g, type, { color, frame, flip, t }); },
     item, door, wall, turret, roomProp, WEAR,
+    // a held item model (g_pipe, g_rifle, g_meal ...), grip at x 0 / y -12, pointing right; flip mirrors it
+    gear(g, id, flip) { drawModel(g, id, { flip }); },
+    hasGear: (id) => typeof VEC_MODELS !== 'undefined' && !!VEC_MODELS[id],
     // on/off and rust strength (0 to 1.5); rebakes everything
     setWear(on, rust) { WEAR.on = !!on; WEAR.rust = rust == null ? 1 : rust; bakeCache.clear(); }
   };

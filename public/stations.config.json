@@ -8,6 +8,7 @@
     "workshop": { "capacity": 4 },
     "signal": { "capacity": 3 },
     "kitchen": { "capacity": 4 },
+    "hydro": { "capacity": 3 },
     "med": { "capacity": 3 },
     "sleep": { "capacity": 20 },
     "idle": { "capacity": null }
