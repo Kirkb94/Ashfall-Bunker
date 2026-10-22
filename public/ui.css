@@ -85,6 +85,8 @@ body.touch [data-tip]::after{display:none}
 .menu .btn{font-size:17px;min-height:50px;min-width:260px}
 .menu h1{font-weight:700}
 .help,.setp{border-radius:0}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+#overlay button:focus-visible,#overlay input:focus-visible,#overlay [tabindex]:focus-visible,.tools button:focus-visible,.tabs button:focus-visible{outline:3px solid var(--amber);outline-offset:2px}
 
 /* ---------- touch ---------- */
 body.touch .tools button{min-height:var(--tap,48px)}

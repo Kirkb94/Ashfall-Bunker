@@ -168,6 +168,8 @@
   .hint kbd{font:600 12px var(--disp);background:#2d2215;border-radius:4px;padding:1px 5px}
   .hint button{background:none;border:1px solid var(--line);border-radius:5px;padding:1px 7px}
   body.touch .hint{bottom:170px;font-size:15px}
+  .hint .hintbody{display:flex;flex-direction:column;gap:3px;font-size:13px;line-height:1.4}
+  .hint button{white-space:nowrap;min-height:28px}
   .help:focus-visible,.menu .btn:focus-visible,.hint button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
   .help .touchonly{display:none}
   body.touch .help .touchonly{display:list-item}
@@ -251,8 +253,25 @@
   .keys dt{white-space:nowrap}
   .keys dd{margin:0;color:var(--muted)}
   .setp kbd{font:600 12px var(--disp);background:#2d2215;border-radius:4px;padding:1px 5px;margin-right:3px}
+  /* mobile: safe-area insets in stage px (set by fit()), collapsible drawer, larger drawer targets */
+  .dcollapse{display:none}
+  body.touch .tabs .dcollapse{display:inline-flex;align-items:center;justify-content:center;flex:0 0 var(--tap,44px);min-width:var(--tap,44px);font:700 20px var(--disp);letter-spacing:0;padding:0}
+  body.touch .tabs .x{flex:0 0 var(--tap,44px);min-width:var(--tap,44px)}
+  body.touch .tabs button.on{padding-left:8px;padding-right:8px}
+  body.touch .hud{padding-left:max(12px,var(--sal,0px));padding-right:max(12px,var(--sar,0px));padding-top:var(--sat,0px)}
+  body.touch .tools{left:calc(12px + var(--sal,0px))}
+  body.touch #topstack{left:calc(12px + var(--sal,0px))!important}
+  body.touch .log{right:calc(12px + var(--sar,0px))}
+  body.touch .dopen .log{right:calc(470px*var(--u,1) + 16px + var(--sar,0px))}
+  body.touch .drawer{right:calc(8px + var(--sar,0px))}
+  body.touch #touch .pl{left:max(14px,var(--sal,0px));bottom:max(14px,var(--sab,0px))}
+  body.touch #touch .pr{right:max(14px,var(--sar,0px));bottom:max(14px,var(--sab,0px))}
+  body.touch .drawer.collapsed{bottom:auto;width:auto;max-width:none}
+  body.touch .drawer.collapsed .dbody,body.touch .drawer.collapsed .scrollcue,body.touch .drawer.collapsed .tabs [data-tab]{display:none}
+  body.touch .drawer.collapsed .tabs{border-bottom:0}
+  body.touch .dopen.dcol .log{right:calc(var(--tap,44px)*2 + 24px + var(--sar,0px))}
 </style>
-<link rel="stylesheet" href="ui.css?v=5">
+<link rel="stylesheet" href="ui.css?v=6">
 </head>
 <body>
 <div id="stage"><div id="wrap">
@@ -262,7 +281,7 @@
     <div id="goals" style="max-width:230px;padding:6px 10px;background:#120d08cc;border:1px solid var(--line);font-size:12px;line-height:1.5;pointer-events:none" hidden></div>
   </div>
   <div class="scavhud" id="scavhud" hidden></div>
-  <div class="log" id="log" aria-live="polite"></div>
+  <div class="log" id="log" aria-live="off"></div>
   <div class="tools" id="tools">
     <div class="grp">
     <button id="tCrew" data-tip="Crew: assign jobs, shifts and gear to each survivor">Crew<kbd>C</kbd></button>
@@ -299,7 +318,7 @@
   </div>
   <aside class="drawer" id="drawer" hidden>
     <div class="tabs" role="tablist">
-      <button data-tab="crew" role="tab" data-tip="Crew: jobs, needs and gear">CREW</button><button data-tab="build" role="tab" data-tip="Build rooms, ladders and upgrades">BUILD</button><button data-tab="gear" role="tab" data-tip="Craft and manage weapons">GEAR</button><button data-tab="tower" role="tab" data-tip="Signal tower">TOWER</button><button data-tab="rel" role="tab" data-tip="Relationships between survivors">REL</button><button data-tab="log" role="tab" data-tip="Event history">LOG</button><button class="x" id="dClose" aria-label="Close panel">✕</button>
+      <button data-tab="crew" role="tab" data-tip="Crew: jobs, needs and gear">CREW</button><button data-tab="build" role="tab" data-tip="Build rooms, ladders and upgrades">BUILD</button><button data-tab="gear" role="tab" data-tip="Craft and manage weapons">GEAR</button><button data-tab="tower" role="tab" data-tip="Signal tower">TOWER</button><button data-tab="rel" role="tab" data-tip="Relationships between survivors">REL</button><button data-tab="log" role="tab" data-tip="Event history">LOG</button><button class="dcollapse" id="dCollapse" aria-label="Collapse panel" aria-expanded="true" data-tip="Collapse or expand this panel">»</button><button class="x" id="dClose" aria-label="Close panel">✕</button>
     </div>
     <div class="dbody" id="dbody"></div>
   </aside>

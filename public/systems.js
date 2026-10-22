@@ -328,6 +328,7 @@ function turretTick(dt) {
     const k = 't' + i;
     if (cond(k) < 30 && Math.random() < 0.12) { t.cd = 0.6; fxSparks(SLOT_X[i] + 16, FLOORS[0] - 30, 2, 1); return; }   // jam
     t.cd = spec.cd / wearF(k); t.flash = 0.08;
+    fxCasing(SLOT_X[i] + 14, FLOORS[0] - 28); if (t.type !== 'rifle') fxCasing(SLOT_X[i] + 14, FLOORS[0] - 28);
     if (window.SFX) SFX.turret(t.type);
     fxSparks(SLOT_X[i] + 18, FLOORS[0] - 30, 3, 1);
     fxDust(SLOT_X[i] + 14, FLOORS[0] - 24, 2);

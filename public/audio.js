@@ -1,13 +1,13 @@
 // Ashfall Bunker: procedural sound (WebAudio, no asset files).
-// SFX.turret(type), SFX.hit(what), SFX.update(dt, state|null), SFX.toggleMute()
+// SFX.turret(type), SFX.hit(what), SFX.death(kind), SFX.update(dt, state|null), SFX.toggleMute()
 (function () {
   const MASTER = 0.6, MUSIC = 0.05, HUM = 0.035, SIREN = 0.07, SIREN_SECS = 9;
-  let ctx = null, master, musicBus, sfxBus, ambBus, humGain, sirenGain, sirenOsc, noiseBuf;
+  let ctx = null, master, musicBus, sfxBus, uiBus, ambBus, humGain, sirenGain, sirenOsc, noiseBuf;
   let muted = false;
   try { muted = localStorage.getItem('ab_mute') === '1'; } catch (e) {}
-  const vol = { music: 1, narr: 1, fx: 1 };
+  const vol = { music: 1, narr: 1, fx: 1, ui: 1 };
   try { const p = JSON.parse(localStorage.getItem('ab_vol') || '{}') || {}; for (const k in vol) if (typeof p[k] === 'number' && isFinite(p[k])) vol[k] = Math.min(1, Math.max(0, p[k])); } catch (e) {}
-  let chordT = 0, chordI = 0, sirenT = 0, wasAlarm = false, lastShot = 0, lastHit = 0, lastRumble = 0, lastRepair = 0, lastClick = 0;
+  let chordT = 0, chordI = 0, sirenT = 0, wasAlarm = false, lastShot = 0, lastHit = 0, lastRumble = 0, lastRepair = 0, lastClick = 0, lastDeath = 0, lastStep = 0, lastJump = 0, lastLand = 0, stepAlt = false;
 
   function init() {
     if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return; }
@@ -17,6 +17,7 @@
     master = ctx.createGain(); master.gain.value = muted ? 0 : MASTER; master.connect(ctx.destination);
     musicBus = ctx.createGain(); musicBus.gain.value = MUSIC * vol.music;
     sfxBus = ctx.createGain(); sfxBus.gain.value = vol.fx; sfxBus.connect(master);
+    uiBus = ctx.createGain(); uiBus.gain.value = vol.ui; uiBus.connect(master);
     ambBus = ctx.createGain(); ambBus.gain.value = vol.music; ambBus.connect(master);
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
     musicBus.connect(lp); lp.connect(master);
@@ -59,6 +60,15 @@
     o.connect(g); g.connect(sfxBus); o.start(t); o.stop(t + dur + 0.02);
   }
   const ready = () => ctx && ctx.state === 'running' && !muted;
+  let uiPrevT = 0, lastUiHover = 0;
+  // UI tone on the UI bus; delay in seconds
+  function uiTone(f0, f1, dur, v, type, delay) {
+    const o = ctx.createOscillator(), g = ctx.createGain(), t = ctx.currentTime + (delay || 0);
+    o.type = type || 'sine';
+    o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+    g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(g); g.connect(uiBus); o.start(t); o.stop(t + dur + 0.02);
+  }
 
   const CHORDS = [[110, 130.8, 164.8], [98, 123.5, 146.8], [87.3, 110, 130.8], [98, 116.5, 146.8]];
   function playChord(notes) {
@@ -88,12 +98,67 @@
       if (what === 'door') { tone(95, 38, 0.3, 0.7, 'sine'); noise(0.18, 'lowpass', 500, 120, 0.4); tone(420 + Math.random() * 80, 230, 0.22, 0.14, 'square'); noise(0.14, 'bandpass', 2200, 900, 0.18, 5); }
       else { noise(0.2, 'bandpass', 1400, 600, 0.25, 6); tone(320, 200, 0.12, 0.15, 'square'); }
     },
+    // enemy killed: wet crunch + falling thud; kind 'big' (bosses) is longer and deeper, 'far' is quieter
+    death(kind) {
+      if (!ready()) return;
+      const now = ctx.currentTime; if (now - lastDeath < 0.06) return; lastDeath = now;
+      const big = kind === 'big', q = kind === 'far' ? 0.5 : 1;
+      if (big) { tone(110, 30, 0.7, 0.6, 'sine'); noise(0.6, 'lowpass', 1200, 90, 0.5); tone(300, 60, 0.5, 0.18, 'sawtooth'); }
+      else { noise(0.22, 'bandpass', 1100 + Math.random() * 400, 250, 0.3 * q, 2); tone(220 + Math.random() * 60, 70, 0.2, 0.22 * q, 'triangle'); }
+    },
+    // scavenging player foley (throttled); all on the SFX bus
+    step() {
+      if (!ready()) return;
+      const now = ctx.currentTime; if (now - lastStep < 0.12) return; lastStep = now;
+      stepAlt = !stepAlt;
+      noise(0.07, 'bandpass', (stepAlt ? 700 : 560) + Math.random() * 200, 220, stepAlt ? 0.16 : 0.11, 1.2);
+      tone(stepAlt ? 90 : 75, 45, 0.06, stepAlt ? 0.1 : 0.07, 'sine');
+    },
+    jump() {
+      if (!ready()) return;
+      const now = ctx.currentTime; if (now - lastJump < 0.08) return; lastJump = now;
+      tone(220, 420, 0.1, 0.1, 'triangle');
+      noise(0.09, 'bandpass', 900, 1800, 0.1, 1);
+    },
+    // speed = downward speed in px/s at impact
+    land(speed) {
+      if (!ready()) return;
+      const now = ctx.currentTime; if (now - lastLand < 0.1) return; lastLand = now;
+      const k = Math.min(1, Math.max(0.15, (+speed || 0) / 700));
+      noise(0.1 + 0.12 * k, 'lowpass', 900 + 400 * k, 120, 0.15 + 0.3 * k);
+      tone(110 - 30 * k, 40, 0.1 + 0.1 * k, 0.12 + 0.35 * k, 'sine');
+    },
+    // ---- UI sounds (all on the UI bus) ----
+    uiHover(force) {
+      if (!ready()) return;
+      const now = ctx.currentTime; if (!force && now - lastUiHover < 0.03) return; lastUiHover = now;
+      uiTone(2200, 1900, 0.03, 0.05, 'square');
+    },
+    uiPlace() {
+      if (!ready()) return;
+      uiTone(180, 90, 0.12, 0.3, 'sine');
+      uiTone(520, 520, 0.09, 0.12, 'triangle', 0.05);
+      uiTone(780, 780, 0.14, 0.12, 'triangle', 0.12);
+    },
+    uiError() {
+      if (!ready()) return;
+      uiTone(160, 120, 0.16, 0.16, 'sawtooth');
+      uiTone(150, 100, 0.18, 0.14, 'square', 0.11);
+    },
+    uiOpen() {
+      if (!ready()) return;
+      uiTone(420, 760, 0.09, 0.1, 'triangle');
+    },
+    uiClose() {
+      if (!ready()) return;
+      uiTone(760, 420, 0.09, 0.09, 'triangle');
+    },
     // short UI click (throttled)
     click() {
       if (!ready()) return;
       const now = ctx.currentTime; if (now - lastClick < 0.04) return; lastClick = now;
-      tone(1400, 900, 0.04, 0.12, 'square');
-      setTimeout(() => { if (ready()) tone(900, 700, 0.05, 0.08, 'triangle'); }, 35);
+      uiTone(1400, 900, 0.04, 0.12, 'square');
+      setTimeout(() => { if (ready()) uiTone(900, 700, 0.05, 0.08, 'triangle'); }, 35);
     },
     // door torn open: deep boom, metal tear, descending groan
     breach() {
@@ -139,7 +204,9 @@
         if (musicBus) musicBus.gain.setTargetAtTime(MUSIC * vol.music, ctx.currentTime, 0.03);
         if (ambBus) ambBus.gain.setTargetAtTime(vol.music, ctx.currentTime, 0.03);
         if (sfxBus) sfxBus.gain.setTargetAtTime(vol.fx, ctx.currentTime, 0.03);
+        if (uiBus) uiBus.gain.setTargetAtTime(vol.ui, ctx.currentTime, 0.03);
       }
+      if (name === 'ui') { clearTimeout(uiPrevT); uiPrevT = setTimeout(() => { if (window.SFX) window.SFX.uiHover(true); }, 120); }
       if (window.narrApplyVolume) window.narrApplyVolume();
     },
     preview() { if (ready()) this.turret('rifle'); },
