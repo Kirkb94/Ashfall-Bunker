@@ -129,6 +129,8 @@
   .help h3{margin:10px 0 4px;font:600 14px var(--disp);letter-spacing:.1em;color:var(--amber)}
   .help ul{margin:0;padding-left:18px}
   .help kbd{font:600 12px var(--disp);background:#2d2215;border-radius:4px;padding:1px 5px}
+  .help dl.keylist{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:0}
+  .help dl.keylist dt,.help dl.keylist dd{margin:0}
   .scavhud{position:absolute;top:46px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:6px 14px;font-size:13px;display:flex;gap:14px;align-items:center}
   .scavhud[hidden]{display:none}
   /* touch controls */
@@ -382,7 +384,7 @@
   <div class="tools" id="tools" role="group" aria-label="Game tools">
     <div class="grp">
     <button id="tCrew" data-tip="Crew: assign jobs, shifts and gear to each survivor">Crew<kbd>C</kbd></button>
-    <button id="tInv" data-tip="Inventory: Mara's pack, storage boxes and gas masks">Inventory<kbd>I</kbd></button>
+    <button id="tInv" data-tip="Mara's pack: her stats, level, weapon and pack slots">Inventory<kbd>I</kbd></button>
     <button id="tBuild" data-tip="Build: add rooms, ladders and upgrades to the bunker">Build<kbd>B</kbd></button>
     <button id="tTower" data-tip="Signal tower: call for survivors and trade">Signal<kbd>T</kbd></button>
     <button id="tDig" aria-pressed="false" data-tip="Dig: drag a box over the pit to mark cells for miners. Shift-drag cancels.">Dig<kbd>X</kbd></button>
@@ -479,7 +481,11 @@
 <script src="helpart.js?v=3"></script>
   <script src="combat.js"></script>
   <script src="ambient.js"></script>
+  <script src="tiles.js"></script>
+  <script src="topworld.js"></script>
   <script src="stash.js"></script>
   <script src="game.js"></script>
+  <script src="playerhud.js"></script>
+  <script src="pack.js"></script>
 </body>
 </html>

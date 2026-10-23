@@ -71,6 +71,17 @@ body.rm .hatchhud.pulse{animation:none}
 .thlvl.dusk{color:var(--amber,#e0a030);border-color:var(--amber,#e0a030)}
 .thlvl.raid,.thlvl.breach{color:var(--red,#d04a3a);border-color:var(--red,#d04a3a)}
 body.hc .hatchhud .hbar{border-color:#fff}
+/* colour-blind-safe palette: pattern + border style carry state alongside the glyph and label */
+body.cb .hatchhud .hbar{border-color:#fff}
+body.cb .hatchhud .hbar i{background:#56B4E9;box-shadow:inset 0 2px 0 #fff}
+body.cb .hatchhud.warn .hbar i{background:repeating-linear-gradient(45deg,#F0E442 0 4px,#7a7000 4px 7px);box-shadow:none}
+body.cb .hatchhud.crit .hbar i,body.cb .hatchhud.breach .hbar i{background:repeating-linear-gradient(-45deg,#D55E00 0 3px,#fff 3px 6px);box-shadow:none}
+body.cb .hatchhud.warn b,body.cb .hatchhud.warn em{color:#F0E442}
+body.cb .hatchhud.crit b,body.cb .hatchhud.crit em,body.cb .hatchhud.breach b,body.cb .hatchhud.breach em,body.cb .hatchhud u{color:#ff9a5c}
+body.cb .hatchhud u{text-decoration:underline}
+body.cb .thlvl.dusk{border-style:dashed;color:#F0E442;border-color:#F0E442}
+body.cb .thlvl.raid{border-style:double;border-width:3px;color:#ff9a5c;border-color:#ff9a5c}
+body.cb .thlvl.breach{border-style:solid;border-width:3px;text-decoration:underline;color:#ff9a5c;border-color:#ff9a5c}
 body.hc .thlvl{border-color:#fff;color:#fff}
 .spd button{min-width:34px;min-height:30px;border-radius:0;font:700 13px var(--disp);background:#1d160e}
 .spd button:hover{border-color:var(--amber)}
@@ -141,6 +152,8 @@ body.touch [data-tip]::after{display:none}
 .tabs button::before{content:"";width:16px;height:16px;background:currentColor;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:contain;mask-size:contain;-webkit-mask-position:center;mask-position:center;flex:none}
 .tabs button:hover{color:var(--fg)}
 .tabs button.on{color:var(--amber);box-shadow:none;border-bottom-color:var(--amber)}
+.tabs [data-tab]:focus-visible{outline:3px solid var(--amber,#ffc857)!important;outline-offset:-3px!important;color:var(--fg,#fff);background:rgba(255,200,87,.12)}
+body.hc .tabs [data-tab]:focus-visible{outline-color:#fff!important}
 .tabs .x::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 5l14 14M19 5L5 19' stroke='%23fff' stroke-width='3' fill='none'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 5l14 14M19 5L5 19' stroke='%23fff' stroke-width='3' fill='none'/%3E%3C/svg%3E")}
 .tabs .x{flex:0 0 44px}
 .dbody{padding:12px 14px;gap:10px}
@@ -271,6 +284,10 @@ body.hc :is(button,.btn,.chip,select,input,summary,a[href],[role="tab"],[role="b
 body.hc input[type="range"]:focus-visible::-webkit-slider-thumb{outline:3px solid #fff;outline-offset:2px}
 body.hc input[type="range"]:focus-visible::-moz-range-thumb{outline:3px solid #fff;outline-offset:2px}
 body.hc .card[tabindex]:focus-visible{background:#000;border:2px solid #fff;border-left:6px solid #fff}
+body.ho :is(button,.btn,.chip,select,input,summary,a[href],[role="tab"],[role="button"],[tabindex],[data-tip]):not(canvas):focus-visible{outline-width:5px!important;outline-offset:3px!important}
+body.ho .tabs [data-tab]:focus-visible{outline-width:5px!important;outline-offset:-5px!important}
+body.ho #cv:focus-visible,body.ho canvas:focus-visible{outline-width:5px!important}
+body.ho .bitem:focus-visible,body.ho #hotbar .hb:focus-visible{outline-width:5px!important}
 @media (prefers-contrast:more){body :is(button,.btn,.chip,select,input,[role="tab"],[role="button"],[tabindex]):not(canvas):focus-visible{outline-width:4px!important}}
 
 /* ---------- touch ---------- */
@@ -326,7 +343,7 @@ body.rm #narrCaption{transition:none}
 body.rm #dayCard{background:rgba(10,6,3,.7)}
 body.rm #dayCard .dcBox{transform:none}
 #narrCaption.on{opacity:1}
-#narrCaption{font-size:17px;line-height:1.45;text-shadow:0 1px 2px #000,0 0 6px #000;background:rgba(0,0,0,.92)}
+#narrCaption{font-size:17px;line-height:1.45;text-shadow:0 1px 2px #000,0 0 6px #000;background:rgba(0,0,0,var(--capbg,.92))}
 body.hc #narrCaption{text-shadow:none;font-size:18px}
 #narrCaption:empty{visibility:hidden}
 #narrCaption{border-left:4px solid #e0a040;text-align:left}

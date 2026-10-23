@@ -89,11 +89,16 @@
   function capSize() {
     try { const v = localStorage.getItem(SIZE_KEY); return (v === 's' || v === 'l') ? v : 'm'; } catch (e) { return 'm'; }
   }
+  const BG_KEY = 'ashfall.capbg';
+  function capBg() {
+    try { const v = parseInt(localStorage.getItem(BG_KEY), 10); return (v >= 0 && v <= 100) ? v : 92; } catch (e) { return 92; }
+  }
   function ensureCap() {
     if (capEl || !document.body) return capEl;
     capEl = document.createElement('div');
     capEl.id = 'narrCaption';
     capEl.dataset.size = capSize();
+    capEl.style.setProperty('--capbg', String(capBg() / 100));
     capEl.setAttribute('role', 'status');
     capEl.setAttribute('aria-live', 'polite');
     document.body.appendChild(capEl);
@@ -132,6 +137,12 @@
   window.narrShowText = showText; // caption any Lamp line, with or without a voice clip
   window.narrCaptionsOn = capsOn;
   window.narrCapSize = capSize;
+  window.narrCapBg = capBg;
+  window.narrSetCapBg = function (p) {
+    p = Math.max(0, Math.min(100, Math.round(Number(p) || 0)));
+    try { localStorage.setItem(BG_KEY, String(p)); } catch (e) {}
+    const el = ensureCap(); if (el) el.style.setProperty('--capbg', String(p / 100));
+  };
   window.narrSetCapSize = function (v) {
     v = (v === 's' || v === 'l') ? v : 'm';
     try { localStorage.setItem(SIZE_KEY, v); } catch (e) {}
@@ -205,6 +216,7 @@
     return VOLUME * v;
   }
   window.narrApplyVolume = function () {
+    if (audio) audio.muted = !!document.hidden; // silence Lamp's clip while the tab is hidden (position is kept)
     if (!audio) return;
     if (isMuted() || narrVol() <= 0) { try { audio.pause(); } catch (e) {} clearTimeout(wd); playingUntilEnd = false; pendingClip = null; hideCap(); return; }
     audio.volume = Math.min(1, Math.max(0, narrVol()));

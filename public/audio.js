@@ -6,6 +6,8 @@
   let gustG = null, gustF = null, gustT = 6, windFade = null, subFade = null, windBuf = null, rumbleT = 12, thudT = 8, wasNight = false;
   let droneGain, droneFilt, droneK = 0, droneP = 0, droneOsc = [], stingBus = null, duckBus = null;
   const DUCK = 0.35; // music/ambience level while a narrator line plays
+  const MENU_LP = 1100; // low-pass cutoff (Hz) on music/ambience while pause/settings is open
+  let menuLp = null, menuWant = false;
   let duckWant = false; // latest duck request, kept so it survives until the context exists
   let duckApplied = false, duckWd = null; // last level actually scheduled + failsafe timer (releases a stuck duck)
   const DRONE = 0.05, GEN = 0.05, VENT = 0.03;
@@ -21,12 +23,29 @@
   try { const m = JSON.parse(localStorage.getItem('ab_chmute') || '{}') || {}; for (const k in chMute) chMute[k] = m[k] === true; } catch (e) {}
   const ev = n => (chMute[n] ? 0 : vol[n]);
   const uiG = () => ev('ui') * ev('fx'); // UI sounds also follow the SFX slider and SFX mute
-  const masterG = () => (muted || chMute.master ? 0 : MASTER * vol.master);
+  let tabHidden = false, suspendTimer = null;
+  const masterG = () => (tabHidden || muted || chMute.master ? 0 : MASTER * vol.master);
   try { const p = JSON.parse(localStorage.getItem('ab_vol') || '{}') || {}; for (const k in vol) if (typeof p[k] === 'number' && isFinite(p[k])) vol[k] = Math.min(1, Math.max(0, p[k])); if (typeof p.amb !== 'number' && typeof p.music === 'number') vol.amb = vol.music; } catch (e) {}
   let chordT = 0, chordI = 0, sirenT = 0, wasAlarm = false, lastShot = 0, lastHit = 0, lastRumble = 0, lastBeat = 0, lastDoorWarn = 0, lastRepair = 0, lastClick = 0, lastDeath = 0, lastStep = 0, lastJump = 0, lastLand = 0, stepAlt = false, lastFoot = 0, lastRung = 0, lastDrop = 0;
 
+  // Tab visibility: fade to silence and suspend when hidden; resume and fade in when visible again.
+  function onVisibility() {
+    tabHidden = !!document.hidden;
+    clearTimeout(suspendTimer);
+    if (tabHidden) {
+      if (master && ctx) { try { master.gain.cancelScheduledValues(ctx.currentTime); master.gain.setTargetAtTime(0, ctx.currentTime, 0.03); } catch (e) {} }
+      suspendTimer = setTimeout(() => { if (ctx && tabHidden && ctx.state === 'running') { try { ctx.suspend(); } catch (e) {} } }, 250);
+    } else if (ctx) {
+      try { if (ctx.state === 'suspended') ctx.resume(); } catch (e) {}
+      if (master) { try { master.gain.cancelScheduledValues(ctx.currentTime); master.gain.setValueAtTime(0, ctx.currentTime); master.gain.setTargetAtTime(masterG(), ctx.currentTime, 0.15); } catch (e) {} }
+    }
+    if (window.narrApplyVolume) window.narrApplyVolume();
+  }
+  document.addEventListener('visibilitychange', onVisibility);
+  if (document.hidden) tabHidden = true;
+
   function init() {
-    if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return; }
+    if (ctx) { if (ctx.state === 'suspended' && !tabHidden) ctx.resume(); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     ctx = new AC();
@@ -34,7 +53,9 @@
     musicBus = ctx.createGain(); musicBus.gain.value = MUSIC * ev('music');
     sfxBus = ctx.createGain(); sfxBus.gain.value = ev('fx'); sfxBus.connect(master);
     uiBus = ctx.createGain(); uiBus.gain.value = uiG(); uiBus.connect(master);
-    ambBus = ctx.createGain(); duckBus = ctx.createGain(); duckBus.gain.value = duckWant ? DUCK : 1; duckBus.connect(master);
+    ambBus = ctx.createGain(); duckBus = ctx.createGain(); duckBus.gain.value = duckWant ? DUCK : 1;
+    menuLp = ctx.createBiquadFilter(); menuLp.type = 'lowpass'; menuLp.Q.value = 0.5; menuLp.frequency.value = menuWant ? MENU_LP : 20000;
+    duckBus.connect(menuLp); menuLp.connect(master);
     ambBus.gain.value = ev('amb'); ambBus.connect(duckBus);
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
     musicBus.connect(lp); lp.connect(duckBus);
@@ -281,9 +302,10 @@
     turret(type) {
       if (!ready()) return;
       if (!gate('shot:' + type, type === 'rifle' ? 0.09 : 0.14)) return;
-      if (type === 'rifle') { noise(0.12, 'bandpass', 2600, 500, 0.35, 0.8); tone(180, 60, 0.1, 0.3, 'triangle'); }
-      else if (type === 'coil') { noise(0.18, 'bandpass', 3200, 900, 0.3, 3); tone(900, 140, 0.16, 0.2, 'sawtooth'); tone(60, 40, 0.2, 0.3, 'sine'); }
-      else { noise(0.22, 'lowpass', 1800, 200, 0.5); tone(120, 40, 0.18, 0.45, 'sine'); }
+      const p = SFX.pv();
+      if (type === 'rifle') { noise(0.12, 'bandpass', 2600, 500, 0.35, 0.8); tone(180 * p, 60 * p, 0.1, 0.3, 'triangle'); }
+      else if (type === 'coil') { noise(0.18, 'bandpass', 3200, 900, 0.3, 3); tone(900 * p, 140 * p, 0.16, 0.2, 'sawtooth'); tone(60 * p, 40 * p, 0.2, 0.3, 'sine'); }
+      else { noise(0.22, 'lowpass', 1800, 200, 0.5); tone(120 * p, 40 * p, 0.18, 0.45, 'sine'); }
       SFX.ember(type === 'rifle' ? 0.5 : 1);
     },
     // ember crackle: a few tiny, quiet noise ticks with random gaps (rate limited, SFX bus); q 0..1 scales loudness
@@ -309,7 +331,7 @@
     hit(what) {
       if (!ready()) return;
       if (!gate('hit:' + what, what === 'door' ? 0.12 : 0.08)) return;
-      if (what === 'door') { const pv = 0.9 + Math.random() * 0.2; tone(95 * pv, 38 * pv, 0.3, 0.7, 'sine'); noise(0.18, 'lowpass', 500, 120, 0.4); tone(420 + Math.random() * 80, 230, 0.22, 0.14, 'square'); noise(0.14, 'bandpass', 2200, 900, 0.18, 5); }
+      if (what === 'door') { const pv = SFX.pv(); tone(95 * pv, 38 * pv, 0.3, 0.7, 'sine'); noise(0.18, 'lowpass', 500, 120, 0.4); tone(460 * pv, 230 * pv, 0.22, 0.14, 'square'); noise(0.14, 'bandpass', 2200, 900, 0.18, 5); }
       else { noise(0.2, 'bandpass', 1400, 600, 0.25, 6); tone(320, 200, 0.12, 0.15, 'square'); }
     },
     // dusk warning: soft two-note chime at 19:00 (SFX bus, rate limited)
@@ -318,6 +340,26 @@
       if (!gate('duskchime', 5)) return;
       tone(523, 520, 0.9, 0.16, 'sine');
       setTimeout(() => { try { tone(392, 390, 1.3, 0.16, 'sine'); } catch (e) {} }, 420);
+    },
+    // low-resource warning: soft two-note chime on the SFX bus. 'food' = descending sines, 'power' = short triangle blips
+    warnChime(kind) {
+      if (!ready()) return;
+      if (!gate('warnchime:' + kind, 2)) return;
+      if (kind === 'power') {
+        tone(660, 640, 0.14, 0.12, 'triangle');
+        setTimeout(() => { try { tone(440, 430, 0.3, 0.12, 'triangle'); } catch (e) {} }, 170);
+      } else {
+        tone(466, 460, 0.5, 0.13, 'sine');
+        setTimeout(() => { try { tone(349, 345, 0.8, 0.13, 'sine'); } catch (e) {} }, 300);
+      }
+    },
+    // dawn: soft rising three-note chime (mirror of the dusk chime), SFX bus, rate limited
+    dawnChime() {
+      if (!ready()) return;
+      if (!gate('dawnchime', 5)) return;
+      tone(523, 525, 0.9, 0.14, 'sine');
+      setTimeout(() => { try { tone(659, 661, 0.9, 0.14, 'sine'); } catch (e) {} }, 380);
+      setTimeout(() => { try { tone(784, 786, 1.5, 0.15, 'sine'); } catch (e) {} }, 760);
     },
     // ambient water drip landing: soft plink, very quiet and rate limited
     drip() {
@@ -355,12 +397,20 @@
       else { noise(0.22, 'bandpass', 1100 + Math.random() * 400, 250, 0.3 * q, 2); tone(220 + Math.random() * 60, 70, 0.2, 0.22 * q, 'triangle'); }
     },
     // scavenging player foley (throttled); all on the SFX bus
-    step() {
+    step(surface) {
       if (!ready()) return;
       const now = ctx.currentTime; if (now - lastStep < 0.12) return; lastStep = now;
       stepAlt = !stepAlt;
-      noise(0.07, 'bandpass', (stepAlt ? 700 : 560) + Math.random() * 200, 220, (stepAlt ? 0.16 : 0.11) * FOLEY.step, 1.2);
-      tone(stepAlt ? 90 : 75, 45, 0.06, (stepAlt ? 0.1 : 0.07) * FOLEY.step, 'sine');
+      if (surface === 'ash') {
+        // topside ash: soft, muffled crunch, no ring
+        noise(0.11, 'lowpass', 650 + Math.random() * 250, 260, (stepAlt ? 0.15 : 0.11) * FOLEY.step, 0.8);
+        tone(stepAlt ? 70 : 58, 35, 0.07, (stepAlt ? 0.07 : 0.05) * FOLEY.step, 'sine');
+      } else {
+        // metal bunker floor: bright clank with a faint ring and a low thud
+        noise(0.05, 'bandpass', (stepAlt ? 1500 : 1250) + Math.random() * 350, 500, (stepAlt ? 0.14 : 0.1) * FOLEY.step, 3);
+        tone((stepAlt ? 880 : 740) + Math.random() * 60, 600, 0.05, (stepAlt ? 0.035 : 0.025) * FOLEY.step, 'triangle');
+        tone(stepAlt ? 90 : 75, 45, 0.06, (stepAlt ? 0.1 : 0.07) * FOLEY.step, 'sine');
+      }
     },
     jump() {
       if (!ready()) return;
@@ -527,6 +577,11 @@
       uiTone(780, 940, 0.1, 0.11, 'triangle', 0.06);
     },
     // door impact: strength 0..1 scales weight, length and loudness; final = the hit that destroyed the door (adds a crack)
+    _pvOn: (() => { try { return localStorage.getItem('ab_pitchvar') !== '0'; } catch (e) { return true; } })(),
+    pitchVar() { return !!this._pvOn; },
+    setPitchVar(on) { this._pvOn = !!on; try { localStorage.setItem('ab_pitchvar', on ? '1' : '0'); } catch (e) {} return this._pvOn; },
+    // pitch multiplier for hit sounds: slight random variation when enabled, exactly 1 when off
+    pv() { return this._pvOn ? 0.94 + Math.random() * 0.12 : 1; },
     _lastDoorHit: 0,
     doorHit(strength, final) {
       if (!ready()) return;
@@ -535,9 +590,12 @@
       this._lastDoorHit = now;
       const k = Math.min(1, Math.max(0.1, +strength || 0.3));
       const dur = 0.18 + 0.32 * k;
-      tone(110 - 30 * k, 34, dur, 0.3 + 0.5 * k, 'sine');
+      const p = SFX.pv();
+      tone((110 - 30 * k) * p, 34 * p, dur, 0.3 + 0.5 * k, 'sine');
       noise(dur, 'lowpass', 380 + 250 * k, 90, 0.2 + 0.3 * k);
-      if (k < 0.6) tone(420 + Math.random() * 80, 230, 0.16, 0.1 * (1 - k), 'square');
+      if (k < 0.6) tone(460 * p, 230 * p, 0.16, 0.1 * (1 - k), 'square');
+      // muffled low rumble tail, scaled by damage (breach() supplies its own boom on the final hit)
+      if (!final) setTimeout(() => { if (ready() && SFX.rumble) SFX.rumble(0.15 + 0.7 * k); }, 40);
       if (final) {
         // short snap only: breach() supplies the boom, tear and groan
         noise(0.12, 'bandpass', 3000, 900, 0.3, 3);
@@ -622,10 +680,11 @@
       if (!ready()) return;
       const now = ctx.currentTime; if (now - (this._lastThud || 0) < 0.08) return; this._lastThud = now;
       const k = Math.min(1, Math.max(0.1, +strength || 0.3));
-      tone(95 - 35 * k, 38, 0.14 + 0.2 * k, 0.3 + 0.5 * k, 'sine');
+      const p = SFX.pv();
+      tone((95 - 35 * k) * p, 38 * p, 0.14 + 0.2 * k, 0.3 + 0.5 * k, 'sine');
       noise(0.08 + 0.1 * k, 'lowpass', 500 + 500 * k, 90, 0.2 + 0.3 * k);
-      noise(0.06, 'bandpass', 1500 + Math.random() * 600, 700, 0.06 + 0.12 * k, 5);
-      tone(210 + Math.random() * 60, 120, 0.09 + 0.06 * k, 0.05 + 0.1 * k, 'square');
+      noise(0.06, 'bandpass', 1800 * p, 700, 0.06 + 0.12 * k, 5);
+      tone(240 * p, 120 * p, 0.09 + 0.06 * k, 0.05 + 0.1 * k, 'square');
     },
     // low rumble for door impacts; intensity 0..1
     rumble(intensity) {
@@ -701,6 +760,16 @@
       const t = ctx.currentTime;
       try { duckBus.gain.cancelScheduledValues(t); duckBus.gain.setTargetAtTime(on ? DUCK : 1, t, on ? 0.15 : 0.8); } catch (e) {}
     },
+    // soft low-pass on music + ambience while the pause/settings menu is open (SFX, UI and Lamp voice stay clear)
+    muffle(on) {
+      on = !!on; menuWant = on;
+      if (!ctx || !menuLp) return;
+      try {
+        const t = ctx.currentTime;
+        menuLp.frequency.cancelScheduledValues(t);
+        menuLp.frequency.setTargetAtTime(on ? MENU_LP : 20000, t, on ? 0.12 : 0.45);
+      } catch (e) {}
+    },
     toggleMute() {
       muted = !muted;
       try { localStorage.setItem('ab_mute', muted ? '1' : '0'); } catch (e) {}
@@ -769,6 +838,11 @@
     nightSting() {
       if (!ready()) return;
       const now = ctx.currentTime; if (this._nsAt && now - this._nsAt < 3) return; this._nsAt = now;
+      if (duckApplied) return; // a Lamp voice line is already playing: stay quiet
+      // give a Lamp line triggered at the same moment (e.g. the night tip) time to start, then re-check
+      setTimeout(() => { try { if (duckApplied || !ready()) return; SFX.nightStingNow(); } catch (e) {} }, 350);
+    },
+    nightStingNow() {
       const blip = (f0, f1, d, v, delay) => {
         const o = ctx.createOscillator(), g = ctx.createGain(), t = ctx.currentTime + delay;
         o.type = 'square';

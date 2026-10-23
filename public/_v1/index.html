@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ashfall Bunker</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%223%22 fill=%22%231a120a%22/%3E%3Crect x=%224%22 y=%227%22 width=%228%22 height=%227%22 fill=%22%23ffb347%22/%3E%3Crect x=%222%22 y=%225%22 width=%2212%22 height=%222%22 fill=%22%237a6650%22/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#07060a; --panel:rgba(20,16,12,.94); --line:#4a3a22; --fg:#f1e6d2; --muted:#b8a78a; --amber:#ffb347; --amber2:#ff8c2a;
+    --red:#ff5a4e; --green:#7ddc6f; --blue:#7fc8ff; --font:'IBM Plex Sans',system-ui,sans-serif; --disp:'Chakra Petch',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:14px/1.4 var(--font);overflow:hidden}
+  #stage{position:fixed;inset:0;display:grid;place-items:center}
+  #wrap{position:relative;width:1280px;height:720px;transform-origin:center center;background:#000;box-shadow:0 0 60px rgba(255,140,42,.08)}
+  canvas{display:block;width:1280px;height:720px;image-rendering:pixelated;cursor:crosshair}
+  button{font:inherit;color:inherit;cursor:pointer}
+  .hud{position:absolute;left:0;right:0;top:0;height:38px;display:flex;align-items:center;gap:14px;padding:0 12px;background:linear-gradient(#120d08ee,#120d08aa);border-bottom:1px solid var(--line);font-size:13.5px;pointer-events:none}
+  .hud *{pointer-events:auto}
+  .clock{font:700 17px var(--disp);letter-spacing:.04em;color:var(--amber);min-width:128px}
+  .res{display:flex;gap:12px;flex-wrap:nowrap}
+  .res span{display:flex;align-items:center;gap:5px;white-space:nowrap}
+  .res i{width:10px;height:10px;border-radius:2px;display:inline-block}
+  .res b{font-weight:600}
+  .res .low{color:var(--red)}
+  .spd{display:flex;gap:2px;margin-left:auto}
+  .spd button{background:#1d160e;border:1px solid var(--line);border-radius:5px;padding:2px 8px;font-size:12.5px}
+  .spd button.on{background:var(--amber);color:#1a0f02;border-color:var(--amber);font-weight:700}
+  .threat{font-size:12.5px;color:var(--muted);white-space:nowrap}
+  .threat.hot{color:var(--red);font-weight:600}
+  .log{position:absolute;right:12px;top:46px;width:470px;display:flex;flex-direction:column;gap:4px;pointer-events:none}
+  .dopen .log{right:406px}
+  .log div{background:rgba(14,10,6,.82);border-left:3px solid var(--amber);padding:5px 9px;border-radius:0 6px 6px 0;font-size:13px;animation:fade .3s ease}
+  .log div.warn{border-left-color:var(--red)}
+  .log div.good{border-left-color:var(--green)}
+  .log b{color:var(--amber);font-family:var(--disp);letter-spacing:.06em;font-size:11.5px;margin-right:6px}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}}
+  .tools{position:absolute;left:12px;bottom:12px;display:flex;gap:6px}
+  .tools button{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 12px;font-size:13px}
+  .tools button:hover{border-color:var(--amber)}
+  .tools button.on{border-color:var(--red);color:var(--red);font-weight:600}
+  .tools kbd{font:600 11px var(--disp);opacity:.7;margin-left:5px}
+  .prompt{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--amber);border-radius:8px;padding:7px 14px;font-weight:600;pointer-events:none;white-space:nowrap}
+  .prompt:empty{display:none}
+  .drawer{position:absolute;top:46px;right:8px;bottom:8px;width:388px;background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
+  .drawer[hidden]{display:none}
+  .tabs{display:flex;border-bottom:1px solid var(--line)}
+  .tabs button{flex:1;background:none;border:0;padding:10px 6px;font:600 13px var(--disp);letter-spacing:.08em;color:var(--muted)}
+  .tabs button.on{color:var(--amber);box-shadow:inset 0 -2px var(--amber)}
+  .tabs .x{flex:0 0 40px}
+  .dbody{overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:9px}
+  .card{background:#1b140c;border:1px solid #3a2c18;border-radius:9px;padding:9px 10px}
+  .card.sel{border-color:var(--amber)}
+  .card.dead{opacity:.5}
+  .ch{display:flex;align-items:center;gap:8px}
+  .sw{width:14px;height:14px;border-radius:4px;flex:none}
+  .ch b{font-size:14.5px}
+  .tag{font-size:11.5px;color:var(--muted)}
+  .lvl{margin-left:auto;font:600 11.5px var(--disp);color:var(--amber)}
+  .bars{display:grid;grid-template-columns:40px 1fr;gap:3px 8px;align-items:center;margin:7px 0 6px;font-size:11.5px;color:var(--muted)}
+  .bar{height:6px;border-radius:3px;background:#2d2215;overflow:hidden}
+  .bar i{display:block;height:100%;border-radius:3px}
+  .row{display:flex;flex-wrap:wrap;gap:4px}
+  .chip{background:#241a0f;border:1px solid #47361e;border-radius:6px;padding:3px 7px;font-size:12px}
+  .chip:hover{border-color:var(--amber)}
+  .chip.on{background:var(--amber);border-color:var(--amber);color:#1a0f02;font-weight:600}
+  .chip:disabled{opacity:.35;cursor:not-allowed}
+  .note{font-size:12px;color:var(--muted);margin-top:5px}
+  .note.bad{color:var(--red)}
+  .sec{font:600 12px var(--disp);letter-spacing:.12em;color:var(--muted);margin:4px 0 -2px}
+  .bitem{display:flex;align-items:center;gap:10px}
+  .bitem div{flex:1;min-width:0}
+  .bitem p{margin:2px 0 0;font-size:12px;color:var(--muted)}
+  .cost{font-size:12px;color:var(--amber)}
+  .btn{background:var(--amber);color:#1a0f02;border:0;border-radius:7px;padding:6px 12px;font-weight:700;font-size:13px;white-space:nowrap}
+  .btn:disabled{background:#3a2c18;color:#8a7a60;cursor:not-allowed}
+  .btn.ghost{background:none;border:1px solid var(--line);color:var(--fg);font-weight:500}
+  .stages{display:flex;flex-direction:column;gap:6px}
+  .stage{display:flex;gap:10px;align-items:flex-start}
+  .stage .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font:700 12px var(--disp);background:#2d2215;flex:none}
+  .stage.done .n{background:var(--green);color:#082006}
+  .stage.cur .n{background:var(--amber);color:#1a0f02}
+  .overlay{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 30%,rgba(60,30,8,.55),rgba(4,3,2,.94));display:grid;place-items:center;text-align:center}
+  .overlay[hidden]{display:none}
+  .menu{width:560px;display:flex;flex-direction:column;align-items:center;gap:14px}
+  .menu h1{margin:0;font:700 64px/1 var(--disp);letter-spacing:.08em;color:var(--amber);text-shadow:0 0 30px rgba(255,140,42,.35)}
+  .menu .sub{margin:0;color:var(--muted);font-size:16px;max-width:520px}
+  .menu .btn{font-size:16px;padding:11px 26px;min-width:240px}
+  .menu .btn.ghost{font-size:15px}
+  .help{text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 20px;max-height:430px;overflow:auto;font-size:14px}
+  .help h3{margin:10px 0 4px;font:600 14px var(--disp);letter-spacing:.1em;color:var(--amber)}
+  .help ul{margin:0;padding-left:18px}
+  .help kbd{font:600 12px var(--disp);background:#2d2215;border-radius:4px;padding:1px 5px}
+  .scavhud{position:absolute;top:46px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:6px 14px;font-size:13px;display:flex;gap:14px;align-items:center}
+  .scavhud[hidden]{display:none}
+</style>
+</head>
+<body>
+<div id="stage"><div id="wrap">
+  <canvas id="c" width="1280" height="720" aria-label="Ashfall Bunker game view"></canvas>
+  <div class="hud" id="hud"></div>
+  <div class="scavhud" id="scavhud" hidden></div>
+  <div class="log" id="log" aria-live="polite"></div>
+  <div class="tools" id="tools">
+    <button id="tCrew">Crew<kbd>C</kbd></button>
+    <button id="tBuild">Build<kbd>B</kbd></button>
+    <button id="tTower">Signal tower<kbd>T</kbd></button>
+    <button id="tAlarm" title="Everyone drops what they're doing and defends: turrets first, then the door. Sleep waits.">Battle stations<kbd>G</kbd></button>
+    <button id="tHelp">Help<kbd>H</kbd></button>
+  </div>
+  <div class="prompt" id="prompt"></div>
+  <aside class="drawer" id="drawer" hidden>
+    <div class="tabs" role="tablist">
+      <button data-tab="crew" role="tab">CREW</button><button data-tab="build" role="tab">BUILD</button><button data-tab="tower" role="tab">TOWER</button><button class="x" id="dClose" aria-label="Close panel">✕</button>
+    </div>
+    <div class="dbody" id="dbody"></div>
+  </aside>
+  <div class="overlay" id="overlay"></div>
+</div></div>
+<script src="game.js"></script>
+</body>
+</html>
