@@ -353,6 +353,21 @@
         setTimeout(() => { try { tone(349, 345, 0.8, 0.13, 'sine'); } catch (e) {} }, 300);
       }
     },
+    // Lamp log/caption line tick: very soft, by severity. Skipped while a Lamp voice line plays. SFX bus, rate limited.
+    lampTick(kind) {
+      if (!ready()) return;
+      if (duckApplied) return;
+      if (!gate('lamptick', 0.4)) return;
+      if (kind === 'warn') {
+        tone(330, 320, 0.09, 0.05, 'triangle');
+        setTimeout(() => { try { tone(262, 255, 0.12, 0.05, 'triangle'); } catch (e) {} }, 80);
+      } else if (kind === 'good') {
+        tone(587, 590, 0.08, 0.045, 'sine');
+        setTimeout(() => { try { tone(784, 788, 0.12, 0.045, 'sine'); } catch (e) {} }, 70);
+      } else {
+        tone(880, 870, 0.05, 0.035, 'sine');
+      }
+    },
     // dawn: soft rising three-note chime (mirror of the dusk chime), SFX bus, rate limited
     dawnChime() {
       if (!ready()) return;

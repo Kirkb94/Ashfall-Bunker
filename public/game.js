@@ -17,11 +17,17 @@ const W = 1280, H = 720;
 const FLOORS = [200, 350, 500, 650];          // y of each walkable floor line: 0 = surface, 1-3 = bunker floors
 const LADDER_X = 232;                          // the shaft from the hatch down to floor 3
 const IN_L = 186, IN_R = 1250;                 // inside walls of the bunker
-const DOOR_X = 232, WALL_X = 520;
+const DOOR_X = 232, WALL_X = 870;
 // Turret snap points between the hatch and the wall. Index 0 and 1 are the original two slots (old saves keep their guns
 // and gunners there); the rest fill the gaps. Names go left to right, so "Turret 1" is the one nearest the hatch.
-const SLOT_X = [340, 430, 295, 385, 475];
+const SLOT_X = [356, 600, 316, 396, 640];
 const TSLOTS = SLOT_X.length;
+// Turret towers: two rusted-steel towers in the yard (tiles.js builds their plates). Each has a deck TOWER_H above the
+// surface that its turrets sit on, and a ladder at x `lad` that gunners climb. slots = turret snap points on that deck.
+const TOWER_H = 120, DECK_Y = FLOORS[0] - TOWER_H;
+const TOWERS = [{ x0: 292, x1: 420, lad: 304, slots: [2, 0, 3] }, { x0: 576, x1: 664, lad: 588, slots: [1, 4] }];
+const slotTower = i => TOWERS.findIndex(t => t.slots.includes(i));
+const slotY = i => (slotTower(i) >= 0 ? DECK_Y : FLOORS[0]);
 const TJOBS = ['turretA', 'turretB', 'turretC', 'turretD', 'turretE'];   // one hidden job per snap point; the Turret chip is turretA
 const isTJob = j => TJOBS.includes(j);
 const tSlot = j => TJOBS.indexOf(j);
@@ -910,7 +916,7 @@ function moraleTick(c, h) {
 
 // Where a job puts someone: floor + x. People on the same job spread out.
 function jobSpot(c, job) {
-  if (isTJob(job)) return { floor: 0, x: SLOT_X[tSlot(job)] - 4 };
+  if (isTJob(job)) { const i = tSlot(job), ti = slotTower(i); return ti >= 0 ? { floor: 0, x: SLOT_X[i] - 4, tower: ti } : { floor: 0, x: SLOT_X[i] - 4 }; }
   if (job === 'door') { const same = living().filter(o => o.job === 'door'); return { floor: 0, x: 278 + same.indexOf(c) * 14 }; }
   const room = job === 'research' ? ROOMS.signal : (Object.values(ROOMS).find(r => r.job === job) || ROOMS.common);
   const same = living().filter(o => targetJob(o) === job);
@@ -948,8 +954,9 @@ function baseJob(c) {
     return 'door';
   }
   if (inSleepHours(c)) return 'sleep';
-  if (ensureSched(c)[Math.floor(hourF()) % 24] === 'M') return 'meal';
+  // meal hours and hunger: only go eat when actually hungry (see hungryNow); a plate in hand is always finished
   if (c.plate || hungryNow(c)) return 'meal';   // hungry: fetch food, eat it at the table, then go back to work
+  if (mealShift(c)) return 'idle';   // meal shift but not hungry: take the time off
   if (isTJob(c.job) && !turretFor(c.job)) return 'door';
   if (c.job === 'workshop' && !S.rooms.workshop) return 'idle';   // no workshop built yet
   if (c.job === 'research' && !(S.builds && S.builds.lab)) return 'idle';   // no research bench yet
@@ -976,7 +983,11 @@ function balanceTurrets() {
   }
 }
 // hungry enough to stop work and eat, and there is something to eat
-function hungryNow(c) { return c.food < 30 && (kit().cooked >= 1 || S.res.food >= 1); }
+// Crew eat only in their scheduled meal hours: working crew below 50% food, idle crew (Rest, or a job whose room isn't built) below 75%.
+const EAT_WORK = 50, EAT_IDLE = 75;
+function mealShift(c) { return ensureSched(c)[Math.floor(hourF()) % 24] === 'M'; }
+function idleForMeal(c) { return c.job === 'idle' || (c.job === 'workshop' && !S.rooms.workshop) || (c.job === 'research' && !(S.builds && S.builds.lab)); }
+function hungryNow(c) { return mealShift(c) && c.food < (idleForMeal(c) ? EAT_IDLE : EAT_WORK) && (kit().cooked >= 1 || S.res.food >= 1); }
 // a plate in hand is dropped where the person stands (battle stations, med bay, sleep) and left on the floor for a while
 function dropPlate(c) {
   (S.drops || (S.drops = [])).push({ x: c.x, y: c.y, t: S.t });
@@ -1043,6 +1054,8 @@ function leaveState(c, why) {
 function ladderSpans() {
   const out = [{ x: LADDER_X, y0: FLOORS[0], y1: FLOORS[3] }];
   if (S && S.ladders) for (const l of S.ladders) out.push({ x: l.x, y0: FLOORS[l.g], y1: FLOORS[l.g + 1] });
+  TOWERS.forEach((T, ti) => out.push({ x: T.lad, y0: DECK_Y, y1: FLOORS[0], tower: ti }));   // turret tower ladders
+  if (S && S.dig) for (const l of pitGeom().lads) out.push(l);   // pit ladders (Mara climbs them like any other)
   return out;
 }
 function ladderXs(gap) {
@@ -1054,7 +1067,29 @@ function ladderXs(gap) {
 function rungSfx(m, dy) {
   return; // ladder ticks are played by footFoley() (correct volumes, no double tick)
 }
+// ---- turret towers: climb the tower ladder up to the deck, walk the deck; anything else first climbs back down
+function towerGoto(c, spot, dt, spd) {
+  const T = TOWERS[spot.tower];
+  if (c.deck === spot.tower && !c.tclimb) {   // on the deck: walk along it to the gun
+    const d = spot.x - c.x; if (Math.abs(d) < 3) { c.x = spot.x; return true; }
+    c.facing = Math.sign(d); c.x += Math.sign(d) * Math.min(Math.abs(d), spd * dt); return false;
+  }
+  if (c.deck != null && c.deck !== spot.tower) { towerDown(c, dt, spd); return false; }
+  if (c.deck == null) { if (!moveTo(c, 0, T.lad, dt, spd)) return false; c.deck = spot.tower; c.tclimb = true; c.climbing = true; }
+  c.x = T.lad; const dy = DECK_Y - c.y, st = Math.min(Math.abs(dy), spd * 0.8 * dt); c.y += Math.sign(dy) * st; rungSfx(c, st);
+  if (Math.abs(DECK_Y - c.y) < 1) { c.y = DECK_Y; c.tclimb = false; c.climbing = false; }
+  return false;
+}
+function towerDown(m, dt, spd) {
+  const T = TOWERS[m.deck];
+  if (!T || m.floor !== 0) { m.deck = null; m.tclimb = false; m.climbing = false; if (m.floor === 0) m.y = FLOORS[0]; return false; }
+  if (!m.tclimb) { const d = T.lad - m.x; if (Math.abs(d) > 2) { m.facing = Math.sign(d); m.x += Math.sign(d) * Math.min(Math.abs(d), spd * dt); return false; } m.x = T.lad; m.tclimb = true; m.climbing = true; }
+  const dy = FLOORS[0] - m.y, st = Math.min(Math.abs(dy), spd * 0.8 * dt); m.y += Math.sign(dy) * st; rungSfx(m, st);
+  if (Math.abs(FLOORS[0] - m.y) < 1) { m.y = FLOORS[0]; m.deck = null; m.tclimb = false; m.climbing = false; }
+  return false;
+}
 function moveTo(m, floor, x, dt, spd) {
+  if (m.deck != null) return towerDown(m, dt, spd);   // up a turret tower: climb down before going anywhere else
   if (m.floor === floor && !m.climbing) {
     const d = x - m.x; if (Math.abs(d) < 3) { m.x = x; return true; }
     m.facing = Math.sign(d); m.x += Math.sign(d) * Math.min(Math.abs(d), spd * dt); return false;
@@ -1449,7 +1484,7 @@ function crewTick(c, dt, mins) {
   if (job === 'kitchen' && kitchenHaul(c, dt)) return;
   if (job === 'meal') { mealTick(c, dt, mins); return; }
   const spot = job === 'sleep' ? sleepSpot(c) : jobSpot(c, job);
-  const arrived = spot.pit ? pitGoto(c, spot, dt, 70) : moveTo(c, spot.floor, spot.x, dt, 70);
+  const arrived = spot.pit ? pitGoto(c, spot, dt, 70) : spot.tower != null ? towerGoto(c, spot, dt, 70) : moveTo(c, spot.floor, spot.x, dt, 70);
   if (!arrived) { c.state = 'walk'; return; }
   c.state = job === 'sleep' ? 'sleep' : c.patient ? 'patient' : (c.wait && job === 'idle') ? 'waiting' : 'work';
   if (c.state !== 'work') return;
@@ -1816,6 +1851,7 @@ function pitRoute(d, from, goal) {
 }
 // Walk someone through the pit to a spot in a room: floor 3, down through an opening, then tile to tile. True once there.
 function pitGoto(c, spot, dt, spd) {
+  if (c.deck != null) return towerDown(c, dt, spd);
   const d = dg(), goal = spot.cell, v = d.ver | 0;
   if (!c.pp || c.pp.goal !== goal || c.pp.v !== v || (!c.pit && c.pp.fromPit)) {
     const cur = c.pit ? curCell(c) : null, route = pitRoute(d, cur ? dIdx(cur.c, cur.r) : null, goal);
@@ -1927,7 +1963,16 @@ function drawDig() {
   const claimed = new Set(S.crew.filter(o => o.alive && o.dig != null).map(o => o.dig));
   g.save();
   g.fillStyle = '#3a2d1f'; g.fillRect(IN_L - 14, DIG.y0, 14 + (DIG.x0 - IN_L), gh); g.fillRect(DIG.x0 + gw, DIG.y0, IN_R + 14 - DIG.x0 - gw, gh);
-  g.fillStyle = '#120d09'; g.fillRect(DIG.x0, DIG.y0, gw, gh);
+  // back wall behind dug tiles: packed dirt that turns to rock with depth, with embedded stones (stable per tile)
+  { const bg = g.createLinearGradient(0, DIG.y0, 0, DIG.y0 + gh); bg.addColorStop(0, '#3a281a'); bg.addColorStop(0.55, '#2e241d'); bg.addColorStop(1, '#25232a'); g.fillStyle = bg; g.fillRect(DIG.x0, DIG.y0, gw, gh); }
+  const pith = (a, b) => { const v = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return v - Math.floor(v); };
+  for (let r = 0; r < DIG.rows; r++) for (let c = 0; c < DIG.cols; c++) {
+    if (d.m[dIdx(c, r)] !== 0) continue;
+    const x = DIG.x0 + c * cs, y = DIG.y0 + r * cs, deep = r / DIG.rows;
+    tex(deep > 0.5 ? 'stone' : 'soil', x, y, cs, cs, 0.5);
+    for (let k = 0; k < 3; k++) { const h1 = pith(c * 3 + k, r), h2 = pith(r * 5 + k, c); if (h1 > 0.55) { g.fillStyle = h2 > 0.5 ? 'rgba(120,112,108,' + (0.18 + 0.25 * deep) + ')' : 'rgba(150,110,70,' + (0.22 - 0.1 * deep) + ')'; g.beginPath(); g.ellipse(x + 3 + h2 * 18, y + 3 + h1 * 18 - 8, 2 + h1 * 3, 1.5 + h2 * 2, 0, 0, 7); g.fill(); } }
+    g.fillStyle = 'rgba(0,0,0,.22)'; g.fillRect(x, y, cs, cs);   // set back from the solid tiles
+  }
   for (let r = 0; r < DIG.rows; r++) for (let c = 0; c < DIG.cols; c++) {
     const i = dIdx(c, r), v = d.m[i], x = DIG.x0 + c * cs, y = DIG.y0 + r * cs;
     if (v === 0) { if (r === 0) { g.fillStyle = '#0e0a07'; g.fillRect(x, FLOORS[3], cs, 10); } continue; }
@@ -2257,7 +2302,7 @@ function enemyTick(e, dt) {
   }
   if (!e.inside) {
     // anyone standing on the surface in its way?
-    const people = [...living().filter(c => c.floor === 0 && !c.climbing), ...(scene === 'bunker' && P.floor === 0 && !S.player.down ? [P] : [])];
+    const people = [...living().filter(c => c.floor === 0 && !c.climbing && c.deck == null), ...(scene === 'bunker' && P.floor === 0 && !S.player.down ? [P] : [])];
     const near = people.filter(p => p.x < e.x + 4 && e.x - p.x < (b.ranged || 24)).sort((a, z) => z.x - a.x)[0];
     const target = pickTarget(e, b);
     const tx = target ? target.x + (b.ranged || 22) : DOOR_X;
@@ -2289,6 +2334,7 @@ function attack(e, b, target, tx, what) {
   e.facing = Math.sign(tx - e.x) || -1;
   if (e.cd > 0) return;
   e.cd = b.rate;
+  if (what === 'turret' && !b.ranged && window.TILES && TILES.strike) TILES.strike(tx, FLOORS[0] - 20, b.dmg * 0.5);   // hitting a gun means hitting its tower's legs
   if (e.inside && window.TILES) TILES.claw(e, b);   // fighting inside scrapes the plates
   if (b.ranged) { useEnemyAmmo(e); tracer(e.x - 6, e.y - b.h + 8, tx, (target.y || FLOORS[0]) - 16, '#ff7a5a'); if (Math.random() > 0.65) return; }
   if (target === P) return hurtPlayer(b.dmg * mawDmgMul(e));
@@ -2460,10 +2506,38 @@ function simTick(dt) {
 // ---------------------------------------------------------------- 4. the player
 const keys = {};
 const PC = Physics.createController({ coyote: 0.10, buffer: 0.12 }); // jump feel (see physics.js)
+// ---- the pit as open space for Mara: dug tiles are air, solid tiles are ground and walls (cached per dig version)
+let pitGeoKey = '', pitGeo = null;
+function pitGeom() {
+  const d = dg(), key = (d.ver | 0) + ':' + Object.keys(d.lad || {}).length + ':' + d.m.reduce((a, v, i) => (v ? a : a + i * 7 + 1), 0);
+  if (pitGeo && key === pitGeoKey) return pitGeo;
+  const cs = DIG.cell, solid = (c, r) => !dIn(c, r) || d.m[dIdx(c, r)] !== 0, cx = c => DIG.x0 + c * cs, ry = r => DIG.y0 + r * cs;
+  const floors = [], ceil = [], seg = (arr, y, x0, x1, extra) => { const last = arr[arr.length - 1]; if (last && last.y === y && last.x1 === x0) last.x1 = x1; else arr.push(Object.assign({ y, x0, x1 }, extra || {})); };
+  // floor-3 slab, with a hole over every dug top-row tile
+  let x = IN_L;
+  for (let c = 0; c < DIG.cols; c++) { if (!solid(c, 0)) { if (cx(c) > x) floors.push({ id: 3, y: FLOORS[3], x0: x, x1: cx(c) }); x = cx(c) + cs; } }
+  if (IN_R > x) floors.push({ id: 3, y: FLOORS[3], x0: x, x1: IN_R });
+  for (let r = 0; r < DIG.rows; r++) for (let c = 0; c < DIG.cols; c++) {
+    if (solid(c, r)) continue;
+    if (solid(c, r + 1)) seg(floors, ry(r + 1), cx(c), cx(c) + cs, { id: 3 });   // stand on the tile below
+    if (r > 0 && solid(c, r - 1)) seg(ceil, ry(r), cx(c), cx(c) + cs);           // bump the tile above
+  }
+  // pit ladders: merge each column's stacked ladder tiles into one climbable span
+  const lads = [], byCol = {};
+  for (const k of Object.keys(d.lad || {})) { const i = +k, c = i % DIG.cols, r = (i / DIG.cols) | 0; (byCol[c] = byCol[c] || []).push(r); }
+  for (const c in byCol) { const rs = byCol[c].sort((a, b) => a - b); let s = rs[0], p = rs[0]; for (let j = 1; j <= rs.length; j++) { if (j < rs.length && rs[j] === p + 1) { p = rs[j]; continue; } lads.push({ x: cx(+c) + cs / 2, y0: s === 0 ? FLOORS[3] : ry(s), y1: ry(p + 1), pit: true }); if (j < rs.length) { s = p = rs[j]; } } }
+  pitGeoKey = key; pitGeo = { floors, ceil, lads, solid };
+  return pitGeo;
+}
+// is this bunker-world point inside a solid pit tile?
+function pitSolidAt(x, y) { if (y < DIG.y0 || y >= DIG.y0 + DIG.rows * DIG.cell || x < DIG.x0 || x >= DIG.x0 + DIG.cols * DIG.cell) return false; const c = Math.floor((x - DIG.x0) / DIG.cell), r = Math.floor((y - DIG.y0) / DIG.cell); return dg().m[dIdx(c, r)] !== 0; }
+// does Mara's body (feet at b.y, about 30 px tall, 12 px wide) overlap a solid pit tile?
+function pitBodyHit(b) { for (const dy of [3, 14, 28]) for (const dx of [-6, 6]) if (pitSolidAt(b.x + dx, b.y - dy)) return true; return false; }
 function bunkerSurfaces() {
+  const pg = pitGeom();
   return {
-    floors: FLOORS.map((y, f) => f === 0 ? { id: f, y, x0: -Infinity, x1: Infinity } : { id: f, y, x0: IN_L, x1: IN_R }),
-    ceilings: FLOORS.slice(0, -1).map(y => ({ y, x0: IN_L, x1: IN_R })),
+    floors: FLOORS.map((y, f) => f === 0 ? { id: f, y, x0: -Infinity, x1: Infinity } : f === 3 ? null : { id: f, y, x0: IN_L, x1: IN_R }).filter(Boolean).concat(pg.floors).concat(TOWERS.map(T => ({ id: 0, y: DECK_Y, x0: T.x0, x1: T.x1 }))),   // tower decks count as the surface
+    ceilings: FLOORS.slice(0, -1).map(y => ({ y, x0: IN_L, x1: IN_R })).concat(pitGeom().ceil),
     headH: 34
   };
 }
@@ -2520,15 +2594,21 @@ function playerTick(dt) {
     rungSfx(P, Math.abs(P.y - yBefore));
     bunWasGround = true; bunStepAcc = 0;
     P.y = clamp(P.y, ls.y0, ls.y1);
-    const f = FLOORS.findIndex(y => Math.abs(P.y - y) < 10);
-    if ((L || R) && f >= 0) { P.onLadder = false; P.y = FLOORS[f]; P.floor = f; P.vy = 0; }
-    else if (!(L || R)) { if (f >= 0 && !U && !D) { P.y = FLOORS[f]; P.floor = f; } }
+    const deck = ls.tower != null && Math.abs(P.y - DECK_Y) < 10;   // top of a turret tower ladder
+    const pk = ls.pit && P.y > FLOORS[3] + 4 ? Math.round((P.y - DIG.y0) / DIG.cell) : null, pitY = pk != null && Math.abs(P.y - (DIG.y0 + pk * DIG.cell)) < 8 ? DIG.y0 + pk * DIG.cell : null;   // a tile edge on a pit ladder
+    const f = deck ? 0 : pitY != null ? 3 : FLOORS.findIndex(y => Math.abs(P.y - y) < 10), fy = deck ? DECK_Y : pitY != null ? pitY : FLOORS[f];
+    if ((L || R) && f >= 0) { P.onLadder = false; P.y = fy; P.floor = f; P.vy = 0; }
+    else if (!(L || R)) { if (f >= 0 && !U && !D) { P.y = fy; P.floor = f; } }
     P.anim += (U || D) ? dt * 8 : 0;
   } else {
     P.vx = (R ? 1 : 0) - (L ? 1 : 0);
     if (P.vx) P.facing = P.vx;
+    const pox = P.x;
     P.x += P.vx * TUNE.walk * dt; P.anim += P.vx ? dt * 10 : 0;
+    if (P.y > FLOORS[3] - 2 && pitBodyHit(P)) P.x = pox;   // pit walls block sideways
     const bJumped = PC.update(P, kd('jump'), dt, TUNE.jump);
+    // in the pit: hold W against a dirt or rock wall to scramble up it
+    if (U && P.y > FLOORS[3] + 2 && !bJumped && (pitSolidAt(P.x - 10, P.y - 14) || pitSolidAt(P.x + 10, P.y - 14) || pitSolidAt(P.x - 10, P.y + 3) || pitSolidAt(P.x + 10, P.y + 3))) { P.vy = Math.min(P.vy, -TUNE.ladder * 0.65 - TUNE.grav * dt); P.anim += dt * 8; }
     const bPreVy = P.vy;
     // land on a floor line, bump the ceiling of the floor above
     Physics.moveBody(P, dt, TUNE.grav, bunkerSurfaces());
@@ -3416,21 +3496,22 @@ const prefs = (() => {
   try { p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}; } catch (e) { p = {}; }
   let osRm = false; try { osRm = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) {}
   let osHc = false; try { osHc = !!(window.matchMedia && matchMedia('(prefers-contrast: more)').matches); } catch (e) {}
-  return { cb: !!p.cb, hc: typeof p.hc === 'boolean' ? p.hc : osHc, rm: typeof p.rm === 'boolean' ? p.rm : osRm, ta: !!p.ta, nl: p.nl !== false, le: !!p.le, sr: p.sr !== false, fx: (typeof p.fx === 'number' && p.fx >= 0 && p.fx <= 1) ? p.fx : 1, ps: !!p.ps, sk: (p.sk === 'off' || p.sk === 'low' || p.sk === 'normal') ? p.sk : 'normal', ska: (typeof p.ska === 'number' && p.ska >= 0 && p.ska <= 1) ? p.ska : 1, hk: !!p.hk, ho: !!p.ho };
+  return { cb: !!p.cb, hc: typeof p.hc === 'boolean' ? p.hc : osHc, rm: typeof p.rm === 'boolean' ? p.rm : osRm, ta: !!p.ta, nl: p.nl !== false, le: !!p.le, sr: p.sr !== false, fx: (typeof p.fx === 'number' && p.fx >= 0 && p.fx <= 1) ? p.fx : 1, ps: !!p.ps, sk: (p.sk === 'off' || p.sk === 'low' || p.sk === 'normal') ? p.sk : 'normal', ska: (typeof p.ska === 'number' && p.ska >= 0 && p.ska <= 1) ? p.ska : 1, hk: !!p.hk, ho: !!p.ho, co: !!p.co, hb: p.hb !== false };
 })();
 let shakeT = 0;
 let heartT = 0;
 // Heartbeat while the hatch is under 25% or the player is under 30% HP. Faster as it gets worse. Silent under reduced motion.
 function heartbeatTick(dt) {
-  if (!S || S.over || scene !== 'bunker' || prefs.rm || !window.SFX || !SFX.heartbeat) { heartT = 0; return; }
+  if (!S || S.over || (scene !== 'bunker' && scene !== 'scav') || prefs.rm || !prefs.hb || !window.SFX || !SFX.heartbeat) { heartT = 0; return; }
+  const topside = scene === 'scav';
   const dk = S.door && S.door.max ? S.door.hp / S.door.max : 1;
   const pl = S.player, pk = pl && pl.maxHp && !pl.down ? pl.hp / pl.maxHp : 1;
-  const doorLow = S.door && S.door.hp > 0 && dk < 0.25;
+  const doorLow = !topside && S.door && S.door.hp > 0 && dk < 0.25;
   const plLow = pl && !pl.down && pl.hp > 0 && pk < 0.3;
   if (!doorLow && !plLow) { heartT = 0; return; }
   const sev = Math.max(doorLow ? 1 - dk / 0.25 : 0, plLow ? 1 - pk / 0.3 : 0);
   heartT -= dt;
-  if (heartT <= 0) { heartT = 1.1 - 0.5 * sev; SFX.heartbeat(0.4 + 0.6 * sev); }
+  if (heartT <= 0) { heartT = 1.1 - 0.5 * sev; SFX.heartbeat((0.4 + 0.6 * sev) * (topside ? 0.75 : 1)); }
 }
 let hurtVig = 0; // player-hit edge flash, seconds remaining (0..0.45)
 let doorVigAt = -9999, doorVigK = 0; // door hit/breach red edge vignette: start time (performance.now) and strength 0..1
@@ -3475,6 +3556,8 @@ function applyPrefs() {
   document.body.classList.toggle('hc', prefs.hc);
   document.body.classList.toggle('hk', !!prefs.hk);
   document.body.classList.toggle('ho', !!prefs.ho);
+  const coBox = document.getElementById('sCo');
+  if (coBox) coBox.checked = !!prefs.co;
   const hoBox = document.getElementById('sHo');
   if (hoBox) hoBox.checked = !!prefs.ho;
   const hkBox = document.getElementById('sHk');
@@ -3502,7 +3585,7 @@ function applyPrefs() {
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
 }
-function savePrefs() { try { localStorage.setItem(PREF_KEY, JSON.stringify({ cb: prefs.cb, hc: prefs.hc, rm: rmChosen ? prefs.rm : undefined, ta: prefs.ta, nl: prefs.nl, le: prefs.le, sr: prefs.sr, fx: prefs.fx, ps: prefs.ps, sk: prefs.sk, ska: prefs.ska, hk: prefs.hk, ho: prefs.ho })); } catch (e) {} applyPrefs(); if (typeof renderHud === 'function') { renderHud(); renderDrawer(); } }
+function savePrefs() { try { localStorage.setItem(PREF_KEY, JSON.stringify({ cb: prefs.cb, hc: prefs.hc, rm: rmChosen ? prefs.rm : undefined, ta: prefs.ta, nl: prefs.nl, le: prefs.le, sr: prefs.sr, fx: prefs.fx, ps: prefs.ps, sk: prefs.sk, ska: prefs.ska, hk: prefs.hk, ho: prefs.ho, co: prefs.co, hb: prefs.hb })); } catch (e) {} applyPrefs(); if (typeof renderHud === 'function') { renderHud(); renderDrawer(); } }
 { const a = document.getElementById('tCb'), b = document.getElementById('tRm');
   const prefLamp = (name, on) => { try { lamp(name + ' mode ' + (on ? 'on' : 'off')); } catch (err) {} };
   if (a) a.onclick = e => { prefs.cb = !prefs.cb; savePrefs(); prefLamp('Colorblind', prefs.cb); e.currentTarget.blur(); };
@@ -3638,7 +3721,29 @@ function drawNightLight() {
   g.restore();
 }
 // Red screen-edge flash when the player is hit. Reduced motion: dimmer and shorter, smooth fade, no sudden flash.
+// Soft pulsing red edge vignette while Mara is under 30% HP. Needs the Low-HP heartbeat setting; skipped under reduced motion.
+function drawLowHpVignette() {
+  if (prefs.rm || !prefs.hb || !S || S.over) return;
+  const pl = S.player;
+  if (!pl || !pl.maxHp || pl.down || !(pl.hp > 0)) return;
+  const pk = pl.hp / pl.maxHp;
+  if (pk >= 0.3) return;
+  const sev = 1 - pk / 0.3;
+  const pulse = 0.65 + 0.35 * Math.sin(performance.now() / 1000 * (4 + 3 * sev));
+  let a = (0.16 + 0.22 * sev) * pulse * prefs.fx * (prefs.le ? 0.5 : 1);
+  if (prefs.ps) a = Math.min(a, 0.12);
+  if (a < 0.005) return;
+  const w = cv.width, h = cv.height;
+  g.save();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  const rg = g.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.hypot(w, h) / 2);
+  rg.addColorStop(0, 'rgba(150,10,10,0)');
+  rg.addColorStop(1, 'rgba(150,10,10,' + a.toFixed(3) + ')');
+  g.fillStyle = rg; g.fillRect(0, 0, w, h);
+  g.restore();
+}
 function drawHurtVignette() {
+  drawLowHpVignette();
   if (prefs.rm || !(hurtVig > 0)) return;
   const k = Math.min(1, hurtVig / 0.45);
   let a = (prefs.rm ? 0.22 : 0.5) * k * k * prefs.fx;
@@ -4132,6 +4237,22 @@ function drawTowerRoom() {
     box(x - 60, -128, 120, 6, '#2d2215'); g.fillStyle = '#7fc8ff'; g.fillRect(x - 60, -128, 120 * pct, 6);
   }
 }
+// turret towers: the plates are shell tiles (tiles.js); this draws the bracing, the ladder and the deck rail
+function drawTowerLadders(y) {
+  for (const T of TOWERS) {
+    g.strokeStyle = 'rgba(60,38,26,.9)'; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(T.x0 + 16, DECK_Y + 10); g.lineTo(T.x1 - 16, y); g.moveTo(T.x1 - 16, DECK_Y + 10); g.lineTo(T.x0 + 16, y); g.moveTo(T.x0 + 16, DECK_Y + 10 + (y - DECK_Y - 10) / 2); g.lineTo(T.x1 - 16, DECK_Y + 10 + (y - DECK_Y - 10) / 2); g.stroke();
+    // the ladder: the same build as the bunker ladders (dark backing, two rails, rungs every 12 px), hatch cut in the deck
+    const lx = T.lad;
+    g.fillStyle = '#0e0a07'; g.fillRect(lx - 12, DECK_Y, 24, 10);
+    g.fillStyle = 'rgba(14,10,7,.55)'; g.fillRect(lx - 11, DECK_Y + 10, 22, y - DECK_Y - 10);
+    g.strokeStyle = '#8a7650'; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(lx - 7, DECK_Y - 12); g.lineTo(lx - 7, y); g.moveTo(lx + 7, DECK_Y - 12); g.lineTo(lx + 7, y); g.stroke();
+    g.lineWidth = 1.6; for (let ry = DECK_Y + 8; ry < y; ry += 12) { g.beginPath(); g.moveTo(lx - 7, ry); g.lineTo(lx + 7, ry); g.stroke(); }
+    g.strokeStyle = 'rgba(122,102,80,.85)'; g.lineWidth = 1.5;   // deck rail
+    g.beginPath(); g.moveTo(T.x0 + 18, DECK_Y - 12); g.lineTo(T.x1, DECK_Y - 12); for (let rx = T.x0 + 18; rx <= T.x1; rx += 22) { g.moveTo(rx, DECK_Y - 12); g.lineTo(rx, DECK_Y); } g.moveTo(T.x1, DECK_Y - 12); g.lineTo(T.x1, DECK_Y); g.stroke();
+  }
+}
 function drawSurface(sky) {
   const y = FLOORS[0];
   const _v = typeof VEC !== 'undefined';
@@ -4271,11 +4392,12 @@ function drawSurface(sky) {
   const st = S.tower.done;
   if (st > 0) { g.strokeStyle = '#8a96a0'; g.lineWidth = 3; const mx = 1000, top = y - 40 - st * 28; g.beginPath(); g.moveTo(mx - 14, y); g.lineTo(mx, top); g.lineTo(mx + 14, y); g.stroke(); g.fillStyle = st > 2 ? '#7fc8ff' : '#ff5a4e'; g.beginPath(); g.arc(mx, top, 4, 0, 7); g.fill(); }
   drawCannon(y);
+  drawTowerLadders(y);
   // turrets
   let tGhost = null;
   const tHover = tTool && scene === 'bunker' ? turretSnapAt(bcamToWorld({ x: mouse.x, y: mouse.y })) : -1;
   Array.from({ length: TSLOTS }, (_, i) => S.turrets[i] || null).forEach((t, i) => {
-    const x = SLOT_X[i];
+    const x = SLOT_X[i], y = slotY(i);
     if (!t) {
       // empty snap points show while building; while placing a turret they are bright and the hovered one shows the cost
       if (tTool) {
@@ -4323,7 +4445,7 @@ function drawSurface(sky) {
     if (t.hp < t.max) { const c = tRepCost(t); good = canPay(c); msg = nm + ': repair ' + fmtCost(c); }
     else if (t.type === 'coil' || (t.lvl || 1) >= 2) { good = false; msg = nm + ': fully upgraded'; }
     else { good = canPay(T_UP_COST); msg = nm + ': upgrade ' + fmtCost(T_UP_COST); }
-    drawItemGhostBox(tGhost.x - 16, y, 32, good, msg + '  (Shift+click removes)', true);
+    drawItemGhostBox(tGhost.x - 16, slotY(tGhost.i), 32, good, msg + '  (Shift+click removes)', true);
   }
   // wall
   if (S.wall.hp > 0) {
@@ -4432,6 +4554,14 @@ function drawPerson(x, y, color, accent, c, anim, facing, sleeping, climbing) {
   if (c) {
     if (c.hp < c.maxHp) hpBar(-10, -42, 20, c.hp / c.maxHp, '#7ddc6f');
     if (sel === c.id || hover === c) { g.fillStyle = '#ffe0a8'; g.font = '600 11px "IBM Plex Sans"'; const w = g.measureText(c.name).width; g.fillText(c.name, -w / 2, -48); }
+    if (prefs.co) {
+      g.save();
+      const ox = sleeping ? -17 : -11, oy = sleeping ? -13 : -40, ow = sleeping ? 30 : 22, oh = sleeping ? 12 : 42;
+      g.lineJoin = 'round';
+      g.strokeStyle = 'rgba(0,0,0,.85)'; g.lineWidth = 4; g.strokeRect(ox, oy, ow, oh);
+      g.strokeStyle = prefs.hc ? '#fff' : '#7ff0ff'; g.lineWidth = 2; g.strokeRect(ox, oy, ow, oh);
+      g.restore();
+    }
     if (sel === c.id) { g.strokeStyle = '#ffb347'; g.lineWidth = 1.5; g.strokeRect(-10, -38, 20, 40); }
     drawStatusIcon(c, sleeping);
   }
@@ -5171,6 +5301,7 @@ function lampPump() {
   lampHistAdd(it.text, it.kind); logs.push({ text: it.text, kind: it.kind, at: now, ev: it.ev }); if (logs.length > LOG_MAX) logs.shift(); renderLog();
   if (typeof narrShowText === 'function') narrShowText(it.text);
   if (it.clip) narrPlay(it.clip);
+  else if (window.SFX && SFX.lampTick) { try { SFX.lampTick(it.kind === 'warn' || it.kind === 'good' ? it.kind : 'info'); } catch (e) {} }
   lampCurVoiced = !!it.clip;
   lampBusyUntil = now + Math.max(LAMP_MIN_MS, LAMP_BASE_MS + it.text.length * LAMP_PER_CHAR_MS);
   if (lampQ.length) lampTimer = setTimeout(lampPump, lampBusyUntil - now);
@@ -5223,6 +5354,7 @@ function toast(text, kind = '', loc = null) {
   if (same) {
     same._n = (same._n || 1) + 1;
     same.querySelector('.tn').textContent = ' \u00d7' + same._n;
+    same.classList.remove('bump'); void same.offsetWidth; same.classList.add('bump');   // retrigger the counter pop
     toastArm(same);
     return;
   }
@@ -7587,25 +7719,7 @@ document.querySelector('.tabs').addEventListener('keydown', e => {
 $('#dClose').onclick = closeDrawer;
 $('#dCollapse').onclick = () => setDrawerCollapsed(!$('#drawer').classList.contains('collapsed'));
 // hover tick on buttons and chips (mouse/pen only, not touch)
-let lastHoverEl = null;
-// click tick on enabled buttons and chips (drawer tabs, toolbar toggles and drawer close already play open/close sounds)
-document.addEventListener('click', e => {
-  const b = e.target && e.target.closest ? e.target.closest('button:not(:disabled), .chip') : null;
-  if (!b || b.hasAttribute('data-tab') || b.id === 'dClose' || b.id === 'tCrew' || b.id === 'tBuild' || b.id === 'tTower' || b.id === 'tInv' || b.id === 'tHelp') return;
-  if (window.SFX && SFX.click) SFX.click();
-});
-document.addEventListener('pointerover', e => {
-  if (e.pointerType === 'touch') return;
-  const b = e.target && e.target.closest ? e.target.closest('button:not(:disabled), .chip') : null;
-  if (b && b !== lastHoverEl) { lastHoverEl = b; uiSfx('Hover'); }
-  else if (!b) lastHoverEl = null;
-});
-// soft click on buttons; skipped where another UI sound (open/close/place/error/job chip) already plays
-document.addEventListener('click', e => {
-  const b = e.target && e.target.closest ? e.target.closest('button:not(:disabled), .chip') : null;
-  if (!b || b.closest('.tabs [data-tab], [data-build], [data-job]') || b.id === 'dClose' || b.id === 'tCrew' || b.id === 'tBuild' || b.id === 'tTower' || b.id === 'tInv') return;
-  uiSfx('Click');
-}, true);
+// UI click/hover ticks are handled by uiSoundHooks() near the end of this file (single delegated hook)
 $('#tCrew').onclick = () => toggleDrawer('crew');
 if ($('#tInv')) $('#tInv').onclick = () => { if (window.PACK) PACK.toggle(); else toggleDrawer('gear'); };
 $('#tBuild').onclick = () => toggleDrawer('build');
@@ -7619,6 +7733,7 @@ $('#tMute').onclick = e => { if (window.SFX) SFX.toggleMute(); e.currentTarget.b
 // menus
 function overlay(html) {
   const o = $('#overlay'); const wasOpen = !o.hidden; o.innerHTML = html; o.hidden = !html;
+  if (html) { const lt = document.getElementById('lampTip'); if (lt) lt.remove(); }
   if (!!html !== wasOpen) uiSfx(html ? 'Open' : 'Close');
   try { if (window.SFX && SFX.muffle) SFX.muffle(!!html && (html.indexOf('data-vol=') >= 0 || (typeof paused !== 'undefined' && !!paused))); } catch (_) {}
   if (!html) return;
@@ -8011,7 +8126,7 @@ function showSettings(from) {
   const curPct = Math.round(getTextScale() * 100);
   const tsBtns = `<label class="srow"><span>Text scale</span><input type="range" id="sTs" min="85" max="160" step="5" value="${curPct}" aria-label="UI text size" aria-valuetext="${curPct} percent"><b>${curPct}%</b></label><button class="btn ghost" id="sTsReset" style="min-width:0">Reset text size</button><div class="tsrow" role="group" aria-label="Text size presets">${[['Small', 85], ['Normal', 100], ['Large', 125], ['X-Large', 150]].map(([l, p]) => `<button class="btn ghost" data-tspreset="${p}" aria-pressed="${curPct === p}">${l} (${p}%)</button>`).join('')}</div>`;
   const muted = !!(window.SFX && SFX.muted);
-  overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="sTitle" style="width:640px"><h1 id="sTitle" style="font-size:36px">SETTINGS</h1><div class="setp"><h3>VOLUME</h3>${rows}<button class="btn ghost" id="sMute" style="min-width:0">${muted ? 'Sound: off' : 'Sound: on'}</button><button class="btn ghost" id="sNarrMute" style="min-width:0" aria-pressed="${!!(window.SFX && SFX.narrMuted && SFX.narrMuted())}">${(window.SFX && SFX.narrMuted && SFX.narrMuted()) ? 'Narrator: muted' : 'Narrator: on'}</button><button class="btn ghost" id="sVolReset" style="min-width:0">Reset audio</button><button class="btn ghost" id="sPitchVar" style="min-width:0" aria-pressed="${!!(window.SFX && SFX.pitchVar && SFX.pitchVar())}" aria-label="Slight random pitch variation on turret shots and door hits">Hit variety: ${(window.SFX && SFX.pitchVar && SFX.pitchVar()) ? 'on' : 'off'}</button><h3>DISPLAY</h3><div class="tsrow"><button class="btn ghost" data-pref="cb" aria-pressed="false">Colorblind: off</button><button class="btn ghost" data-pref="hc" aria-pressed="false">High contrast: off</button><button class="btn ghost" id="sCap" aria-pressed="${window.narrCaptionsOn ? narrCaptionsOn() : true}">Captions: ${(window.narrCaptionsOn ? narrCaptionsOn() : true) ? 'on' : 'off'}</button><button class="btn ghost" id="sCapSize" aria-label="Caption text size">Caption size: ${({ s: 'small', m: 'normal', l: 'large' })[window.narrCapSize ? narrCapSize() : 'm']}</button></div><label class="srow"><span>Caption background <b id="sCapBgV">${window.narrCapBg ? narrCapBg() : 92}%</b></span><input type="range" id="sCapBg" min="0" max="100" step="5" value="${window.narrCapBg ? narrCapBg() : 92}" aria-label="Lamp caption background opacity"></label><h3>FLASH &amp; SHAKE</h3><label class="srow"><span>Screen shake${prefs.rm ? ' (off: reduced motion)' : ''}</span><input type="checkbox" id="sSk" aria-label="Screen shake" ${prefs.sk !== 'off' ? 'checked' : ''}></label><label class="srow"><span>Shake strength${prefs.rm ? ' (off: reduced motion)' : ''}</span><input type="range" min="0" max="100" step="5" value="${Math.round((typeof prefs.ska === 'number' ? prefs.ska : 1) * 100)}" id="sSkAmt" aria-label="Screen shake strength"${prefs.rm ? ' disabled' : ''}><b id="sSkAmtOut">${Math.round((typeof prefs.ska === 'number' ? prefs.ska : 1) * 100)}%</b></label><label class="srow"><span>Effects intensity</span><input type="range" min="0" max="100" step="5" value="${Math.round(prefs.fx * 100)}" id="sFx" aria-label="Screen shake and flash intensity"><b>${Math.round(prefs.fx * 100)}%</b></label><div class="tsrow"><button class="btn ghost" id="sPs" aria-pressed="${prefs.ps}">Photosensitive-safe: ${prefs.ps ? 'on' : 'off'}</button><button class="btn ghost" id="sTips" aria-pressed="${!tutDone()}">Tutorial hints: ${tutDone() ? 'off' : 'on'}</button></div><label class="srow"><span>Show keyboard hints (bottom strip)</span><input type="checkbox" id="sKeybar" aria-label="Show keyboard hint strip"${window.keybarHidden && keybarHidden() ? '' : ' checked'}></label><h3>SCREEN READER</h3><div class="tsrow"><button class="btn ghost" id="sSrAlert" aria-pressed="${srAlertsOn()}">Critical alerts: ${srAlertsOn() ? 'on' : 'off'}</button></div><h3>HELP</h3><div class="tsrow"><button class="btn ghost" id="sReplay">Replay tips</button></div><label class="srow" style="cursor:pointer"><input type="checkbox" id="sHk" ${prefs.hk ? 'checked' : ''}><span>Hide keyboard hints (bottom strip)</span></label><label class="srow" style="cursor:pointer"><input type="checkbox" id="sHo" ${prefs.ho ? 'checked' : ''}><span>Thick outlines (focus rings, room border)</span></label><label class=\"srow\" style=\"cursor:pointer\"><input type=\"checkbox\" id=\"sRm\" ${prefs.rm ? 'checked' : ''}><span>Reduced motion (no screen shake, still ash and bobbing)</span></label><h3>TEXT SIZE</h3>${tsBtns}<h3>TOUCH CONTROLS</h3>${tmBtns}<h3>MOVEMENT &amp; ACTION KEYS</h3><div class="binds">${bindRows}</div><div id="bindNote" role="status" aria-live="polite" style="min-height:1.4em;margin-top:6px;color:#e8b84a">${bindNote}</div><h3>OTHER KEYS</h3><dl class="keys">${keys}</dl></div><button class="btn" id="sBack">Back</button></div>`);
+  overlay(`<div class="menu" role="dialog" aria-modal="true" aria-labelledby="sTitle" style="width:640px"><h1 id="sTitle" style="font-size:36px">SETTINGS</h1><div class="setp"><h3>VOLUME</h3>${rows}<button class="btn ghost" id="sMute" style="min-width:0">${muted ? 'Sound: off' : 'Sound: on'}</button><button class="btn ghost" id="sNarrMute" style="min-width:0" aria-pressed="${!!(window.SFX && SFX.narrMuted && SFX.narrMuted())}">${(window.SFX && SFX.narrMuted && SFX.narrMuted()) ? 'Narrator: muted' : 'Narrator: on'}</button><button class="btn ghost" id="sVolReset" style="min-width:0">Reset audio</button><button class="btn ghost" id="sResetAll" style="min-width:0">Reset all settings</button><button class="btn ghost" id="sPitchVar" style="min-width:0" aria-pressed="${!!(window.SFX && SFX.pitchVar && SFX.pitchVar())}" aria-label="Slight random pitch variation on turret shots and door hits">Hit variety: ${(window.SFX && SFX.pitchVar && SFX.pitchVar()) ? 'on' : 'off'}</button><h3>DISPLAY</h3><div class="tsrow"><button class="btn ghost" data-pref="cb" aria-pressed="false">Colorblind: off</button><button class="btn ghost" data-pref="hc" aria-pressed="false">High contrast: off</button><button class="btn ghost" id="sCap" aria-pressed="${window.narrCaptionsOn ? narrCaptionsOn() : true}">Captions: ${(window.narrCaptionsOn ? narrCaptionsOn() : true) ? 'on' : 'off'}</button><button class="btn ghost" id="sCapSize" aria-label="Caption text size">Caption size: ${({ s: 'small', m: 'normal', l: 'large' })[window.narrCapSize ? narrCapSize() : 'm']}</button></div><label class="srow"><span>Caption background <b id="sCapBgV">${window.narrCapBg ? narrCapBg() : 92}%</b></span><input type="range" id="sCapBg" min="0" max="100" step="5" value="${window.narrCapBg ? narrCapBg() : 92}" aria-label="Lamp caption background opacity"></label><h3>FLASH &amp; SHAKE</h3><label class="srow"><span>Screen shake${prefs.rm ? ' (off: reduced motion)' : ''}</span><input type="checkbox" id="sSk" aria-label="Screen shake" ${prefs.sk !== 'off' ? 'checked' : ''}></label><label class="srow"><span>Shake strength${prefs.rm ? ' (off: reduced motion)' : ''}</span><input type="range" min="0" max="100" step="5" value="${Math.round((typeof prefs.ska === 'number' ? prefs.ska : 1) * 100)}" id="sSkAmt" aria-label="Screen shake strength"${prefs.rm ? ' disabled' : ''}><b id="sSkAmtOut">${Math.round((typeof prefs.ska === 'number' ? prefs.ska : 1) * 100)}%</b></label><label class="srow"><span>Effects intensity</span><input type="range" min="0" max="100" step="5" value="${Math.round(prefs.fx * 100)}" id="sFx" aria-label="Screen shake and flash intensity"><b>${Math.round(prefs.fx * 100)}%</b></label><div class="tsrow"><button class="btn ghost" id="sPs" aria-pressed="${prefs.ps}">Photosensitive-safe: ${prefs.ps ? 'on' : 'off'}</button><button class="btn ghost" id="sTips" aria-pressed="${!tutDone()}">Tutorial hints: ${tutDone() ? 'off' : 'on'}</button></div><label class="srow"><span>Show keyboard hints (bottom strip)</span><input type="checkbox" id="sKeybar" aria-label="Show keyboard hint strip"${window.keybarHidden && keybarHidden() ? '' : ' checked'}></label><h3>SCREEN READER</h3><div class="tsrow"><button class="btn ghost" id="sSrAlert" aria-pressed="${srAlertsOn()}">Critical alerts: ${srAlertsOn() ? 'on' : 'off'}</button></div><h3>HELP</h3><div class="tsrow"><button class="btn ghost" id="sReplay">Replay tips</button></div><label class="srow" style="cursor:pointer"><input type="checkbox" id="sHk" ${prefs.hk ? 'checked' : ''}><span>Hide keyboard hints (bottom strip)</span></label><label class="srow" style="cursor:pointer"><input type="checkbox" id="sHo" ${prefs.ho ? 'checked' : ''}><span>Thick outlines (focus rings, room border)</span></label><label class="srow" style="cursor:pointer"><input type="checkbox" id="sCo" ${prefs.co ? 'checked' : ''}><span>High-visibility crew outline (bunker)</span></label><label class="srow" style="cursor:pointer"><input type="checkbox" id="sHb" ${prefs.hb ? 'checked' : ''}><span>Low-HP heartbeat and edge vignette (off under reduced motion)</span></label><label class=\"srow\" style=\"cursor:pointer\"><input type=\"checkbox\" id=\"sRm\" ${prefs.rm ? 'checked' : ''}><span>Reduced motion (no screen shake, still ash and bobbing)</span></label><h3>TEXT SIZE</h3>${tsBtns}<h3>TOUCH CONTROLS</h3>${tmBtns}<h3>MOVEMENT &amp; ACTION KEYS</h3><div class="binds">${bindRows}</div><div id="bindNote" role="status" aria-live="polite" style="min-height:1.4em;margin-top:6px;color:#e8b84a">${bindNote}</div><h3>OTHER KEYS</h3><dl class="keys">${keys}</dl></div><button class="btn" id="sBack">Back</button></div>`);
   document.querySelectorAll('#overlay input[data-vol]').forEach(inp => {
     const out = inp.parentNode.querySelector('b');
     inp.oninput = () => { if (window.SFX && SFX.setVol) SFX.setVol(inp.dataset.vol, inp.value / 100); out.textContent = inp.value + '%'; volPreview(inp.dataset.vol); };
@@ -8026,6 +8141,24 @@ function showSettings(from) {
   });
   bindNote = '';
   $('#sVolReset').onclick = () => { if (window.SFX && SFX.resetVol) SFX.resetVol(); showSettings(from); };
+  $('#sResetAll').onclick = () => {
+    if (!confirm('Reset ALL settings (audio, display, accessibility, keys) to defaults? Your current run is kept.')) return;
+    try { save(); } catch (e) {}
+    try {
+      const keep = new Set([SAVE_KEY, TUT_KEY, TOUR_KEY, HELP_KEY, TIPS_KEY, 'ashfall_tune', 'ashfall.helpHint']);
+      const del = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || keep.has(k)) continue;
+        if (k.indexOf('ab_') === 0 || k.indexOf('ashfall') === 0) {
+          if (k.indexOf('ab_help_seen') === 0) continue;
+          del.push(k);
+        }
+      }
+      del.forEach(k => localStorage.removeItem(k));
+    } catch (e) {}
+    location.reload();
+  };
   $('#sBindReset').onclick = () => { Object.assign(BIND, BIND_DEF); saveBinds(); bindNote = 'Keys reset to defaults.'; showSettings(from); };
   $('#sBack').onclick = () => { if (from === 'pause') showPauseMenu(); else showMenu(); };
   { const ts = $('#sTs'); if (ts) {
@@ -8053,6 +8186,10 @@ function showSettings(from) {
   if (hkBox2) hkBox2.onchange = () => { prefs.hk = hkBox2.checked; savePrefs(); };
   const hoBox2 = $('#sHo');
   if (hoBox2) hoBox2.onchange = () => { prefs.ho = hoBox2.checked; savePrefs(); };
+  const coBox2 = $('#sCo');
+  if (coBox2) coBox2.onchange = () => { prefs.co = coBox2.checked; savePrefs(); };
+  const hbBox2 = $('#sHb');
+  if (hbBox2) hbBox2.onchange = () => { prefs.hb = hbBox2.checked; savePrefs(); };
   const skAmt = $('#sSkAmt'), skAmtOut = $('#sSkAmtOut');
   if (skAmt) {
     skAmt.oninput = () => { prefs.ska = skAmt.value / 100; if (skAmtOut) skAmtOut.textContent = skAmt.value + '%'; if (prefs.ska === 0) shakeT = 0; };
@@ -8180,10 +8317,24 @@ function bindPauseDisplay() {
     b.onclick = () => { prefs.hc = !prefs.hc; savePrefs(); applyPrefs(); };
   });
 }
+function pauseSummaryHtml() {
+  try {
+    const h = Math.floor(hourF()), m = Math.floor(S.t % 60);
+    const clk = 'Day ' + day() + ' \u00B7 ' + String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+    const crewN = living().length, beds = bedCount(), cap = crewCap();
+    const max = Math.max(1, S.door.max), hp = Math.max(0, S.door.hp), pct = hp / max;
+    const hs = (S.breached || hp <= 0) ? 'BREACHED' : pct < 0.25 ? 'CRITICAL' : pct < 0.5 ? 'FAILING' : pct < 0.75 ? 'DAMAGED' : 'SEALED';
+    return '<div class="runsum" role="group" aria-label="Run summary" style="margin:8px 0 12px;font-size:14px;line-height:1.5;text-align:left">'
+      + '<div>' + clk + '</div>'
+      + '<div>Survivors: ' + crewN + ' (capacity ' + cap + ')</div>'
+      + '<div>Beds: ' + beds + '</div>'
+      + '<div>Hatch: ' + hs + ' ' + Math.ceil(hp) + '/' + Math.ceil(max) + '</div></div>';
+  } catch (_) { return ''; }
+}
 function showPauseMenu() {
   if (!pauseOpener && document.activeElement && document.activeElement !== document.body && $('#overlay').hidden) pauseOpener = document.activeElement;
   paused = true; renderHud();
-  overlay(`<div class="menu pause"><div class="pcol"><h1 style="font-size:40px">PAUSED</h1><button class="btn" id="pRes">Resume</button><button class="btn ghost" id="pHelp">How to play</button><button class="btn ghost" id="pSet">Settings</button><button class="btn ghost" id="pRestart">Restart run</button><button class="btn ghost" id="pMenu">Save and quit to menu</button></div><div class="pset">${pauseVolHtml()}${pauseDisplayHtml()}</div></div>`);
+  overlay(`<div class="menu pause"><div class="pcol"><h1 style="font-size:40px">PAUSED</h1>${pauseSummaryHtml()}<button class="btn" id="pRes">Resume</button><button class="btn ghost" id="pHelp">How to play</button><button class="btn ghost" id="pSet">Settings</button><button class="btn ghost" id="pRestart">Restart run</button><button class="btn ghost" id="pMenu">Save and quit to menu</button></div><div class="pset">${pauseVolHtml()}${pauseDisplayHtml()}</div></div>`);
   bindPauseVol();
   bindPauseDisplay();
   $('#pRes').onclick = () => { overlay(''); paused = false; renderHud(); const o = pauseOpener; pauseOpener = null; try { if (o && o.focus && document.body.contains(o)) o.focus(); } catch (_) {} };
@@ -8319,7 +8470,8 @@ function tipsSet(o) { try { localStorage.setItem(TIPS_KEY, JSON.stringify(o)); }
 function tipHide() { const el = document.getElementById('lampTip'); if (el) el.remove(); }
 function tipShow(id) {
   const seen = tipsGet();
-  if (seen.off || seen[id] || !TIP_TEXT[id] || !S || S.over || document.getElementById('lampTip')) return false;
+  const ov = document.getElementById('overlay');
+  if (seen.off || seen[id] || !TIP_TEXT[id] || !S || S.over || scene !== 'bunker' || (ov && (!ov.hidden || ov.innerHTML.trim())) || document.getElementById('lampTip')) return false;
   seen[id] = 1; tipsSet(seen);
   const el = document.createElement('div'); el.id = 'lampTip'; el.setAttribute('role', 'status');
   el.style.cssText = 'position:relative;order:-1;max-width:100%;box-sizing:border-box;pointer-events:auto;background:#241a10;border:1px solid #c9a27a;border-radius:8px;padding:8px 12px;font-size:14px;line-height:1.4;color:#f3e6d0;display:flex;gap:10px;align-items:center';
@@ -8330,7 +8482,8 @@ function tipShow(id) {
   return true;
 }
 function tipsTick() {
-  if (!S || S.over || scene !== 'bunker') return;
+  if (!S || S.over || scene !== 'bunker') { tipHide(); return; }
+  { const ov = document.getElementById('overlay'); if (ov && (!ov.hidden || ov.innerHTML.trim())) { tipHide(); return; } }
   if (S.rid !== tipsRid) { tipsRid = S.rid; tipsT0 = performance.now(); tipHide(); }
   if (tour || document.getElementById('tut') || document.getElementById('tour')) return;
   if (living().some(c => c.food < 35 || c.rest < 40 || c.hp < 50)) { if (tipShow('needs')) return; }

@@ -330,7 +330,7 @@ function turretTick(dt) {
         t.zap = (t.zap || 0) - dt;
         if (t.zap <= 0) {
           const foe = pickFoe(t, i, spec);
-          if (foe) { t.zap = 2.6; if (window.SFX) SFX.turret('coil'); hitEnemy(foe, 9, null, 'shock'); foe.stun = Math.max(foe.stun || 0, 0.5); tracer(SLOT_X[i] + 16, FLOORS[0] - 48, foe.x, foe.y - 14, '#7fc8ff'); fxSparks(foe.x, foe.y - 14, 3, 1); }
+          if (foe) { t.zap = 2.6; if (window.SFX) SFX.turret('coil'); hitEnemy(foe, 9, null, 'shock'); foe.stun = Math.max(foe.stun || 0, 0.5); tracer(SLOT_X[i] + 16, slotY(i) - 48, foe.x, foe.y - 14, '#7fc8ff'); fxSparks(foe.x, foe.y - 14, 3, 1); }
           else t.zap = 0.5;
         }
       }
@@ -356,18 +356,18 @@ function turretTick(dt) {
     if (t.cd > 0) return;
     const target = pickFoe(t, i, spec); if (!target) return;
     const k = 't' + i;
-    if (cond(k) < 30 && Math.random() < 0.12) { t.cd = 0.6; fxSparks(SLOT_X[i] + 16, FLOORS[0] - 30, 2, 1); return; }   // jam
+    if (cond(k) < 30 && Math.random() < 0.12) { t.cd = 0.6; fxSparks(SLOT_X[i] + 16, slotY(i) - 30, 2, 1); return; }   // jam
     t.cd = spec.cd / wearF(k); t.flash = 0.08;
     const fxOn = typeof prefs === 'undefined' || (!prefs.ps && prefs.fx > 0), fxK = typeof prefs === 'undefined' ? 1 : prefs.fx;
-    if (fxOn) { fxCasing(SLOT_X[i] + 14, FLOORS[0] - 28); if (t.type !== 'rifle') fxCasing(SLOT_X[i] + 14, FLOORS[0] - 28); }
+    if (fxOn) { fxCasing(SLOT_X[i] + 14, slotY(i) - 28); if (t.type !== 'rifle') fxCasing(SLOT_X[i] + 14, slotY(i) - 28); }
     if (window.SFX) SFX.turret(t.type);
     if (fxOn && (typeof prefs === 'undefined' || !prefs.rm)) {
-      fxSparks(SLOT_X[i] + 18, FLOORS[0] - 30, Math.max(1, Math.round(3 * Math.min(1, fxK))), 1);
-      fxDust(SLOT_X[i] + 14, FLOORS[0] - 24, 2);
+      fxSparks(SLOT_X[i] + 18, slotY(i) - 30, Math.max(1, Math.round(3 * Math.min(1, fxK))), 1);
+      fxDust(SLOT_X[i] + 14, slotY(i) - 24, 2);
     }
     if (scene === 'bunker') addShake(t.type === 'rifle' ? 0.05 : 0.09);
     const e = eff(gunner), dtype = t.type === 'shotgun' ? 'blunt' : 'pierce', tb = TURRET_BALL[t.type] || TURRET_BALL.rifle;
-    const acc = Math.max(0, Math.min(1, gunner.stats.acc * e)), mzx = SLOT_X[i] + tb.mz, mzy = FLOORS[0] - 27;
+    const acc = Math.max(0, Math.min(1, gunner.stats.acc * e)), mzx = SLOT_X[i] + tb.mz, mzy = slotY(i) - 27;
     const flight = Math.abs(target.x - mzx) / tb.speed, lead = (target.vxm || 0) * flight * (0.4 + 0.6 * acc);   // good gunners lead better
     fireShot(t, Object.assign({}, tb, { pellets: spec.pellets, heat: 0 }), { x: mzx, y: mzy, tx: target.x + lead, ty: target.y - ENEMIES[target.type].h * 0.5, acc, world: 'bunker', by: gunner,
       dmg: spec.dmg * (t.lvl > 1 ? 1.4 : 1) * armoryMult(), type: dtype, fl: FLOORS[0], critP: 0.06 + 0.12 * gunner.stats.acc,

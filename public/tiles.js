@@ -24,7 +24,17 @@ window.TILES = (() => {
     const top = FLOORS[0] + 16, bot = FLOORS[3] + 10;
     for (const wx of [IN_L - 16, IN_R + 2]) for (let y = top; y < bot; y += 24) add(wx, y, 16, Math.min(24, bot - y));
     for (let f = 1; f < 4; f++) for (let x = IN_L - 6; x < IN_R + 6; x += 24) add(x, FLOORS[f], Math.min(24, IN_R + 6 - x), 10);
-    return { v: 1, b };
+    towerPlates(b);
+    return { v: 1, b, tw: 1 };
+  }
+  // turret towers (game.js TOWERS): two rusted-steel legs and a deck of slabs that the guns sit on
+  function towerPlates(b) {
+    if (typeof TOWERS === 'undefined') return;
+    const add = (x, y, w, h, t) => b.push({ x, y, w, h, m: 'rsteel', hp: Math.round(MAT.rsteel.max * rnd(0.75, 1)), r: +rnd(0.4, 2.4).toFixed(2), tw: t });
+    TOWERS.forEach((T, ti) => {
+      for (let x = T.x0; x < T.x1; x += 24) add(x, DECK_Y, Math.min(24, T.x1 - x), 10, ti);
+      for (const lx of [T.x0, T.x1 - 16]) for (let y = DECK_Y + 10; y < FLOORS[0]; y += 24) add(lx, y, 16, Math.min(24, FLOORS[0] - y), ti);
+    });
   }
   function shell() {
     if (!S) return null;
@@ -32,6 +42,7 @@ window.TILES = (() => {
       S.shell = gen();
       setTimeout(() => lamp('The bunker\'s walls and floors are old rusted steel: half the strength of new steel, and it rusts four times faster. Workshop crew patch the worst plates for scrap. Press K to see what needs fixing.', 'info'), 4000);
     }
+    if (!S.shell.tw) { towerPlates(S.shell.b); S.shell.tw = 1; }   // older saves: add the turret towers
     return S.shell;
   }
   const blocks = () => { const s = shell(); return s ? s.b : []; };
@@ -101,6 +112,12 @@ window.TILES = (() => {
     for (const bl of blocks()) { if (bl.hp <= 0) continue; const c = ctr(bl), d = Math.hypot(c.x - e.x, c.y - (e.y - 6)); if (d < bd) { bd = d; best = bl; } }
     if (best) hurt(best, (b.dmg || 4) * 0.5);
   }
+  // an enemy at a turret tower hits the plate nearest the point (the tower's legs)
+  function strike(x, y, n) {
+    let best = null, bd = 80;
+    for (const bl of blocks()) { if (bl.hp <= 0 || bl.tw == null) continue; const c = ctr(bl), d = Math.hypot(c.x - x, c.y - y); if (d < bd) { bd = d; best = bl; } }
+    if (best) hurt(best, n);
+  }
   function repair(work) {
     if (work <= 0 || !S) return work;
     const todo = blocks().filter(bl => pctOf(bl) < AUTO_REPAIR).sort((a, z) => pctOf(a) - pctOf(z));
@@ -162,7 +179,7 @@ window.TILES = (() => {
       const k = condK[it.type], p = k ? cond(k) / 100 : 1, x = ITX0 + it.col * ITILE, w = T.w * ITILE;
       L.push({ x, y: FLOORS[r.floor] - 40, w, h: 40, p, name: T.name });
     }
-    S.turrets.forEach((t, i) => { if (t) L.push({ x: SLOT_X[i] - 16, y: FLOORS[0] - 40, w: 32, h: 40, p: t.max ? t.hp / t.max : 1, name: tName(i), hp: t.hp, max: t.max }); });
+    S.turrets.forEach((t, i) => { if (t) L.push({ x: SLOT_X[i] - 16, y: slotY(i) - 40, w: 32, h: 40, p: t.max ? t.hp / t.max : 1, name: tName(i), hp: t.hp, max: t.max }); });
     if (S.door) L.push({ x: DOOR_X - 20, y: FLOORS[0] - 46, w: 40, h: 46, p: S.door.hp / S.door.max, name: 'Hatch', hp: S.door.hp, max: S.door.max });
     if (S.wall && S.wall.max) L.push({ x: WALL_X - 8, y: FLOORS[0] - 60, w: 16, h: 60, p: S.wall.hp / S.wall.max, name: 'Outer wall', hp: S.wall.hp, max: S.wall.max });
     // annex rooms dug into the pit (the generator wears like a machine)
@@ -238,5 +255,5 @@ window.TILES = (() => {
     try { const d = dg(); for (let r = 0; r < DIG.rows; r++) for (let c = 0; c < DIG.cols; c++) if (d.m[dIdx(c, r)]) outline(DIG.x0 + c * cs, DIG.y0 + r * cs, cs, cs, '230,210,180'); } catch (e) {}
     g.restore();
   }
-  return { MAT, shell, blocks, tick, blast, claw, repair, drawShell, drawOverlay, toggleView, isView: () => view, hookBlasts, rgb, isAir, exposed, drawBuildGridFx };
+  return { MAT, shell, blocks, tick, blast, claw, strike, repair, drawShell, drawOverlay, toggleView, isView: () => view, hookBlasts, rgb, isAir, exposed, drawBuildGridFx };
 })();

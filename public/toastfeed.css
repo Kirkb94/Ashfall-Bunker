@@ -3,3 +3,9 @@
 #toastFeed .toast.lost{border-left-color:#c33}
 #toastFeed .toast.down{border-left-color:#e08a2e}
 #toastFeed .toast.out{opacity:0;transform:translateX(16px)}
+/* collapsed repeat toasts: the xN counter pops briefly on each repeat */
+.toast .tn{display:inline-block}
+.toast.bump .tn{animation:toastTnPop .3s ease-out}
+@keyframes toastTnPop{0%{transform:scale(1.7);color:#ffd27a}100%{transform:scale(1);color:inherit}}
+body.rm .toast.bump .tn{animation:none}
+@media (prefers-reduced-motion:reduce){.toast.bump .tn{animation:none}}
